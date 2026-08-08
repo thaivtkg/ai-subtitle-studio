@@ -1,0 +1,164 @@
+import os
+import re
+import json
+import subprocess
+from PySide6.QtCore import QThread, Signal
+
+class AdvancedWorkerThread(QThread):
+    progress_signal = Signal(int, str)
+    log_signal = Signal(str)
+    finished_signal = Signal(str)
+    error_signal = Signal(str)
+
+    def __init__(self, tasks, output_dir, initial_prompt, min_silence_len, do_hardsub, font_size, font_color, font_name, compute_type, use_vad, min_silence_ms):
+        super().__init__()
+        self.tasks = tasks
+        self.output_dir = output_dir
+        self.initial_prompt = initial_prompt
+        self.min_silence_len = min_silence_len
+        self.do_hardsub = do_hardsub
+        self.font_size = font_size
+        self.font_color = font_color
+        self.font_name = font_name
+        self.compute_type = compute_type
+        self.use_vad = use_vad
+        self.min_silence_ms = min_silence_ms
+        self._is_cancelled = False
+        self.current_process = None
+
+    def cancel(self):
+        self._is_cancelled = True
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                self.current_process.kill()
+            except Exception:
+                pass
+
+    def get_video_duration(self, video_path):
+        # [SỬA LỖI] Nâng cấp hàm lấy thời lượng, loại bỏ con số 60.0 mặc định
+        try:
+            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            duration = float(res.stdout.strip())
+            if duration > 0: return duration
+        except Exception:
+            pass
+            
+        try: # Dự phòng 2: Gọi ffmpeg để đọc metadata
+            cmd = ["ffmpeg", "-i", video_path]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            match = re.search(r"Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d{2,})", res.stderr)
+            if match:
+                h, m, s = map(float, match.groups())
+                return h * 3600 + m * 60 + s
+        except Exception:
+            pass
+            
+        return 0.0 # Bỏ 60.0. Nếu fail hoàn toàn, trả về 0.0 để vô hiệu hóa tính %, tránh thanh bar bị ảo
+
+    def run(self):
+        try:
+            total_tasks = len(self.tasks)
+            for idx, (video_path, srt_path) in enumerate(self.tasks):
+                if self._is_cancelled: break
+                
+                file_name = os.path.basename(video_path)
+                self.log_signal.emit(f"\n--- Đang xử lý [{idx+1}/{total_tasks}]: {file_name} ---")
+                
+                video_duration = self.get_video_duration(video_path)
+
+                # Trọng số tính % (Nếu có hardsub thì AI chiếm 50%, Hardsub 50%)
+                weight_ai = 0.5 if self.do_hardsub else 1.0
+
+                # 1. BƯỚC TẠO SRT (AI WHISPER)
+                if not srt_path:
+                    self.log_signal.emit(f"[AI] Đang chạy Whisper nhận diện giọng nói...")
+                    from core.Backend import generate_srt
+                    
+                    base_name = os.path.splitext(file_name)[0]
+                    target_srt = os.path.join(self.output_dir if self.output_dir else os.path.dirname(video_path), f"{base_name}.srt")
+                    
+                    def whisper_progress(p, msg):
+                        base_p = int((idx / total_tasks) * 100)
+                        
+                        # [SỬA LỖI] Đã nhân p với weight_ai để Whisper không vọt qua ranh giới 50%
+                        file_p = int((p * weight_ai) / total_tasks)
+                        
+                        overall_p = min(100, base_p + file_p)
+                        self.progress_signal.emit(overall_p, "Đang tạo Subtitle...")
+                        
+                        if msg and "Đang" not in msg and "Processing" not in msg and "Hoàn tất" not in msg:
+                            self.log_signal.emit(f"[Sub] ➜ {msg}")
+
+                    generate_srt(
+                        video_path=video_path,
+                        output_dir=os.path.dirname(target_srt),
+                        model_size="large-v3",
+                        compute_type=self.compute_type,
+                        initial_prompt=self.initial_prompt,
+                        use_vad=self.use_vad,
+                        min_silence_ms=self.min_silence_ms,
+                        progress_callback=whisper_progress,
+                        cancel_check=lambda: self._is_cancelled, 
+                        video_duration=video_duration
+                    )
+                    srt_path = target_srt
+
+                # 2. BƯỚC CHÈN HARDSUB (FFMPEG)
+                if self.do_hardsub:
+                    if self._is_cancelled: break
+                    self.log_signal.emit(f"[FFmpeg] Chuẩn bị khởi chạy tiến trình chèn hardsub...")
+                    
+                    out_dir = self.output_dir if self.output_dir else os.path.dirname(video_path)
+                    out_video_path = os.path.join(out_dir, f"hardsub_{file_name}")
+
+                    from core.Backend import burn_hardsub
+                    
+                    def hardsub_log_handler(msg):
+                        self.log_signal.emit(msg)
+                        
+                        match = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", msg)
+                        # [SỬA LỖI] Chỉ tăng % nếu đã lấy được chính xác thời lượng video (> 0)
+                        if match and video_duration > 0:
+                            h, m, s = map(float, match.groups())
+                            current_sec = h * 3600 + m * 60 + s
+                            ff_percent = min(100, (current_sec / video_duration) * 100)
+                            
+                            overall_p = int((idx / total_tasks) * 100 + (50 / total_tasks) + (ff_percent * 0.5 / total_tasks))
+                            self.progress_signal.emit(overall_p, f"Đang Burn Hardsub: {int(ff_percent)}%")
+                        elif match:
+                            # Dự phòng: Neo ở 50% nếu không xác định được thời lượng
+                            overall_p = int((idx / total_tasks) * 100 + (50 / total_tasks))
+                            self.progress_signal.emit(overall_p, "Đang Burn Hardsub... (Đang tính toán)")
+
+                    burn_hardsub(
+                        video_path=video_path,
+                        srt_path=srt_path,
+                        output_path=out_video_path,
+                        font_size=self.font_size,
+                        font_color=self.font_color,
+                        font_name=self.font_name,
+                        progress_callback=None,
+                        log_callback=hardsub_log_handler,
+                        process_callback=lambda proc: setattr(self, 'current_process', proc)
+                    )
+
+            if not self._is_cancelled:
+                self.progress_signal.emit(100, "Hoàn tất!")
+                self.finished_signal.emit("Tất cả tiến trình đã xử lý xong!")
+            else:
+                self.finished_signal.emit("Tiến trình đã bị hủy bởi người dùng.")
+
+        except InterruptedError as ie:
+            self.log_signal.emit(f"[HỆ THỐNG] {str(ie)}")
+            self.finished_signal.emit("Tiến trình đã bị hủy bởi người dùng.")
+        except Exception as e:
+            # [SỬA LỖI ĐỂ TRÁNH POPUP KHI CANCEL]
+            # Kiểm tra: Nếu lỗi văng ra trong lúc đang Cancel, lờ nó đi và báo đã hủy
+            if self._is_cancelled:
+                self.log_signal.emit("[HỆ THỐNG] Đã buộc dừng tiến trình FFmpeg theo yêu cầu.")
+                self.finished_signal.emit("Tiến trình đã bị hủy bởi người dùng.")
+            else:
+                # Nếu không phải do Cancel mà có lỗi thật, thì mới văng Popup báo lỗi
+                self.error_signal.emit(str(e))
