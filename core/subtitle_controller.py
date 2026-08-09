@@ -1,5 +1,4 @@
 import bisect
-from email.mime import text
 import os
 
 from PySide6.QtCore import QObject, Signal
@@ -44,7 +43,8 @@ class SubtitleController(QObject):
                     end_ms = self.time_str_to_ms(times[1])
                     text = '\n'.join(lines[2:])
                     self.subtitles.append((start_ms, end_ms, text, stt))
-            
+
+            self.subtitles.sort(key=lambda x: x[0])
             # Tính toán mảng start_times DUY NHẤT 1 LẦN ở đây (O(n))
             self.start_times = [s[0] for s in self.subtitles]
 
@@ -96,6 +96,8 @@ class SubtitleController(QObject):
     def update_live_data(self, parsed_data):
         """ Nhận dữ liệu đã sửa từ Editor và ép Overlay render lại ngay lập tức """
         self.subtitles = parsed_data
+
+        self.subtitles = sorted(parsed_data, key=lambda x: x[0])
         
         # [Safety] Kiểm tra danh sách rỗng trước khi nội suy start_times
         if self.subtitles:
