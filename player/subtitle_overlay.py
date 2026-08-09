@@ -63,7 +63,7 @@ class SubtitleOverlay(QLabel):
             painter.setFont(self.font())
 
         # Xóa dấu ngắt dòng cứng để WordWrap tự tính toán
-        display_text = self.current_text.replace('\n', ' ')
+        display_text = self.current_text
 
         rect = self.rect()
         h_margin = int(rect.width() * 0.05)
