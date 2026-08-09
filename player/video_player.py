@@ -1,11 +1,36 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSlider, QLabel, QStyle, QSizePolicy
+    QSlider, QLabel, QStyle, QGraphicsView, QGraphicsScene
 )
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QRectF
+from PySide6.QtGui import QPainter
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+
+from player.subtitle_overlay import SubtitleOverlay
+from core.subtitle_controller import SubtitleController
+
+
+class CustomGraphicsView(QGraphicsView):
+    def __init__(self, scene, video_item, overlay_proxy, parent=None):
+        super().__init__(scene, parent)
+        self.video_item = video_item
+        self.overlay_proxy = overlay_proxy
+
+        # Cấu hình render tối ưu, mượt mà
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("background-color: #000000; border-radius: 6px; border: none;")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Bắt buộc Video và Overlay phải liên tục bám sát kích thước của Viewport
+        rect = QRectF(self.viewport().rect())
+        self.video_item.setSize(rect.size())
+        self.overlay_proxy.setGeometry(rect)
 
 
 class VideoPlayerWidget(QWidget):
@@ -20,17 +45,30 @@ class VideoPlayerWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
 
-        # 1. Màn hình Video
-        self.video_widget = QVideoWidget()
-        self.video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.video_widget.setStyleSheet("background-color: #000000; border-radius: 6px;")
-        layout.addWidget(self.video_widget)
+        # --- VŨ KHÍ TỐI THƯỢNG: QGRAPHICSVIEW ---
+        self.scene = QGraphicsScene(self)
 
-        # 2. Thanh điều khiển (Control Bar)
+        # 1. Video Item (Nằm dưới cùng)
+        self.video_item = QGraphicsVideoItem()
+        self.scene.addItem(self.video_item)
+
+        # 2. Subtitle Overlay (Lớp trên)
+        self.subtitle_overlay = SubtitleOverlay()
+        # Đảm bảo nền Overlay phải trong suốt
+        self.subtitle_overlay.setStyleSheet("background: transparent;")
+
+        self.overlay_proxy = self.scene.addWidget(self.subtitle_overlay)
+        self.overlay_proxy.setZValue(1)  # Lệnh hoàng gia: Bắt buộc đè lên Video!
+
+        # 3. Tạo khung nhìn tổng
+        self.view = CustomGraphicsView(self.scene, self.video_item, self.overlay_proxy)
+        layout.addWidget(self.view)
+        # ----------------------------------------
+
+        # Thanh điều khiển (Control Bar)
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Nút Play/Pause (dùng icon mặc định của hệ thống)
         self.btn_play = QPushButton()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.btn_play.setFixedSize(30, 30)
@@ -38,7 +76,6 @@ class VideoPlayerWidget(QWidget):
         self.btn_play.clicked.connect(self.toggle_playback)
         controls_layout.addWidget(self.btn_play)
 
-        # Thanh cuộn thời gian (Seek Slider)
         self.slider_seek = ClickableSlider(Qt.Horizontal)
         self.slider_seek.setRange(0, 0)
         self.slider_seek.setStyleSheet("""
@@ -53,12 +90,10 @@ class VideoPlayerWidget(QWidget):
         self.lbl_time.setStyleSheet("color: #98A2B3; font-size: 11px; font-family: Consolas;")
         controls_layout.addWidget(self.lbl_time)
 
-        # Thêm Icon Loa (🔊)
         self.lbl_vol_icon = QLabel("🔊")
         self.lbl_vol_icon.setStyleSheet("color: #98A2B3; font-size: 12px; margin-left: 10px;")
         controls_layout.addWidget(self.lbl_vol_icon)
 
-        # Thanh cuộn âm lượng (Thêm Tooltip)
         self.slider_volume = QSlider(Qt.Horizontal)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(80)
@@ -75,24 +110,29 @@ class VideoPlayerWidget(QWidget):
         layout.addLayout(controls_layout)
 
     def init_player(self):
-        # Khởi tạo Core Player và Audio Output (Bắt buộc trong Qt6)
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
-
         self.player.setAudioOutput(self.audio_output)
-        self.player.setVideoOutput(self.video_widget)
-        self.audio_output.setVolume(0.8)  # Mặc định 80%
 
-        # Kết nối các tín hiệu (Signals)
+        # --- BƠM TRỰC TIẾP VIDEO VÀO GRAPHICS ITEM ---
+        self.player.setVideoOutput(self.video_item)
+
+        # Nối hệ thống Subtitle Controller
+        self.sub_controller = SubtitleController()
+        self.player.positionChanged.connect(self.sub_controller.sync_position)
+        self.sub_controller.subtitle_changed.connect(lambda stt, start, text: self.subtitle_overlay.set_subtitle(text))
+        self.sub_controller.subtitle_cleared.connect(self.subtitle_overlay.clear_subtitle)
+
+        self.audio_output.setVolume(0.8)
+
         self.player.positionChanged.connect(self.position_changed)
         self.player.durationChanged.connect(self.duration_changed)
         self.player.playingChanged.connect(self.update_play_button)
 
     def load_video(self, file_path):
-        """ Gọi hàm này để nạp video mới vào Player """
         if os.path.exists(file_path):
             self.player.setSource(QUrl.fromLocalFile(file_path))
-            self.player.pause()  # Load xong để đó, không tự động phát
+            self.player.pause()
 
     def toggle_playback(self):
         if self.player.isPlaying():
@@ -118,7 +158,6 @@ class VideoPlayerWidget(QWidget):
         self.player.setPosition(position)
 
     def set_volume(self, volume):
-        # Trong Qt6, Volume chạy từ 0.0 đến 1.0
         self.audio_output.setVolume(volume / 100.0)
         self.slider_volume.setToolTip(f"Volume: {volume}%")
 
@@ -136,15 +175,14 @@ class VideoPlayerWidget(QWidget):
         return f"{m:02d}:{s:02d}"
 
     def cleanup(self):
-        """ Dọn dẹp tài nguyên khi đóng ứng dụng """
         self.player.stop()
         self.player.setSource(QUrl())
+
 
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Tính toán % vị trí chuột click trên tổng chiều rộng của slider
             val = self.minimum() + ((self.maximum() - self.minimum()) * event.position().x()) / self.width()
             self.setValue(int(val))
-            self.sliderMoved.emit(self.value()) # Phát tín hiệu bắt buộc Player nhảy tới
+            self.sliderMoved.emit(self.value())
         super().mousePressEvent(event)

@@ -291,7 +291,13 @@ class MainWindow(QMainWindow):
         self.sub_editor = SubtitleEditorWidget()
         # Liên kết tín hiệu thần thánh: Subtitle kêu Seek thì Player nhảy
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
-        self.video_player.player.positionChanged.connect(self.sub_editor.highlight_subtitle_at_time)
+        self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
+
+        # --- BẮT ĐẦU SỬA KHU VỰC NÀY ---
+        # 1. Controller báo có câu mới -> Bảng Editor bôi màu dòng đó
+        self.video_player.sub_controller.subtitle_changed.connect(
+            lambda stt, start, text: self.sub_editor.highlight_row_by_stt(stt)
+        )
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
         # Tab 2: Video Queue & Output (Đóng gói Queue cũ vào một Widget)
@@ -584,9 +590,10 @@ class MainWindow(QMainWindow):
         # --- BƯỚC 2: TỰ ĐỘNG LOAD VIDEO ĐẦU TIÊN NẾU PLAYER ĐANG TRỐNG ---
         if count > 0:
             first_vid = list(self.file_pairs.keys())[0]
+            first_srt = self.file_pairs[first_vid]
             # Kiểm tra xem Player đã load file nào chưa
             if hasattr(self, 'video_player') and self.video_player.player.source().isEmpty():
-                self.video_player.load_video(first_vid)
+                self.on_queue_item_clicked(first_vid, first_srt)
         else:
             # Nếu xóa hết video trong Queue thì dọn dẹp màn hình Player
             if hasattr(self, 'video_player'):
@@ -728,19 +735,24 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def on_queue_item_clicked(self, vid_path, srt_path):
-        self.active_vid = vid_path  # Cập nhật video đang active
-        self.refresh_queue_ui()
+        self.active_vid = vid_path
 
-        # 1. Phát video
+        # --- BƯỚC QUAN TRỌNG NHẤT ĐỂ SỬA LỖI ---
+        # 1. Bắt buộc gọi lệnh nạp video TRƯỚC để Player ghi nhận là đã có file
         self.video_player.load_video(vid_path)
 
-        # 2. Load SRT vào bảng và chuyển tab
+        # 2. SAU ĐÓ mới làm mới Queue UI để đổi viền sáng (Ngăn chặn vòng lặp vô hạn)
+        self.refresh_queue_ui()
+        # ---------------------------------------
+
+        # 3. Nạp SRT vào Bảng Editor và não SubtitleController
         if srt_path and os.path.exists(srt_path):
             self.sub_editor.load_srt_file(srt_path)
+            self.video_player.sub_controller.load_srt(srt_path)
         else:
             self.sub_editor.table.setRowCount(0)
+            self.video_player.sub_controller.load_srt(None)
 
-        # Tự động nhảy sang tab Subtitle Editor để thao tác
         self.bottom_tabs.setCurrentIndex(0)
 
 if __name__ == "__main__":

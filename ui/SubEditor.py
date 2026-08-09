@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal
 class SubtitleEditorWidget(QWidget):
     # Tín hiệu phát ra khi Double Click vào 1 dòng, mang theo tham số mili-giây
     seek_requested = Signal(int)
+    srt_saved = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -110,28 +111,20 @@ class SubtitleEditorWidget(QWidget):
             with open(self.srt_path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(new_blocks) + "\n")
             QMessageBox.information(self, "Thành công", "Đã lưu file SRT thành công!")
+            self.srt_saved.emit(self.srt_path)
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể lưu file: {str(e)}")
 
-    def highlight_subtitle_at_time(self, ms):
-        """ Highlight dòng phụ đề khớp với thời gian hiện tại của video """
-        if self.table.rowCount() == 0:
-            return
-
+    def highlight_row_by_stt(self, stt):
+        """ Chỉ bôi màu dòng được Controller chỉ định """
         for row in range(self.table.rowCount()):
-            start_item = self.table.item(row, 1)
-            end_item = self.table.item(row, 2)
+            item_stt = self.table.item(row, 0)
+            if item_stt and item_stt.text() == str(stt):
+                if not item_stt.isSelected():
+                    self.table.selectRow(row)
+                    self.table.scrollToItem(item_stt, QAbstractItemView.PositionAtCenter)
+                return
 
-            if start_item and end_item:
-                start_ms = self.time_str_to_ms(start_item.text())
-                end_ms = self.time_str_to_ms(end_item.text())
-
-                # Kiểm tra nếu thời gian video nằm trong khoảng sub
-                if start_ms <= ms <= end_ms:
-                    # Nếu dòng này chưa được chọn thì mới select và scroll (tránh giật lag UI)
-                    current_item = self.table.item(row, 0)
-                    if current_item and not current_item.isSelected():
-                        self.table.selectRow(row)
-                        # Tự động cuộn bảng sao cho dòng đang đọc nằm ở giữa màn hình
-                        self.table.scrollToItem(current_item, QAbstractItemView.PositionAtCenter)
-                    return  # Đã tìm thấy dòng khớp thời gian thì thoát vòng lặp
+    def clear_highlight(self):
+        """ Xóa bôi màu khi video chạy đến đoạn không có phụ đề """
+        self.table.clearSelection()
