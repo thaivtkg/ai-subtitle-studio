@@ -1,4 +1,5 @@
 import bisect
+from email.mime import text
 import os
 
 from PySide6.QtCore import QObject, Signal
@@ -6,7 +7,7 @@ from PySide6.QtCore import QObject, Signal
 
 class SubtitleController(QObject):
     # Phát tín hiệu mang theo (STT, Thời_gian_bắt_đầu, Nội_dung)
-    subtitle_changed = Signal(str, int, str)
+    subtitle_changed = Signal(int, int, str)
     subtitle_cleared = Signal()
 
     def __init__(self):
@@ -15,7 +16,10 @@ class SubtitleController(QObject):
         self.subtitles = []
         self.start_times = []
         self.current_stt = None
+        self.current_idx = -1
+        self.last_ms = 0
         self.is_enabled = True  # Trạng thái của Checkbox "Show Subtitle"
+        
 
     def load_srt(self, srt_path):
         self.subtitles.clear()
@@ -28,13 +32,13 @@ class SubtitleController(QObject):
 
         try:
             with open(srt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+                content = f.read().replace('\r\n', '\n')
 
             blocks = content.strip().split('\n\n')
             for block in blocks:
                 lines = block.split('\n')
                 if len(lines) >= 3:
-                    stt = int(lines[0])
+                    stt = int(lines[0].strip('\ufeff').strip()) 
                     times = lines[1].split(' --> ')
                     start_ms = self.time_str_to_ms(times[0])
                     end_ms = self.time_str_to_ms(times[1])
@@ -48,6 +52,8 @@ class SubtitleController(QObject):
             print(f"Error loading SRT: {e}")
 
     def sync_position(self, ms):
+        self.last_ms = ms
+
         if not self.subtitles or not self.start_times:
             return
 
@@ -61,7 +67,8 @@ class SubtitleController(QObject):
             if start_ms <= ms < end_ms:
                 if self.current_idx != idx:
                     self.current_idx = idx
-                    self.subtitle_changed.emit(stt, start_ms, text)
+                    display_text = text if self.is_enabled else ""
+                    self.subtitle_changed.emit(stt, start_ms, display_text)
             else:
                 if self.current_idx != -1:
                     self.current_idx = -1
@@ -73,9 +80,8 @@ class SubtitleController(QObject):
 
     def toggle_preview(self, state):
         self.is_enabled = state
-        if not state:
-            self.current_stt = None
-            self.subtitle_cleared.emit()
+        self.current_idx = -1
+        self.sync_position(self.last_ms)
 
     def time_str_to_ms(self, time_str):
         try:
@@ -86,3 +92,17 @@ class SubtitleController(QObject):
                 return (h * 3600 + m * 60 + s) * 1000 + ms
         except:
             return 0
+
+    def update_live_data(self, parsed_data):
+        """ Nhận dữ liệu đã sửa từ Editor và ép Overlay render lại ngay lập tức """
+        self.subtitles = parsed_data
+        
+        # [Safety] Kiểm tra danh sách rỗng trước khi nội suy start_times
+        if self.subtitles:
+            self.start_times = [s[0] for s in self.subtitles]
+        else:
+            self.start_times = []
+            
+        # Ép Controller quên trạng thái cũ để bắt buộc vẽ lại khung hình hiện tại
+        self.current_idx = -1 
+        self.sync_position(self.last_ms)

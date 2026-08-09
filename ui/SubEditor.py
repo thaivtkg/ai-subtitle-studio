@@ -31,6 +31,9 @@ class SubtitleEditorWidget(QWidget):
     style_changed = Signal(dict)
     preview_toggled = Signal(bool)
 
+    # --- THÊM TÍN HIỆU ĐỒNG BỘ DỮ LIỆU ---
+    live_edit_applied = Signal(list)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.srt_path = None
@@ -65,6 +68,11 @@ class SubtitleEditorWidget(QWidget):
             QTableWidget::item:selected { background-color: #35C8FF; color: #0D111A; font-weight: bold; }
         """)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
+
+        # --- THÊM DÒNG NÀY: Lắng nghe người dùng gõ phím ---
+        self.table.cellChanged.connect(self.on_table_edit)
+        # ----------------------------------------------------
+
         left_layout.addWidget(self.table)
         
         btn_layout = QHBoxLayout()
@@ -243,11 +251,17 @@ class SubtitleEditorWidget(QWidget):
     # ================= CÁC HÀM CŨ (GIỮ NGUYÊN) =================
     def load_srt_file(self, srt_path):
         self.srt_path = srt_path
+        
+        self.table.blockSignals(True)
         self.table.setRowCount(0)
-        if not srt_path or not os.path.exists(srt_path): return
+
+        # [Safety] Đảm bảo mở lại tín hiệu nếu return sớm
+        if not srt_path or not os.path.exists(srt_path): 
+            self.table.blockSignals(False)
+            return
 
         with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+            content = f.read().replace('\r\n', '\n')
 
         blocks = content.strip().split("\n\n")
         self.table.setRowCount(len(blocks))
@@ -267,6 +281,9 @@ class SubtitleEditorWidget(QWidget):
                 self.table.setItem(row, 1, QTableWidgetItem(start))
                 self.table.setItem(row, 2, QTableWidgetItem(end))
                 self.table.setItem(row, 3, QTableWidgetItem(text))
+
+        # [Safety] Mở lại tín hiệu sau khi nạp xong
+        self.table.blockSignals(False)
 
     def on_row_double_clicked(self, row, column):
         start_item = self.table.item(row, 1)
@@ -306,13 +323,42 @@ class SubtitleEditorWidget(QWidget):
             QMessageBox.critical(self, "Lỗi", f"Không thể lưu file: {str(e)}")
 
     def highlight_row_by_stt(self, stt):
+        """ Khắc phục lỗi Highlight không nhảy dòng """
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        
         for row in range(self.table.rowCount()):
             item_stt = self.table.item(row, 0)
-            if item_stt and item_stt.text() == str(stt):
-                if not item_stt.isSelected():
-                    self.table.selectRow(row)
-                    self.table.scrollToItem(item_stt, QAbstractItemView.PositionAtCenter)
-                return
+            if item_stt and item_stt.text().strip() == str(stt).strip():
+                self.table.selectRow(row)
+                self.table.scrollToItem(item_stt, QAbstractItemView.PositionAtCenter)
+                break # Tìm thấy là thoát vòng lặp ngay lập tức
+                
+        self.table.blockSignals(False)
 
     def clear_highlight(self):
         self.table.clearSelection()
+
+    def on_table_edit(self, row, col):
+        """ Quét lại toàn bộ bảng và gửi dữ liệu mới sang Controller """
+        data = []
+        for r in range(self.table.rowCount()):
+            it_stt = self.table.item(r, 0)
+            it_start = self.table.item(r, 1)
+            it_end = self.table.item(r, 2)
+            it_text = self.table.item(r, 3)
+
+            # [Safety] Kiểm tra phần tử tồn tại trước khi lấy text
+            if it_stt and it_start and it_end and it_text:
+                try:
+                    stt = int(it_stt.text().strip())
+                except ValueError:
+                    stt = r + 1
+                    
+                start_ms = self.time_str_to_ms(it_start.text())
+                end_ms = self.time_str_to_ms(it_end.text())
+                text = it_text.text()
+                data.append((start_ms, end_ms, text, stt))
+                
+        self.live_edit_applied.emit(data)
+

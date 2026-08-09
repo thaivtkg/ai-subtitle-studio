@@ -328,6 +328,10 @@ class MainWindow(QMainWindow):
         )
         # -----------------------------
 
+        # --- THÊM PHẦN NÀY: 4. Đồng bộ Real-time từ Bảng sang Lõi Controller ---
+        self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
+        # -----------------------------------------------------------------------
+
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
         # Tab 2: Video Queue & Output (Đóng gói Queue cũ vào một Widget)
