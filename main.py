@@ -1,22 +1,21 @@
 
 import os
+
 # Thêm 2 dòng này để chặn cảnh báo từ Hugging Face
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
-import sys
 import ctypes
-from PySide6.QtWidgets import QApplication
+import sys
+
+from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import qInstallMessageHandler, QtMsgType
-
-
-
-
+from PySide6.QtWidgets import QApplication
 
 # Import MainWindow từ thư mục ui
 from ui.Gui import MainWindow
 from utils import resource_path
+
 
 def main():
     # --- THÊM ĐOẠN CODE NÀY ĐỂ FIX ICON TASKBAR TRÊN WINDOWS ---
