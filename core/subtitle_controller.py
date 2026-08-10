@@ -1,87 +1,108 @@
 import bisect
 import os
+
 from PySide6.QtCore import QObject, Signal
 
 
 class SubtitleController(QObject):
     # Phát tín hiệu mang theo (STT, Thời_gian_bắt_đầu, Nội_dung)
-    subtitle_changed = Signal(str, int, str)
+    subtitle_changed = Signal(int, int, str)
     subtitle_cleared = Signal()
 
     def __init__(self):
         super().__init__()
         # Cấu trúc list: [(start_ms, end_ms, stt, text), ...]
         self.subtitles = []
+        self.start_times = []
         self.current_stt = None
+        self.current_idx = -1
+        self.last_ms = 0
         self.is_enabled = True  # Trạng thái của Checkbox "Show Subtitle"
+        
 
     def load_srt(self, srt_path):
-        """ Đọc file SRT và nạp vào bộ nhớ để chuẩn bị Binary Search """
         self.subtitles.clear()
-        self.current_stt = None
+        self.start_times.clear() # Clear cache
+        self.current_idx = -1
         self.subtitle_cleared.emit()
 
-        if not srt_path or not os.path.exists(srt_path):
+        if not srt_path:
             return
 
-        with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+        try:
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                content = f.read().replace('\r\n', '\n')
 
-        blocks = content.strip().split("\n\n")
-        for block in blocks:
-            lines = block.split("\n")
-            if len(lines) >= 3:
-                stt = lines[0]
-                time_range = lines[1].split(" --> ")
-                if len(time_range) == 2:
-                    start_ms = self._time_str_to_ms(time_range[0])
-                    end_ms = self._time_str_to_ms(time_range[1])
-                    # Nối các dòng text lại bằng \n, giữ nguyên định dạng nhiều dòng
-                    text = "\n".join(lines[2:])
-                    self.subtitles.append((start_ms, end_ms, stt, text))
+            blocks = content.strip().split('\n\n')
+            for block in blocks:
+                lines = block.split('\n')
+                if len(lines) >= 3:
+                    stt = int(lines[0].strip('\ufeff').strip()) 
+                    times = lines[1].split(' --> ')
+                    start_ms = self.time_str_to_ms(times[0])
+                    end_ms = self.time_str_to_ms(times[1])
+                    text = '\n'.join(lines[2:])
+                    self.subtitles.append((start_ms, end_ms, text, stt))
 
-        # Đảm bảo mảng luôn được sắp xếp theo thời gian bắt đầu để Binary Search hoạt động
-        self.subtitles.sort(key=lambda x: x[0])
+            self.subtitles.sort(key=lambda x: x[0])
+            # Tính toán mảng start_times DUY NHẤT 1 LẦN ở đây (O(n))
+            self.start_times = [s[0] for s in self.subtitles]
+
+        except Exception as e:
+            print(f"Error loading SRT: {e}")
 
     def sync_position(self, ms):
-        """ Hàm này sẽ được gọi mỗi khi Video Player bắn sự kiện positionChanged """
-        if not self.is_enabled or not self.subtitles:
-            if self.current_stt is not None:
-                self.current_stt = None
-                self.subtitle_cleared.emit()
+        self.last_ms = ms
+
+        if not self.subtitles or not self.start_times:
             return
 
-        # 1. Trích xuất mảng thời gian bắt đầu
-        starts = [s[0] for s in self.subtitles]
-
-        # 2. Binary Search: Tìm vị trí index có start_ms <= ms
-        idx = bisect.bisect_right(starts, ms) - 1
+        # Tìm kiếm O(log n) cực nhẹ
+        idx = bisect.bisect_right(self.start_times, ms) - 1
 
         if idx >= 0:
-            start_ms, end_ms, stt, text = self.subtitles[idx]
-            # 3. Kiểm tra xem ms hiện tại có nằm trong khoảng [start, end] không
-            if start_ms <= ms <= end_ms:
-                # Nếu có và khác dòng đang hiển thị -> Phát tín hiệu cập nhật
-                if self.current_stt != stt:
-                    self.current_stt = stt
-                    self.subtitle_changed.emit(stt, start_ms, text)
-                return
-
-        # 4. Nếu ms rơi vào khoảng trống (giữa 2 câu) -> Xóa màn hình
-        if self.current_stt is not None:
-            self.current_stt = None
-            self.subtitle_cleared.emit()
+            start_ms, end_ms, text, stt = self.subtitles[idx]
+            
+            # Sửa boundary thành [start, end) để tránh overlap chính xác tại milisecond chuyển giao
+            if start_ms <= ms < end_ms:
+                if self.current_idx != idx:
+                    self.current_idx = idx
+                    display_text = text if self.is_enabled else ""
+                    self.subtitle_changed.emit(stt, start_ms, display_text)
+            else:
+                if self.current_idx != -1:
+                    self.current_idx = -1
+                    self.subtitle_cleared.emit()
+        else:
+            if self.current_idx != -1:
+                self.current_idx = -1
+                self.subtitle_cleared.emit()
 
     def toggle_preview(self, state):
         self.is_enabled = state
-        if not state:
-            self.current_stt = None
-            self.subtitle_cleared.emit()
+        self.current_idx = -1
+        self.sync_position(self.last_ms)
 
-    def _time_str_to_ms(self, time_str):
+    def time_str_to_ms(self, time_str):
         try:
-            parts = time_str.strip().replace(',', ':').split(':')
-            h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-            return (h * 3600 + m * 60 + s) * 1000 + ms
-        except Exception:
+            time_str = time_str.strip()
+            parts = time_str.replace(',', ':').split(':')
+            if len(parts) == 4:
+                h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+                return (h * 3600 + m * 60 + s) * 1000 + ms
+        except:
             return 0
+
+    def update_live_data(self, parsed_data):
+        """ Nhận dữ liệu đã sửa từ Editor và ép Overlay render lại ngay lập tức """
+        self.subtitles = sorted(parsed_data, key=lambda x: x[0])
+        
+        # [Safety] Kiểm tra danh sách rỗng trước khi nội suy start_times
+        if self.subtitles:
+            self.start_times = [s[0] for s in self.subtitles]
+        else:
+            self.start_times = []
+            
+        # Ép Controller quên trạng thái cũ để bắt buộc vẽ lại khung hình hiện tại
+        self.current_idx = -1 
+        self.sync_position(self.last_ms)

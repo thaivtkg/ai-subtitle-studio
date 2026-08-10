@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QLabel, QSizePolicy
-from PySide6.QtGui import QPainter, QPen, QColor, QFont
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtWidgets import QLabel, QSizePolicy
 
 
 class SubtitleOverlay(QLabel):
@@ -20,25 +20,28 @@ class SubtitleOverlay(QLabel):
         self.text_color = QColor("white")
         self.outline_color = QColor("black")
         self.outline_width = 2
+        self.position_mode = "Bottom"
 
         self.current_text = ""
         self.update_style()
 
-    def update_style(self, family=None, size=None, color=None, out_color=None, out_width=None):
+    def update_style(self, family=None, size=None, color=None, out_color=None, out_width=None, position=None):
         if family: self.font_family = family
         if size: self.font_size = size
         if color: self.text_color = QColor(color)
         if out_color: self.outline_color = QColor(out_color)
         if out_width is not None: self.outline_width = out_width
+        if position: self.position_mode = position
 
-        font = QFont(self.font_family, self.font_size, QFont.Bold)
-        self.setFont(font)
-        self.update()  # Bắt buộc vẽ lại khi đổi style
+        # [Tối ưu] Sử dụng PixelSize tuyệt đối và lưu thành biến riêng (bỏ qua sự can thiệp của QSS)
+        self.custom_font = QFont(self.font_family)
+        self.custom_font.setPixelSize(self.font_size)
+        self.custom_font.setBold(True)
+        self.update()
 
     def set_subtitle(self, text):
         # Giữ nguyên ký tự \n để hỗ trợ multi-line
         self.current_text = text
-        print(f"👉 [DEBUG - Nhan_Text] Nhận: {repr(text)} | Kích thước Overlay: {self.width()}x{self.height()}")
         self.update()
 
     def clear_subtitle(self):
@@ -47,28 +50,40 @@ class SubtitleOverlay(QLabel):
 
     def paintEvent(self, event):
         """ Ghi đè paintEvent để render chữ nổi có viền (Stroke/Outline) """
-
-        # --- DÒNG DEBUG 2: Kiểm tra xem hàm Vẽ có được kích hoạt không ---
-        if self.current_text:
-            print(f"🎨 [DEBUG - Dang_Ve] Đang vẽ chữ: {repr(self.current_text)} | Tọa độ Rect: {self.rect()}")
-        # -----------------------------------------------------------------
-
         if not self.current_text:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setFont(self.font())
+        
+        # [Tối ưu] Ép QPainter vẽ bằng Font đã được đo đạc bằng Pixel
+        if hasattr(self, 'custom_font'):
+            painter.setFont(self.custom_font)
+        else:
+            painter.setFont(self.font())
+
+        # Xóa dấu ngắt dòng cứng để WordWrap tự tính toán
+        display_text = self.current_text
 
         rect = self.rect()
-        # Tính toán Margin Bottom: Chiếm khoảng 8% chiều cao của video
-        bottom_margin = int(rect.height() * 0.08)
-        rect.setBottom(rect.bottom() - bottom_margin)
+        h_margin = int(rect.width() * 0.05)
+        rect.setLeft(rect.left() + h_margin)
+        rect.setRight(rect.right() - h_margin)
 
-        # Căn giữa theo chiều ngang và bám đáy
-        flags = int(Qt.AlignHCenter | Qt.AlignBottom | Qt.TextWordWrap)
+        flags = int(Qt.AlignHCenter | Qt.TextWordWrap)
+        
+        if self.position_mode == "Top":
+            flags |= Qt.AlignTop
+            margin = int(self.height() * 0.05)
+            rect.setTop(rect.top() + margin)
+        elif self.position_mode == "Center":
+            flags |= Qt.AlignVCenter
+        else: 
+            flags |= Qt.AlignBottom
+            margin = int(self.height() * 0.08) 
+            rect.setBottom(rect.bottom() - margin)
 
-        # 1. Vẽ Outline (bằng cách vẽ text 8 lần ra xung quanh)
+        # 1. Vẽ Outline
         if self.outline_width > 0:
             pen = QPen(self.outline_color)
             painter.setPen(pen)
@@ -79,8 +94,8 @@ class SubtitleOverlay(QLabel):
                 (-ow, ow), (0, ow), (ow, ow)
             ]
             for dx, dy in offsets:
-                painter.drawText(rect.translated(dx, dy), flags, self.current_text)
+                painter.drawText(rect.translated(dx, dy), flags, display_text)
 
-        # 2. Vẽ Text chính (Trắng) đè lên trên cùng
+        # 2. Vẽ Text chính
         painter.setPen(QPen(self.text_color))
-        painter.drawText(rect, flags, self.current_text)
+        painter.drawText(rect, flags, display_text)

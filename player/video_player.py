@@ -1,15 +1,23 @@
 import os
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSlider, QLabel, QStyle, QGraphicsView, QGraphicsScene
-)
-from PySide6.QtCore import Qt, QUrl, QRectF
-from PySide6.QtGui import QPainter
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 
-from player.subtitle_overlay import SubtitleOverlay
+from PySide6.QtCore import QRectF, Qt, QUrl
+from PySide6.QtGui import QPainter
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+from PySide6.QtWidgets import (
+    QGraphicsScene,
+    QGraphicsView,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
+)
+
 from core.subtitle_controller import SubtitleController
+from player.subtitle_overlay import SubtitleOverlay
 
 
 class CustomGraphicsView(QGraphicsView):
@@ -17,7 +25,7 @@ class CustomGraphicsView(QGraphicsView):
         super().__init__(scene, parent)
         self.video_item = video_item
         self.overlay_proxy = overlay_proxy
-
+        
         # Cấu hình render tối ưu, mượt mà
         self.setRenderHint(QPainter.Antialiasing)
         self.setRenderHint(QPainter.SmoothPixmapTransform)
@@ -25,12 +33,45 @@ class CustomGraphicsView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet("background-color: #000000; border-radius: 6px; border: none;")
 
+        # [Safety] Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật Overlay
+        self.video_item.nativeSizeChanged.connect(self.update_overlay_geometry)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Bắt buộc Video và Overlay phải liên tục bám sát kích thước của Viewport
-        rect = QRectF(self.viewport().rect())
-        self.video_item.setSize(rect.size())
-        self.overlay_proxy.setGeometry(rect)
+        self.video_item.setSize(QRectF(self.viewport().rect()).size())
+        self.update_overlay_geometry()
+
+    def update_overlay_geometry(self, *args):
+        view_rect = self.viewport().rect()
+        
+        # [Safety Check] Chặn chia cho 0 nếu Viewport chưa kịp render
+        if view_rect.height() == 0: 
+            return
+
+        native_size = self.video_item.nativeSize()
+        
+        # Kiểm tra kích thước video thực tế hợp lệ
+        if native_size.isValid() and native_size.width() > 0 and native_size.height() > 0:
+            view_ratio = view_rect.width() / view_rect.height()
+            video_ratio = native_size.width() / native_size.height()
+            
+            if video_ratio > view_ratio:
+                # Video rộng hơn View -> Xuất hiện viền đen Letterbox (trên/dưới)
+                w = view_rect.width()
+                h = w / video_ratio
+                x = 0
+                y = (view_rect.height() - h) / 2
+            else:
+                # Video hẹp hơn View -> Xuất hiện viền đen Pillarbox (trái/phải - như trong ảnh)
+                h = view_rect.height()
+                w = h * video_ratio
+                x = (view_rect.width() - w) / 2
+                y = 0
+            
+            # Ép Overlay nằm khít với pixels của video
+            self.overlay_proxy.setGeometry(QRectF(x, y, w, h))
+        else:
+            self.overlay_proxy.setGeometry(QRectF(view_rect))
 
 
 class VideoPlayerWidget(QWidget):
