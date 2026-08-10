@@ -1,21 +1,35 @@
-import sys
 import os
 import re
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, 
-    QCheckBox, QComboBox, QTextEdit, QScrollArea, QFrame, QSpinBox,
-    QProgressBar
-)
-from PySide6.QtCore import Qt, QTimer, QPoint, QPropertyAnimation
-from PySide6.QtGui import QMouseEvent
-from player.video_player import VideoPlayerWidget
+import sys
 
-from workers.TaskQueue import AdvancedWorkerThread
-from PySide6.QtWidgets import QSplitter, QTabWidget
-from ui.SubEditor import SubtitleEditorWidget
+from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
 from player.video_player import VideoPlayerWidget
+from ui.SubEditor import SubtitleEditorWidget
 from utils import load_settings, save_settings
+from workers.TaskQueue import AdvancedWorkerThread
 
 DARK_STUDIO_QSS = """
 QMainWindow {
@@ -289,9 +303,35 @@ class MainWindow(QMainWindow):
 
         # Tab 1: Subtitle Editor
         self.sub_editor = SubtitleEditorWidget()
-        # Liên kết tín hiệu thần thánh: Subtitle kêu Seek thì Player nhảy
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
-        self.video_player.player.positionChanged.connect(self.sub_editor.highlight_subtitle_at_time)
+        self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
+
+        # --- BẮT ĐẦU SỬA KHU VỰC NÀY ---
+        # 1. Cập nhật màu trên bảng khi tới câu mới
+        self.video_player.sub_controller.subtitle_changed.connect(
+            lambda stt, start, text: self.sub_editor.highlight_row_by_stt(stt)
+        )
+        # --- THÊM PHẦN KẾT NỐI MỚI ---
+        # 2. Toggle Bật/Tắt chữ trên Video
+        self.sub_editor.preview_toggled.connect(self.video_player.sub_controller.toggle_preview)
+
+        # 3. Apply Style đổi theo thời gian thực lên Video Overlay
+        self.sub_editor.style_changed.connect(
+            lambda s: self.video_player.subtitle_overlay.update_style(
+                family=s.get("family"),
+                size=s.get("size"),
+                color=s.get("color"),
+                out_color=s.get("out_color"),
+                out_width=s.get("out_width"),
+                position=s.get("position")
+            )
+        )
+        # -----------------------------
+
+        # --- THÊM PHẦN NÀY: 4. Đồng bộ Real-time từ Bảng sang Lõi Controller ---
+        self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
+        # -----------------------------------------------------------------------
+
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
         # Tab 2: Video Queue & Output (Đóng gói Queue cũ vào một Widget)
@@ -396,6 +436,10 @@ class MainWindow(QMainWindow):
         self.stats_timer.timeout.connect(self.update_hardware_info)
         self.stats_timer.timeout.connect(self.update_cpu_usage)
         self.stats_timer.start(1000)
+
+        # --- THÊM DÒNG NÀY: ÉP ĐỒNG BỘ STYLE NGAY KHI MỞ APP ---
+        self.sub_editor.emit_style()
+        # -------------------------------------------------------
 
         
 
@@ -514,8 +558,13 @@ class MainWindow(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if files:
             for f in files:
-                if f not in self.file_pairs: self.file_pairs[f] = None
+                if f not in self.file_pairs: 
+                    self.file_pairs[f] = None
+                    last_added = f
             self.refresh_queue_ui()
+            # [Tính năng mới] Tự động chuyển sang video vừa thêm
+            if last_added:
+                self.on_queue_item_clicked(last_added, self.file_pairs[last_added])
 
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
@@ -524,6 +573,9 @@ class MainWindow(QMainWindow):
             if srt_path:
                 self.file_pairs[video_path] = srt_path
                 self.refresh_queue_ui()
+
+                # [Tính năng mới] Tự động load ngay cặp Video + SRT vừa chọn
+                self.on_queue_item_clicked(video_path, srt_path)
 
     def clear_files(self):
         self.file_pairs.clear()
@@ -584,9 +636,10 @@ class MainWindow(QMainWindow):
         # --- BƯỚC 2: TỰ ĐỘNG LOAD VIDEO ĐẦU TIÊN NẾU PLAYER ĐANG TRỐNG ---
         if count > 0:
             first_vid = list(self.file_pairs.keys())[0]
+            first_srt = self.file_pairs[first_vid]
             # Kiểm tra xem Player đã load file nào chưa
             if hasattr(self, 'video_player') and self.video_player.player.source().isEmpty():
-                self.video_player.load_video(first_vid)
+                self.on_queue_item_clicked(first_vid, first_srt)
         else:
             # Nếu xóa hết video trong Queue thì dọn dẹp màn hình Player
             if hasattr(self, 'video_player'):
@@ -669,7 +722,12 @@ class MainWindow(QMainWindow):
 
     def open_subtitle_editor(self):
         if not self.file_pairs: return
-        vid = list(self.file_pairs.keys())[0]
+        
+        # [Tối ưu] Xác định đúng video đang được Active. Nếu không có mới lấy video đầu tiên
+        vid = getattr(self, 'active_vid', None)
+        if not vid or vid not in self.file_pairs:
+            vid = list(self.file_pairs.keys())[0]
+            
         srt = self.file_pairs[vid]
 
         # Tạo file SRT ảo nếu video chưa có
@@ -682,11 +740,8 @@ class MainWindow(QMainWindow):
             self.file_pairs[vid] = srt
             self.refresh_queue_ui()
 
-        # Load SRT vào bảng
-        self.sub_editor.load_srt_file(srt)
-
-        # Chuyển focus sang Tab đầu tiên (Subtitle Editor)
-        self.bottom_tabs.setCurrentIndex(0)
+        # [Tối ưu] Thay vì chỉ load SRT vào Editor, gọi lệnh nạp đồng bộ cả Player và Controller
+        self.on_queue_item_clicked(vid, srt)
 
     def open_output_folder(self):
         out_d = self.out_input.text().strip()
@@ -728,19 +783,24 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def on_queue_item_clicked(self, vid_path, srt_path):
-        self.active_vid = vid_path  # Cập nhật video đang active
-        self.refresh_queue_ui()
+        self.active_vid = vid_path
 
-        # 1. Phát video
+        # --- BƯỚC QUAN TRỌNG NHẤT ĐỂ SỬA LỖI ---
+        # 1. Bắt buộc gọi lệnh nạp video TRƯỚC để Player ghi nhận là đã có file
         self.video_player.load_video(vid_path)
 
-        # 2. Load SRT vào bảng và chuyển tab
+        # 2. SAU ĐÓ mới làm mới Queue UI để đổi viền sáng (Ngăn chặn vòng lặp vô hạn)
+        self.refresh_queue_ui()
+        # ---------------------------------------
+
+        # 3. Nạp SRT vào Bảng Editor và não SubtitleController
         if srt_path and os.path.exists(srt_path):
             self.sub_editor.load_srt_file(srt_path)
+            self.video_player.sub_controller.load_srt(srt_path)
         else:
             self.sub_editor.table.setRowCount(0)
+            self.video_player.sub_controller.load_srt(None)
 
-        # Tự động nhảy sang tab Subtitle Editor để thao tác
         self.bottom_tabs.setCurrentIndex(0)
 
 if __name__ == "__main__":
