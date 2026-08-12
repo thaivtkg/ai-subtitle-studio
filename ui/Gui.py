@@ -26,7 +26,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.queue_manager import QueueManager
+from core.video_metadata import VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
+from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from utils import load_settings, save_settings
 from workers.TaskQueue import AdvancedWorkerThread
@@ -154,8 +157,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_STUDIO_QSS)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.old_pos = QPoint()
-        self.file_pairs = {}
-        self.active_vid = None
+        self.queue_mgr = QueueManager()
+        self.queue_mgr.queue_updated.connect(self.on_queue_updated)
         self.setAcceptDrops(True)
 
 
@@ -334,18 +337,16 @@ class MainWindow(QMainWindow):
 
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
-        # Tab 2: Video Queue & Output (Đóng gói Queue cũ vào một Widget)
+        # Tab 2: Video Queue & Output
         queue_wrapper = QWidget()
         queue_wrapper_layout = QVBoxLayout(queue_wrapper)
 
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("background: transparent; border: none;")
-        self.queue_container = QWidget()
-        self.queue_layout = QVBoxLayout(self.queue_container)
-        self.queue_layout.setAlignment(Qt.AlignTop)
-        self.queue_layout.setSpacing(4)
-        self.scroll_area.setWidget(self.queue_container)
+        # --- THAY THẾ BẰNG COMPONENT MỚI ---
+        self.queue_ui = QueueWidget()
+        self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
+        self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
+        queue_wrapper_layout.addWidget(self.queue_ui)
+        # -----------------------------------
 
         output_layout = QHBoxLayout()
         self.out_input = QLineEdit()
@@ -353,11 +354,11 @@ class MainWindow(QMainWindow):
         out_btn = QPushButton("Browse...")
         out_btn.setObjectName("btn_secondary")
         out_btn.clicked.connect(self.select_output_dir)
-        output_layout.addWidget(QLabel("Output:"))
-        output_layout.addWidget(self.out_input)
         output_layout.addWidget(out_btn)
+        queue_wrapper_layout.addLayout(output_layout)
+        self.bottom_tabs.addTab(queue_wrapper, "📋 Video Queue")
 
-        queue_wrapper_layout.addWidget(self.scroll_area)
+        #queue_wrapper_layout.addWidget(self.scroll_area)
         queue_wrapper_layout.addLayout(output_layout)
         self.bottom_tabs.addTab(queue_wrapper, "📋 Video Queue")
 
@@ -424,7 +425,7 @@ class MainWindow(QMainWindow):
         bottom_bar.addWidget(open_folder_btn, stretch=1)
         main_layout.addLayout(bottom_bar)
 
-        self.refresh_queue_ui()
+        self.on_queue_updated()
         self.update_hardware_info()
         self.update_cpu_usage()
 
@@ -462,20 +463,29 @@ class MainWindow(QMainWindow):
         valid_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
         
         has_new_file = False # Cờ kiểm tra xem có file mới được thêm vào không
+        last_added = None
         
         for url in urls:
             file_path = url.toLocalFile()
             
             # Kiểm tra nếu đúng là file video thì mới xử lý
             if file_path.lower().endswith(valid_extensions):
-                # Thêm vào danh sách file_pairs nếu chưa tồn tại
-                if file_path not in self.file_pairs:
-                    self.file_pairs[file_path] = None
+                # Gọi QueueManager thay vì dùng dict file_pairs
+                if self.queue_mgr.add_video(file_path):
+                    last_added = file_path
                     has_new_file = True
+                    
+                    # [Sprint 4] Trích xuất metadata bằng ffprobe ngay lập tức
+                    meta = VideoMetadataExtractor.get_metadata(file_path)
+                    self.queue_mgr.update_metadata(file_path, meta)
         
-        # Nếu có ít nhất 1 file hợp lệ được kéo vào, làm mới lại giao diện Video Queue
+        # Nếu có ít nhất 1 file hợp lệ được kéo vào, phát tín hiệu làm mới UI
         if has_new_file:
-            self.refresh_queue_ui()
+            self.queue_mgr.queue_updated.emit()
+            
+            # Tự động chọn và load file cuối cùng được thả vào
+            if last_added:
+                self.on_queue_item_clicked(last_added)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if event.buttons() == Qt.LeftButton:
@@ -557,103 +567,78 @@ class MainWindow(QMainWindow):
     def select_videos(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if files:
+            last_added = None
             for f in files:
-                if f not in self.file_pairs: 
-                    self.file_pairs[f] = None
+                if self.queue_mgr.add_video(f):
                     last_added = f
-            self.refresh_queue_ui()
-            # [Tính năng mới] Tự động chuyển sang video vừa thêm
+                    # [Sprint 4] Trích xuất metadata bằng ffprobe ngay lập tức
+                    meta = VideoMetadataExtractor.get_metadata(f)
+                    self.queue_mgr.update_metadata(f, meta)
+            
+            self.queue_mgr.queue_updated.emit()
             if last_added:
-                self.on_queue_item_clicked(last_added, self.file_pairs[last_added])
+                self.on_queue_item_clicked(last_added)
 
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if video_path:
             srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file SRT", "", "Subtitle (*.srt)")
             if srt_path:
-                self.file_pairs[video_path] = srt_path
-                self.refresh_queue_ui()
+                # Nếu video chưa có trong list, thêm vào trước
+                if video_path not in self.queue_mgr.get_items():
+                    self.queue_mgr.add_video(video_path)
+                    meta = VideoMetadataExtractor.get_metadata(video_path)
+                    self.queue_mgr.update_metadata(video_path, meta)
+                    
+                self.queue_mgr.set_srt_for_video(video_path, srt_path)
+                self.on_queue_item_clicked(video_path)
 
-                # [Tính năng mới] Tự động load ngay cặp Video + SRT vừa chọn
-                self.on_queue_item_clicked(video_path, srt_path)
+    # def clear_files(self):
+    #     self.queue_mgr.clear_queue()
+    #     # [Clear All Requirements] Đảm bảo dọn dẹp Player, Editor và Overlay
+    #     self.video_player.cleanup()
+    #     self.video_player.sub_controller.load_srt(None)
+    #     self.sub_editor.table.setRowCount(0)
 
     def clear_files(self):
-        self.file_pairs.clear()
-        self.refresh_queue_ui()
+        # [Fix] Chỉ ra lệnh xóa Data Model. UI sẽ tự động dọn dẹp thông qua Signal
+        self.queue_mgr.clear_queue()
 
     def select_output_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục đầu ra")
         if d: self.out_input.setText(d)
 
-    def refresh_queue_ui(self):
-        while self.queue_layout.count():
-            item = self.queue_layout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
-
-        for vid, srt in self.file_pairs.items():
-            card = QFrame()
-
-            # Kiểm tra xem card này có phải là video đang active không
-            is_active = (vid == getattr(self, 'active_vid', None))
-
-            if is_active:
-                # Đang chọn: Nền sáng hơn, viền xanh nhạt cố định
-                card.setStyleSheet("""
-                            QFrame { background-color: #1A212E; border: 1px solid #35C8FF; border-radius: 6px; }
-                        """)
-            else:
-                # Bình thường: Nền tối, hover mới sáng
-                card.setStyleSheet("""
-                            QFrame { background-color: #10141F; border: 1px solid #273247; border-radius: 6px; }
-                            QFrame:hover { border: 1px solid #35C8FF; background-color: #161B26; }
-                        """)
-            card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(8, 6, 8, 6)
-
-            # --- BƯỚC 1: BẮT SỰ KIỆN CLICK CHUỘT VÀO QUEUE ĐỂ LOAD VIDEO ---
-            card.setCursor(Qt.PointingHandCursor)  # Đổi con trỏ chuột thành hình bàn tay
-            card.mousePressEvent = lambda event, v=vid, s=srt: self.on_queue_item_clicked(v, s)
-            # ---------------------------------------------------------------
-
-            file_name = os.path.basename(vid)
-            status_text = f"SRT: {os.path.basename(srt)}" if srt else "Waiting (AI large-v3)"
-            info_label = QLabel(f"🎬  <b>{file_name}</b><br><span style='color: #98A2B3;'>{status_text}</span>")
-
-            # Bỏ qua sự kiện click của Label để click xuyên qua QFrame bên dưới
-            info_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-            card_layout.addWidget(info_label, stretch=4)
-
-            btn_del = QPushButton("✕")
-            btn_del.setFixedSize(24, 24)
-            btn_del.setStyleSheet("background: #273247; border-radius: 4px; color: #FF5C73; font-weight: bold;")
-            btn_del.clicked.connect(lambda checked=False, v=vid: self.remove_single_file(v))
-            card_layout.addWidget(btn_del)
-            self.queue_layout.addWidget(card)
-
-        count = len(self.file_pairs)
+    # --- HÀM MỚI THAY THẾ refresh_queue_ui ---
+    def on_queue_updated(self):
+        items = self.queue_mgr.get_items()
+        self.queue_ui.sync_with_manager(items, self.queue_mgr.active_vid)
+        
+        count = len(items)
         self.lbl_queue_val.setText(f"{count} video" if count <= 1 else f"{count} videos")
-
-        # --- BƯỚC 2: TỰ ĐỘNG LOAD VIDEO ĐẦU TIÊN NẾU PLAYER ĐANG TRỐNG ---
-        if count > 0:
-            first_vid = list(self.file_pairs.keys())[0]
-            first_srt = self.file_pairs[first_vid]
-            # Kiểm tra xem Player đã load file nào chưa
-            if hasattr(self, 'video_player') and self.video_player.player.source().isEmpty():
-                self.on_queue_item_clicked(first_vid, first_srt)
-        else:
-            # Nếu xóa hết video trong Queue thì dọn dẹp màn hình Player
+        
+        # Auto-load video đầu tiên nếu rỗng
+        if count > 0 and hasattr(self, 'video_player') and self.video_player.player.source().isEmpty():
+            first_vid = list(items.keys())[0]
+            self.on_queue_item_clicked(first_vid)
+        elif count == 0:
+            # [Fix] Dọn dẹp UI trực tiếp tại đây, TUYỆT ĐỐI KHÔNG GỌI self.clear_files()
             if hasattr(self, 'video_player'):
                 self.video_player.cleanup()
+                self.video_player.sub_controller.load_srt(None)
+            if hasattr(self, 'sub_editor'):
+                self.sub_editor.table.setRowCount(0)
 
-    def remove_single_file(self, vid_path):
-        if vid_path in self.file_pairs:
-            del self.file_pairs[vid_path]
-            self.refresh_queue_ui()
+    # HÃY XÓA TOÀN BỘ 4 DÒNG NÀY ĐI:
+    # def remove_single_file(self, vid_path):
+    #     if vid_path in self.file_pairs:
+    #         del self.file_pairs[vid_path]
+    #         self.refresh_queue_ui()
 
     def start_processing(self):
-        if not self.file_pairs: return
+        items = self.queue_mgr.get_items()
+        if not items: return
 
-        tasks = list(self.file_pairs.items())
+        tasks = [(vid, data.get("srt_path")) for vid, data in items.items()]
         output_dir = self.out_input.text().strip()
 
         self.start_btn.setEnabled(False)
@@ -721,32 +706,29 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Lỗi", err)
 
     def open_subtitle_editor(self):
-        if not self.file_pairs: return
+        if not self.queue_mgr.get_items(): return
         
-        # [Tối ưu] Xác định đúng video đang được Active. Nếu không có mới lấy video đầu tiên
-        vid = getattr(self, 'active_vid', None)
-        if not vid or vid not in self.file_pairs:
-            vid = list(self.file_pairs.keys())[0]
-            
-        srt = self.file_pairs[vid]
+        vid, srt = self.queue_mgr.get_active_data()
+        if not vid:
+            vid = list(self.queue_mgr.get_items().keys())[0]
+            srt = self.queue_mgr.get_items()[vid].get("srt_path")
 
-        # Tạo file SRT ảo nếu video chưa có
         if not srt or not os.path.exists(srt):
             base = os.path.splitext(vid)[0]
             srt = f"{base}.srt"
             if not os.path.exists(srt):
                 with open(srt, "w", encoding="utf-8") as f:
                     f.write("1\n00:00:00,000 --> 00:00:05,000\n[AI Subtitle Studio Placeholder]\n")
-            self.file_pairs[vid] = srt
-            self.refresh_queue_ui()
+            self.queue_mgr.set_srt_for_video(vid, srt)
 
-        # [Tối ưu] Thay vì chỉ load SRT vào Editor, gọi lệnh nạp đồng bộ cả Player và Controller
-        self.on_queue_item_clicked(vid, srt)
+        self.on_queue_item_clicked(vid)
 
     def open_output_folder(self):
         out_d = self.out_input.text().strip()
-        if not out_d and self.file_pairs:
-            out_d = os.path.dirname(list(self.file_pairs.keys())[0])
+        items = self.queue_mgr.get_items()
+        if not out_d and items:
+            out_d = os.path.dirname(list(items.keys())[0])
+            
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
@@ -782,18 +764,15 @@ class MainWindow(QMainWindow):
             pass
         event.accept()
 
-    def on_queue_item_clicked(self, vid_path, srt_path):
-        self.active_vid = vid_path
+    def on_queue_item_clicked(self, vid_path):
+        # Thông báo cho Manager set active, UI tự động Highlight lại
+        self.queue_mgr.set_active(vid_path)
+        
+        _, srt_path = self.queue_mgr.get_active_data()
 
-        # --- BƯỚC QUAN TRỌNG NHẤT ĐỂ SỬA LỖI ---
-        # 1. Bắt buộc gọi lệnh nạp video TRƯỚC để Player ghi nhận là đã có file
+        # [Preserve Sprint 3 Logic]
         self.video_player.load_video(vid_path)
-
-        # 2. SAU ĐÓ mới làm mới Queue UI để đổi viền sáng (Ngăn chặn vòng lặp vô hạn)
-        self.refresh_queue_ui()
-        # ---------------------------------------
-
-        # 3. Nạp SRT vào Bảng Editor và não SubtitleController
+        
         if srt_path and os.path.exists(srt_path):
             self.sub_editor.load_srt_file(srt_path)
             self.video_player.sub_controller.load_srt(srt_path)
