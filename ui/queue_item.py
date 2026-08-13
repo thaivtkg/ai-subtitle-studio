@@ -12,19 +12,18 @@ class QueueItemWidget(QFrame):
         self.is_active = False
 
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(80)
+        self.setFixedHeight(60) # Thu gọn chiều cao vì đã gom chung một dòng
         
         self.init_ui(status, has_srt, duration)
         self.update_style()
 
     def init_ui(self, status, has_srt, duration):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setContentsMargins(15, 8, 15, 8)
         layout.setSpacing(4)
 
-        # Hàng trên: Tên file và nút Xóa
+        # Hàng 1: Tên file & Nút Remove
         top_layout = QHBoxLayout()
-        # [Safety] Xử lý an toàn nếu vid_path bị rỗng
         file_name = os.path.basename(self.vid_path) if self.vid_path else "Unknown"
         self.lbl_name = QLabel(f"🎬 <b>{file_name}</b>")
         self.lbl_name.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -37,32 +36,24 @@ class QueueItemWidget(QFrame):
         top_layout.addWidget(self.lbl_name, stretch=1)
         top_layout.addWidget(self.btn_remove)
         
-        # Hàng dưới: Trạng thái, SRT, Thời lượng
+        # Hàng 2: Gom toàn bộ Status, AI/SRT và Duration vào 1 dòng tinh gọn
         bottom_layout = QHBoxLayout()
+        self.lbl_details = QLabel()
+        self.lbl_details.setStyleSheet("color: #98A2B3; font-size: 11px;")
+        self.lbl_details.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.update_details_text(status, has_srt, duration)
         
-        status_icon = "🟢" if status == "Ready" else "🟡"
-        self.lbl_status = QLabel(f"{status_icon} {status}")
-        self.lbl_status.setStyleSheet("color: #98A2B3; font-size: 11px;")
-        
-        srt_text = "📝 Có sẵn SRT" if has_srt else "🤖 Cần AI"
-        srt_color = "#33D17A" if has_srt else "#F5B942"
-        self.lbl_srt = QLabel(srt_text)
-        self.lbl_srt.setStyleSheet(f"color: {srt_color}; font-size: 11px; font-weight: bold;")
-        
-        self.lbl_duration = QLabel(f"⏱ {duration}")
-        self.lbl_duration.setStyleSheet("color: #98A2B3; font-size: 11px;")
-        
-        bottom_layout.addWidget(self.lbl_status)
-        bottom_layout.addWidget(self.lbl_srt)
-        bottom_layout.addWidget(self.lbl_duration)
+        bottom_layout.addWidget(self.lbl_details)
         bottom_layout.addStretch()
-
-        # [UX] Chặn sự kiện chuột của Label để QFrame bắt được sự kiện Click
-        for lbl in [self.lbl_status, self.lbl_srt, self.lbl_duration]:
-            lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         layout.addLayout(top_layout)
         layout.addLayout(bottom_layout)
+
+    def update_details_text(self, status, has_srt, duration):
+        # [UX Fix] Dùng dấu bullet (•) để ngăn cách tạo cảm giác pro, không rườm rà
+        status_icon = "🟢" if status == "Ready" else "🟡"
+        srt_icon = "📝 Có sẵn SRT" if has_srt else "🤖 Cần AI"
+        self.lbl_details.setText(f"{status_icon} {status}   •   {srt_icon}   •   ⏱ {duration}")
 
     def set_active(self, active):
         if self.is_active != active:

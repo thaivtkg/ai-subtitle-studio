@@ -1,6 +1,25 @@
+import json
 import os
 import subprocess
-import json
+
+from PySide6.QtCore import QThread, Signal
+
+
+class MetadataWorker(QThread):
+    # Signal phát ra: (vid_path, metadata_dict)
+    metadata_parsed = Signal(str, dict)
+
+    def __init__(self, file_paths):
+        super().__init__()
+        # [Safety] Đảm bảo luôn nhận danh sách file
+        self.file_paths = file_paths if isinstance(file_paths, list) else [file_paths]
+
+    def run(self):
+        for path in self.file_paths:
+            if not path or not os.path.exists(path):
+                continue
+            meta = VideoMetadataExtractor.get_metadata(path)
+            self.metadata_parsed.emit(path, meta)
 
 class VideoMetadataExtractor:
     @staticmethod
@@ -38,7 +57,7 @@ class VideoMetadataExtractor:
             data = json.loads(result.stdout)
             return VideoMetadataExtractor._parse_ffprobe_data(video_path, data)
 
-        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        except Exception as e:
             # Ghi log lỗi ngầm, trả về data rỗng an toàn
             print(f"[Metadata Error] {e}")
             return VideoMetadataExtractor.get_empty_metadata()

@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.queue_manager import QueueManager
-from core.video_metadata import VideoMetadataExtractor
+from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
@@ -153,15 +153,20 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Subtitle Studio")
+        self.setMinimumSize(1024, 700)
         self.resize(1100, 720)
         self.setStyleSheet(DARK_STUDIO_QSS)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.old_pos = QPoint()
         self.queue_mgr = QueueManager()
         self.queue_mgr.queue_updated.connect(self.on_queue_updated)
+
+        # [Fix] Đón Signal Highlight giao diện
+        self.queue_mgr.active_changed.connect(
+            lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid)
+        )
+
         self.setAcceptDrops(True)
-
-
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -288,11 +293,16 @@ class MainWindow(QMainWindow):
 
         # Right Panel (Sử dụng QSplitter để chia đôi linh hoạt)
         self.right_splitter = QSplitter(Qt.Vertical)
-        self.right_splitter.setStyleSheet("QSplitter::handle { background: #273247; height: 3px; }")
+        # [FIX UX] Thêm margin cho thanh kéo Splitter để tạo khoảng hở trên/dưới an toàn
+        self.right_splitter.setStyleSheet("QSplitter::handle { background: #273247; height: 1px; margin: 1px 0px; }")
 
         # --- NỬA TRÊN: VIDEO PLAYER ---
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(250)
+        
+        # [FIX BLOCKER] Bơm thêm 12px đệm ở đáy Video Player để bảo vệ thanh Control (Play, Time) khỏi bị cắt xén
+        self.video_player.setContentsMargins(0, 0, 0, 12)
+        
         self.right_splitter.addWidget(self.video_player)
 
         # --- NỬA DƯỚI: TABS (Subtitle, Queue, Log) ---
@@ -341,12 +351,10 @@ class MainWindow(QMainWindow):
         queue_wrapper = QWidget()
         queue_wrapper_layout = QVBoxLayout(queue_wrapper)
 
-        # --- THAY THẾ BẰNG COMPONENT MỚI ---
         self.queue_ui = QueueWidget()
         self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
         self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
         queue_wrapper_layout.addWidget(self.queue_ui)
-        # -----------------------------------
 
         output_layout = QHBoxLayout()
         self.out_input = QLineEdit()
@@ -354,13 +362,14 @@ class MainWindow(QMainWindow):
         out_btn = QPushButton("Browse...")
         out_btn.setObjectName("btn_secondary")
         out_btn.clicked.connect(self.select_output_dir)
+        output_layout.addWidget(QLabel("Output:"))
+        output_layout.addWidget(self.out_input)
         output_layout.addWidget(out_btn)
-        queue_wrapper_layout.addLayout(output_layout)
-        self.bottom_tabs.addTab(queue_wrapper, "📋 Video Queue")
 
-        #queue_wrapper_layout.addWidget(self.scroll_area)
         queue_wrapper_layout.addLayout(output_layout)
-        self.bottom_tabs.addTab(queue_wrapper, "📋 Video Queue")
+        self.bottom_tabs.addTab(self.queue_ui, "📋 Video Queue")
+
+        # [FIX BLOCKER #2] ĐÃ XÓA ĐOẠN ĐẦU NỐI DUPLICATE BỊ LẶP 2 LẦN Ở ĐÂY
 
         # Tab 3: Live Log
         self.log_box = QTextEdit()
@@ -370,12 +379,47 @@ class MainWindow(QMainWindow):
 
         self.right_splitter.addWidget(self.bottom_tabs)
 
-        # Mặc định chia tỷ lệ: Video chiếm 45%, Panel dưới chiếm 55%
-        self.right_splitter.setSizes([450, 550])
+        # =========================================================================
+        # [FIX BLOCKER] Ép Splitter ưu tiên 100% không gian thừa cho Video Player (Stretch=1).
+        # Ép cụm Tabs giữ nguyên kích thước tối thiểu, không được tự phình to (Stretch=0).
+        # =========================================================================
+        self.right_splitter.setStretchFactor(0, 1)
+        self.right_splitter.setStretchFactor(1, 0)
+        self.right_splitter.setSizes([450, 200]) # Cấp mồi 450px cho Video Player để nó không bị ép lúc mở App
 
-        middle_layout.addWidget(self.right_splitter, stretch=1)
+        # [FIX UX] Bọc nửa bên phải vào một Container (Hộp chứa) riêng.
+        # Giúp thanh Output không bị tràn sang cắn lẹm vào phần Sidebar bên trái.
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+        
+        right_layout.addWidget(self.right_splitter, stretch=1)
 
+        # === BẮT ĐẦU: GLOBAL OUTPUT FOLDER ===
+        output_layout = QHBoxLayout()
+        output_layout.setContentsMargins(4, 0, 4, 0)
+        
+        lbl_out = QLabel("📁 Output Folder:")
+        lbl_out.setStyleSheet("font-weight: bold; color: #98A2B3; font-size: 12px;")
+        
+        self.out_input = QLineEdit()
+        self.out_input.setPlaceholderText("Thư mục lưu kết quả xuất video...")
+        
+        out_btn = QPushButton("Browse...")
+        out_btn.setObjectName("btn_secondary")
+        out_btn.clicked.connect(self.select_output_dir)
+        
+        output_layout.addWidget(lbl_out)
+        output_layout.addWidget(self.out_input)
+        output_layout.addWidget(out_btn)
+        
+        # Nhét thanh Output vào dưới cùng của hộp chứa bên phải
+        right_layout.addLayout(output_layout)
+        # =============================================================
 
+        # Nạp hộp chứa bên phải vào Layout ngang ở giữa
+        middle_layout.addWidget(right_container, stretch=1)
         main_layout.addLayout(middle_layout)
 
         # === BẮT ĐẦU: THÊM LẠI THANH TIẾN ĐỘ Ở NGAY TRÊN NÚT START ===
@@ -456,36 +500,19 @@ class MainWindow(QMainWindow):
             event.ignore()
 
     def dropEvent(self, event):
-        # Lấy danh sách toàn bộ các file được thả vào
         urls = event.mimeData().urls()
-        
-        # Danh sách đuôi video hợp lệ
         valid_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
         
-        has_new_file = False # Cờ kiểm tra xem có file mới được thêm vào không
-        last_added = None
-        
+        added_files = []
         for url in urls:
             file_path = url.toLocalFile()
-            
-            # Kiểm tra nếu đúng là file video thì mới xử lý
             if file_path.lower().endswith(valid_extensions):
-                # Gọi QueueManager thay vì dùng dict file_pairs
                 if self.queue_mgr.add_video(file_path):
-                    last_added = file_path
-                    has_new_file = True
-                    
-                    # [Sprint 4] Trích xuất metadata bằng ffprobe ngay lập tức
-                    meta = VideoMetadataExtractor.get_metadata(file_path)
-                    self.queue_mgr.update_metadata(file_path, meta)
+                    added_files.append(file_path)
         
-        # Nếu có ít nhất 1 file hợp lệ được kéo vào, phát tín hiệu làm mới UI
-        if has_new_file:
-            self.queue_mgr.queue_updated.emit()
-            
-            # Tự động chọn và load file cuối cùng được thả vào
-            if last_added:
-                self.on_queue_item_clicked(last_added)
+        if added_files:
+            self._start_metadata_worker(added_files)
+            self.on_queue_item_clicked(added_files[-1])
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if event.buttons() == Qt.LeftButton:
@@ -564,31 +591,45 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(slot)
         return btn
 
+    def _start_metadata_worker(self, video_paths):
+        if not video_paths:
+            return
+            
+        # [Predictive Fix] Dùng List để giữ reference, chống Python thu hồi RAM (GC) làm chết Worker ngầm
+        if not hasattr(self, 'meta_workers'):
+            self.meta_workers = []
+
+        worker = MetadataWorker(video_paths)
+        worker.metadata_parsed.connect(self.queue_mgr.update_metadata)
+        
+        # Tự động tự hủy reference khi Worker chạy xong
+        worker.finished.connect(lambda w=worker: self.meta_workers.remove(w) if w in self.meta_workers else None)
+        
+        self.meta_workers.append(worker)
+        worker.start()
+
     def select_videos(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if files:
-            last_added = None
+            added_files = []
             for f in files:
                 if self.queue_mgr.add_video(f):
-                    last_added = f
-                    # [Sprint 4] Trích xuất metadata bằng ffprobe ngay lập tức
-                    meta = VideoMetadataExtractor.get_metadata(f)
-                    self.queue_mgr.update_metadata(f, meta)
+                    added_files.append(f)
             
-            self.queue_mgr.queue_updated.emit()
-            if last_added:
-                self.on_queue_item_clicked(last_added)
+            # Khởi chạy Worker ngầm cho các file vừa thêm (Chống đơ UI)
+            self._start_metadata_worker(added_files)
+            
+            if added_files:
+                self.on_queue_item_clicked(added_files[-1])
 
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if video_path:
             srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file SRT", "", "Subtitle (*.srt)")
             if srt_path:
-                # Nếu video chưa có trong list, thêm vào trước
                 if video_path not in self.queue_mgr.get_items():
                     self.queue_mgr.add_video(video_path)
-                    meta = VideoMetadataExtractor.get_metadata(video_path)
-                    self.queue_mgr.update_metadata(video_path, meta)
+                    self._start_metadata_worker([video_path])
                     
                 self.queue_mgr.set_srt_for_video(video_path, srt_path)
                 self.on_queue_item_clicked(video_path)
@@ -616,12 +657,9 @@ class MainWindow(QMainWindow):
         count = len(items)
         self.lbl_queue_val.setText(f"{count} video" if count <= 1 else f"{count} videos")
         
-        # Auto-load video đầu tiên nếu rỗng
-        if count > 0 and hasattr(self, 'video_player') and self.video_player.player.source().isEmpty():
-            first_vid = list(items.keys())[0]
-            self.on_queue_item_clicked(first_vid)
-        elif count == 0:
-            # [Fix] Dọn dẹp UI trực tiếp tại đây, TUYỆT ĐỐI KHÔNG GỌI self.clear_files()
+        # [Fix Blocker] Đã xóa đoạn IF auto-load video gây vòng lặp đệ quy. 
+        # Chỉ dọn dẹp màn hình nếu Queue rỗng.
+        if count == 0:
             if hasattr(self, 'video_player'):
                 self.video_player.cleanup()
                 self.video_player.sub_controller.load_srt(None)
@@ -765,12 +803,11 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def on_queue_item_clicked(self, vid_path):
-        # Thông báo cho Manager set active, UI tự động Highlight lại
+        # Hàm duy nhất chịu trách nhiệm Load Video
         self.queue_mgr.set_active(vid_path)
         
         _, srt_path = self.queue_mgr.get_active_data()
 
-        # [Preserve Sprint 3 Logic]
         self.video_player.load_video(vid_path)
         
         if srt_path and os.path.exists(srt_path):
