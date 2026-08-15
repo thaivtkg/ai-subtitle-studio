@@ -32,7 +32,7 @@ from player.video_player import VideoPlayerWidget
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from utils import load_settings, save_settings
-from workers.TaskQueue import AdvancedWorkerThread
+from workers.TaskQueue import HardsubWorker, WhisperWorker
 
 DARK_STUDIO_QSS = """
 QMainWindow {
@@ -165,6 +165,8 @@ class MainWindow(QMainWindow):
         self.queue_mgr.active_changed.connect(
             lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid)
         )
+
+        self.queue_mgr.item_removed.connect(self.on_queue_item_removed_handler)
 
         self.setAcceptDrops(True)
 
@@ -666,18 +668,15 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'sub_editor'):
                 self.sub_editor.table.setRowCount(0)
 
-    # HÃY XÓA TOÀN BỘ 4 DÒNG NÀY ĐI:
-    # def remove_single_file(self, vid_path):
-    #     if vid_path in self.file_pairs:
-    #         del self.file_pairs[vid_path]
-    #         self.refresh_queue_ui()
-
     def start_processing(self):
         items = self.queue_mgr.get_items()
         if not items: return
 
-        tasks = [(vid, data.get("srt_path")) for vid, data in items.items()]
-        output_dir = self.out_input.text().strip()
+        self.is_cancelled_flag = False
+        self.batch_queue = [(vid, data.get("srt_path")) for vid, data in items.items()]
+        self.total_batch_items = len(self.batch_queue)
+        self.current_batch_index = 0
+        self.output_dir = self.out_input.text().strip()
 
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -685,36 +684,159 @@ class MainWindow(QMainWindow):
         
         self.lbl_status_val.setText("Processing")
         self.lbl_status_val.setStyleSheet("color: #F5B942; font-size: 12px; font-weight: bold;")
+        
+        self.process_next_batch_item()
 
-        self.worker = AdvancedWorkerThread(
-            tasks, output_dir, self.prompt_input.text().strip(), 0.0, 
-            self.chk_hardsub.isChecked(), self.size_spin.value(), "white", 
-            self.font_combo.currentText(), self.compute_combo.currentData(), # Thay currentData bằng currentText cho font
-            self.chk_vad.isChecked(), self.spin_silence.value(),model_size=self.model_combo.currentData()
-        )
-        self.worker.progress_signal.connect(self.update_progress)
-        self.worker.log_signal.connect(self.append_log)
-        self.worker.finished_signal.connect(self.process_finished)
-        self.worker.error_signal.connect(self.process_error)
-        self.worker.start()
+    def process_next_batch_item(self):
+        if self.is_cancelled_flag or not hasattr(self, 'batch_queue') or len(self.batch_queue) == 0:
+            if not self.is_cancelled_flag:
+                self.process_finished("Toàn bộ tiến trình đã hoàn tất!")
+            return
+            
+        self.current_batch_index += 1
+        self.current_vid, current_srt = self.batch_queue.pop(0)
+        file_name = os.path.basename(self.current_vid)
+        
+        self.append_log(f"\n==================================================")
+        self.append_log(f"🎬 ĐANG XỬ LÝ VIDEO [{self.current_batch_index}/{self.total_batch_items}]: {file_name}")
+        self.append_log(f"==================================================")
+
+        self.on_queue_item_clicked(self.current_vid)
+
+        if not current_srt:
+            # Tình huống 1: Chưa có SRT -> Chạy AI Whisper
+            self.append_log("[HỆ THỐNG] Khởi tạo luồng AI Whisper...")
+            self.worker = WhisperWorker(
+                video_path=self.current_vid,
+                output_dir=self.output_dir,
+                initial_prompt=self.prompt_input.text().strip(),
+                compute_type=self.compute_combo.currentData(),
+                use_vad=self.chk_vad.isChecked(),
+                min_silence_ms=self.spin_silence.value(),
+                model_size=self.model_combo.currentData()
+            )
+            self.worker.progress_signal.connect(self.update_progress)
+            self.worker.log_signal.connect(self.append_log)
+            self.worker.finished_signal.connect(self.on_whisper_finished)
+            self.worker.error_signal.connect(self.process_error)
+            self.worker.start()
+        else:
+            # Tình huống 2: ĐÃ CÓ SẴN SRT (Vừa chỉnh sửa xong hoặc Import tay)
+            self.append_log(f"[HỆ THỐNG] Phát hiện file SRT có sẵn: {current_srt}")
+            if self.chk_hardsub.isChecked():
+                # [FIX BLOCKER UX] Bỏ qua Hộp thoại xác nhận, Render luôn để đảm bảo tự động hóa Batch!
+                self.append_log("[HỆ THỐNG] Bỏ qua xác nhận. Khởi chạy luồng Hardsub (FFmpeg) ngay lập tức...")
+                self.worker = HardsubWorker(
+                    video_path=self.current_vid,
+                    srt_path=current_srt,
+                    output_dir=self.output_dir,
+                    font_size=self.size_spin.value(),
+                    font_color="white",
+                    font_name=self.font_combo.currentText()
+                )
+                self.worker.progress_signal.connect(self.update_progress)
+                self.worker.log_signal.connect(self.append_log)
+                self.worker.finished_signal.connect(self.on_hardsub_finished)
+                self.worker.error_signal.connect(self.process_error)
+                self.worker.start()
+            else:
+                self.log_skip_hardsub()
+                self.process_next_batch_item()
+
+    def on_whisper_finished(self, msg, srt_path):
+        self.append_log(f"[AI] {msg}")
+        self.queue_mgr.set_srt_for_video(self.current_vid, srt_path) 
+        
+        # Hộp thoại CHỈ được gọi khi AI vừa tạo ra một file SRT MỚI TINH
+        if self.chk_hardsub.isChecked():
+            self.show_confirm_dialog(self.current_vid, srt_path)
+        else:
+            self.log_skip_hardsub()
+            self.process_next_batch_item()
+
+    def log_skip_hardsub(self):
+        if hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+            self.append_log("[HỆ THỐNG] Bỏ qua Hardsub (theo Cài đặt). Chuyển sang Video tiếp theo...")
+        else:
+            self.append_log("[HỆ THỐNG] Bỏ qua Hardsub (theo Cài đặt). Đã xử lý xong video cuối cùng.")
+
+    def show_confirm_dialog(self, vid_path, srt_path):
+        self.progress_bar.setValue(100)
+        self.lbl_speed_eta.setText("Chờ xác nhận từ người dùng...")
+        
+        from ui.hardsub_confirm_dialog import HardsubConfirmDialog
+        dialog = HardsubConfirmDialog(vid_path, self)
+        dialog.exec()
+        
+        choice = dialog.user_choice
+        if choice == HardsubConfirmDialog.HARDSUB:
+            self.append_log("[HỆ THỐNG] Chấp thuận. Khởi chạy luồng Hardsub (FFmpeg)...")
+            self.worker = HardsubWorker(
+                video_path=vid_path,
+                srt_path=srt_path,
+                output_dir=self.output_dir,
+                font_size=self.size_spin.value(),
+                font_color="white",
+                font_name=self.font_combo.currentText()
+            )
+            self.worker.progress_signal.connect(self.update_progress)
+            self.worker.log_signal.connect(self.append_log)
+            self.worker.finished_signal.connect(self.on_hardsub_finished)
+            self.worker.error_signal.connect(self.process_error)
+            self.worker.start()
+            
+        elif choice == HardsubConfirmDialog.EDIT:
+            self.append_log("[HỆ THỐNG] User chọn Edit. Tạm dừng tiến trình Batch để chỉnh sửa.")
+            # [FIX BLOCKER] Chuyển Tab và Load Subtitle mà không làm kẹt luồng UI
+            self.bottom_tabs.setCurrentIndex(0)
+            self.on_queue_item_clicked(vid_path)
+            
+            # Reset UI như hàm Finished nhưng không văng Pop-up block
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            self.lbl_status_val.setText("Idle")
+            self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
+            self.progress_anim.stop()
+            self.progress_bar.setValue(0)
+            self.lbl_speed_eta.setText("Tiến trình tạm dừng để chỉnh sửa.")
+            
+        else:
+            if hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+                self.append_log("[HỆ THỐNG] User chọn Bỏ qua. SRT đã được bảo toàn. Next Video...")
+            else:
+                self.append_log("[HỆ THỐNG] User chọn Bỏ qua. SRT đã được bảo toàn. Đã xử lý xong.")
+            self.process_next_batch_item()
+
+    def on_hardsub_finished(self, msg, out_video_path):
+        self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
+        self.process_next_batch_item() 
 
     def cancel_processing(self):
+        self.is_cancelled_flag = True
+        self.batch_queue = []
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.append_log("[HỆ THỐNG] Đang hủy tiến trình an toàn...")
             self.cancel_btn.setEnabled(False)
 
     def update_progress(self, val, msg):
-        # Kích hoạt Animation trượt mượt mà thay vì nhảy cóc
+        if hasattr(self, 'total_batch_items') and self.total_batch_items > 0:
+            base_p = ((self.current_batch_index - 1) / self.total_batch_items) * 100
+            file_p = (val / self.total_batch_items)
+            global_val = int(base_p + file_p)
+        else:
+            global_val = val
+            
         self.progress_anim.stop()
         self.progress_anim.setStartValue(self.progress_bar.value())
-        self.progress_anim.setEndValue(val)
+        self.progress_anim.setEndValue(global_val)
         self.progress_anim.start()
+        
+        if msg and "Chờ xác nhận" not in self.lbl_speed_eta.text():
+            self.lbl_speed_eta.setText(msg)
 
     def append_log(self, msg):
         self.log_box.append(msg)
-        
-        # Chỉ cập nhật speed từ FFmpeg nếu có
         speed_match = re.search(r"speed=\s*([0-9\.]+x)", msg)
         if speed_match:
             self.lbl_speed_eta.setText(f"Speed: {speed_match.group(1)}")
@@ -724,24 +846,24 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(False)
         self.lbl_status_val.setText("Idle")
         self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
-        # --- THÊM ĐOẠN NÀY ĐỂ RESET THANH TIẾN ĐỘ ---
-        self.progress_anim.stop()           # Dừng hiệu ứng chạy mượt
-        self.progress_bar.setValue(0)       # Trả thanh % về 0
-        self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --") # Reset text tốc độ
-        # ---------------------------------------------
-        QMessageBox.information(self, "Hoàn tất", msg)
-
-    def process_error(self, err):
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-        self.lbl_status_val.setText("Idle")
-        self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
-        # --- THÊM ĐOẠN NÀY ĐỂ RESET THANH TIẾN ĐỘ ---
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --")
-        # ---------------------------------------------
-        QMessageBox.critical(self, "Lỗi", err)
+        
+        # Gọi pop-up cuối cùng (cần import nếu chưa có ở đầu)
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Trạng thái", msg)
+
+    def process_error(self, err):
+        self.append_log(f"❌ [LỖI] {err}")
+        # [FIX] Nhận diện thông báo Hủy để Log chính xác
+        if getattr(self, 'is_cancelled_flag', False) or "hủy" in str(err).lower():
+            self.process_finished("Tiến trình đã bị dừng.")
+        elif hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+            self.append_log("[HỆ THỐNG] Bỏ qua video lỗi, tiếp tục với video tiếp theo trong Queue...")
+            self.process_next_batch_item()
+        else:
+            self.process_finished("Tiến trình hoàn tất (có phát sinh lỗi ở file cuối).")
 
     def open_subtitle_editor(self):
         if not self.queue_mgr.get_items(): return
@@ -818,6 +940,24 @@ class MainWindow(QMainWindow):
             self.video_player.sub_controller.load_srt(None)
 
         self.bottom_tabs.setCurrentIndex(0)
+
+    def on_queue_item_removed_handler(self, vid_path):
+        items = self.queue_mgr.get_items()
+        if not items:
+            # [FIX] Ép buộc QMediaPlayer cắt đứt hoàn toàn File Source đang giữ
+            try:
+                from PySide6.QtCore import QUrl
+                self.video_player.player.stop()
+                self.video_player.player.setSource(QUrl())
+            except Exception:
+                pass
+            
+            self.video_player.cleanup()
+            self.video_player.sub_controller.load_srt(None)
+            self.sub_editor.table.setRowCount(0)
+        else:
+            if self.queue_mgr.active_vid:
+                self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
