@@ -3,6 +3,7 @@ import re
 import time
 import subprocess
 import psutil
+
 try:
     import GPUtil
 except ImportError:
@@ -10,6 +11,7 @@ except ImportError:
 
 from PySide6.QtCore import QThread, Signal
 from utils import resource_path
+from core.output_path_service import OutputPathService
 
 # ==========================================
 # CÁC HÀM TIỆN ÍCH DÙNG CHUNG (HELPER FUNCTIONS)
@@ -83,7 +85,6 @@ class WhisperWorker(QThread):
         self.model_size = model_size
         self._is_cancelled = False
         
-        # [FIX BLOCKER] Lưu lại đường dẫn thật do Backend sinh ra
         self.actual_srt_path = None 
 
     def cancel(self):
@@ -97,17 +98,14 @@ class WhisperWorker(QThread):
                 self.error_signal.emit("Video không có luồng âm thanh (No Audio). Không thể nhận diện phụ đề.")
                 return
 
-            file_name = os.path.basename(self.video_path)
             video_duration = get_video_duration(self.video_path)
             self.log_signal.emit(f"[AI] Đang nhận diện ngôn ngữ và khởi động mô hình...")
             
             from core.Backend import generate_srt
             
-            base_name = os.path.splitext(file_name)[0]
-            clean_out_dir = self.output_dir.replace('\\', '/') if self.output_dir else os.path.dirname(self.video_path).replace('\\', '/')
-            
-            # Gán giá trị fallback mặc định
-            self.actual_srt_path = f"{clean_out_dir}/{base_name}.srt"
+            target_srt = OutputPathService.build_subtitle_path(self.output_dir, self.video_path, ".srt")
+            self.actual_srt_path = target_srt 
+            target_dir = os.path.dirname(target_srt)
             
             whisper_start_time = time.time()
 
@@ -127,17 +125,16 @@ class WhisperWorker(QThread):
 
                 self.progress_signal.emit(overall_p, f"Đang tạo Subtitle...{stats_str}")
                 
-                # [FIX BLOCKER] Bắt (Hook) chính xác đường dẫn file được Backend xuất ra
                 if "Đã hoàn tất xuất file SRT tại:" in msg:
                     extracted_path = msg.split("tại:")[-1].strip()
-                    self.actual_srt_path = extracted_path.replace('\\', '/') # Chuyển ngay thành gạch chéo chuẩn (/)
+                    self.actual_srt_path = extracted_path.replace('\\', '/') 
                 
                 if msg and "Đang" not in msg and "Processing" not in msg and "Hoàn tất" not in msg:
                     self.log_signal.emit(f"[Sub] ➜ {msg}")
 
             generate_srt(
                 video_path=self.video_path,
-                output_dir=clean_out_dir,
+                output_dir=target_dir,
                 model_size=self.model_size,
                 compute_type=self.compute_type,
                 initial_prompt=self.initial_prompt,
@@ -150,7 +147,6 @@ class WhisperWorker(QThread):
             
             if not self._is_cancelled:
                 self.progress_signal.emit(100, "Tạo Subtitle hoàn tất!")
-                # [FIX] Ném trả đường dẫn thực sự về cho GUI xử lý
                 self.finished_signal.emit("Thành công", self.actual_srt_path)
             else:
                 self.error_signal.emit("Đã hủy tiến trình AI.")
@@ -192,19 +188,22 @@ class HardsubWorker(QThread):
                 pass
 
     def run(self):
-        temp_srt_filename = f"temp_hardsub_{id(self)}.srt"
         try:
             psutil.cpu_percent(interval=0.1)
-            file_name = os.path.basename(self.video_path)
             video_duration = get_video_duration(self.video_path)
             
-            clean_out_dir = self.output_dir.replace('\\', '/') if self.output_dir else os.path.dirname(self.video_path).replace('\\', '/')
-            out_video_path = f"{clean_out_dir}/hardsub_{file_name}"
+            # 1. Cấp phát đường dẫn Output chuẩn từ Service
+            out_video_path = OutputPathService.build_hardsub_path(self.output_dir, self.video_path, ".mp4")
+            
+            # [HOTFIX BLOCKER] Bắt buộc khởi tạo thư mục Output trước khi FFmpeg chạm vào
+            # Nếu bỏ qua bước này, FFmpeg sẽ văng lỗi Invalid Argument vì không tìm thấy folder
+            os.makedirs(os.path.dirname(out_video_path), exist_ok=True)
 
-            # [HACK FFMPEG] Copy SRT ra thư mục Root với tên ASCII an toàn tuyệt đối
-            # Tránh 100% lỗi Filter do Dấu hai chấm (:) Ổ đĩa hoặc gạch chéo (/)
-            import shutil
-            shutil.copy2(self.srt_path, temp_srt_filename)
+            # [FIX FFMPEG] Làm sạch hoàn toàn đường dẫn: Chỉ dùng Dấu gạch chéo chuẩn (/)
+            # Bỏ qua cơ chế TempFile và Escape dấu hai chấm (:) vì nó gây xung đột với Backend
+            safe_srt_path = self.srt_path.replace('\\', '/')
+            safe_video_path = self.video_path.replace('\\', '/')
+            safe_out_path = out_video_path.replace('\\', '/')
 
             from core.Backend import burn_hardsub
             
@@ -231,9 +230,9 @@ class HardsubWorker(QThread):
                     self.progress_signal.emit(0, "Đang Burn Hardsub... (Đang tính toán)")
 
             burn_hardsub(
-                video_path=self.video_path.replace('\\', '/'),
-                srt_path=temp_srt_filename, # Truyền tên file trần trụi, sạch sẽ
-                output_path=out_video_path,
+                video_path=safe_video_path,
+                srt_path=safe_srt_path, # Truyền đường dẫn sạch bóng vào Backend
+                output_path=safe_out_path,
                 font_size=self.font_size,
                 font_color=self.font_color,
                 font_name=self.font_name,
@@ -244,7 +243,7 @@ class HardsubWorker(QThread):
 
             if not self._is_cancelled:
                 self.progress_signal.emit(100, "Burn Hardsub hoàn tất!")
-                self.finished_signal.emit("Thành công", out_video_path)
+                self.finished_signal.emit("Thành công", safe_out_path)
             else:
                 self.error_signal.emit("Đã hủy tiến trình FFmpeg.")
 
@@ -253,10 +252,3 @@ class HardsubWorker(QThread):
                 self.error_signal.emit("Đã hủy tiến trình.")
             else:
                 self.error_signal.emit(f"Lỗi Render: {str(e)}")
-        finally:
-            # [CLEANUP] Xóa file tạm sau khi Render xong hoặc lỗi
-            if os.path.exists(temp_srt_filename):
-                try:
-                    os.remove(temp_srt_filename)
-                except Exception:
-                    pass
