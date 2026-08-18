@@ -250,12 +250,12 @@ class SubtitleEditorWidget(QWidget):
 
     # ================= CÁC HÀM CŨ (GIỮ NGUYÊN) =================
     def load_srt_file(self, srt_path):
+        import re # Import thư viện Regex xử lý chuỗi nâng cao
         self.srt_path = srt_path
         
         self.table.blockSignals(True)
         self.table.setRowCount(0)
 
-        # [Safety] Đảm bảo mở lại tín hiệu nếu return sớm
         if not srt_path or not os.path.exists(srt_path): 
             self.table.blockSignals(False)
             return
@@ -263,26 +263,43 @@ class SubtitleEditorWidget(QWidget):
         with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read().replace('\r\n', '\n')
 
-        blocks = content.strip().split("\n\n")
-        self.table.setRowCount(len(blocks))
+        # [FIX P2-T3] Dùng Regex cắt Block an toàn, bất chấp việc dư thừa nhiều dòng trống
+        blocks = re.split(r'\n{2,}', content.strip())
+        
+        valid_blocks = []
+        for block in blocks:
+            lines = block.strip().split("\n")
+            # Yêu cầu tối thiểu 2 dòng: STT và Timecode (Text có thể rỗng)
+            if len(lines) >= 2 and "-->" in lines[1]:
+                idx = lines[0].strip()
+                time_range = lines[1].strip()
+                # Nếu có dòng thứ 3 trở đi thì nối lại làm Text, nếu không thì trả về rỗng ""
+                text = "\n".join(lines[2:]) if len(lines) > 2 else ""
+                valid_blocks.append((idx, time_range, text))
 
-        for row, block in enumerate(blocks):
-            lines = block.split("\n")
-            if len(lines) >= 3:
-                index = lines[0]
-                time_range = lines[1]
-                text = "\n".join(lines[2:])
+        self.table.setRowCount(len(valid_blocks))
 
-                times = time_range.split(" --> ")
-                start = times[0] if len(times) > 0 else ""
-                end = times[1] if len(times) > 1 else ""
+        for row, (index, time_range, text) in enumerate(valid_blocks):
+            times = time_range.split(" --> ")
+            start = times[0].strip() if len(times) > 0 else ""
+            end = times[1].strip() if len(times) > 1 else ""
 
-                self.table.setItem(row, 0, QTableWidgetItem(index))
-                self.table.setItem(row, 1, QTableWidgetItem(start))
-                self.table.setItem(row, 2, QTableWidgetItem(end))
-                self.table.setItem(row, 3, QTableWidgetItem(text))
+            self.table.setItem(row, 0, QTableWidgetItem(index))
+            self.table.setItem(row, 1, QTableWidgetItem(start))
+            self.table.setItem(row, 2, QTableWidgetItem(end))
+            
+            # [P2-T3] Hỗ trợ hiển thị Placeholder cho câu rỗng (Timing Draft)
+            display_text = text if text.strip() else "[ Chưa có nội dung ]"
+            text_item = QTableWidgetItem(display_text)
+            if not text.strip():
+                from PySide6.QtGui import QColor
+                text_item.setForeground(QColor("#667085")) # Xám mờ
+                font = text_item.font()
+                font.setItalic(True)
+                text_item.setFont(font)
+            
+            self.table.setItem(row, 3, text_item)
 
-        # [Safety] Mở lại tín hiệu sau khi nạp xong
         self.table.blockSignals(False)
 
     def on_row_double_clicked(self, row, column):
@@ -310,10 +327,14 @@ class SubtitleEditorWidget(QWidget):
             idx = self.table.item(row, 0)
             start = self.table.item(row, 1)
             end = self.table.item(row, 2)
-            text = self.table.item(row, 3)
+            text_item = self.table.item(row, 3)
 
-            if idx and start and end and text:
-                new_blocks.append(f"{idx.text()}\n{start.text()} --> {end.text()}\n{text.text()}")
+            if idx and start and end and text_item:
+                # [P2-T3] Ép ngược chuỗi Placeholder về chuỗi rỗng tuyệt đối trước khi ghi file
+                raw_text = text_item.text()
+                if raw_text == "[ Chưa có nội dung ]":
+                    raw_text = ""
+                new_blocks.append(f"{idx.text()}\n{start.text()} --> {end.text()}\n{raw_text}")
         try:
             with open(self.srt_path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(new_blocks) + "\n")
@@ -348,7 +369,6 @@ class SubtitleEditorWidget(QWidget):
             it_end = self.table.item(r, 2)
             it_text = self.table.item(r, 3)
 
-            # [Safety] Kiểm tra phần tử tồn tại trước khi lấy text
             if it_stt and it_start and it_end and it_text:
                 try:
                     stt = int(it_stt.text().strip())
@@ -357,8 +377,13 @@ class SubtitleEditorWidget(QWidget):
                     
                 start_ms = self.time_str_to_ms(it_start.text())
                 end_ms = self.time_str_to_ms(it_end.text())
-                text = it_text.text()
-                data.append((start_ms, end_ms, text, stt))
+                
+                # [P2-T3] Đảm bảo gửi chuỗi rỗng sang Controller thay vì chữ Placeholder
+                raw_text = it_text.text()
+                if raw_text == "[ Chưa có nội dung ]":
+                    raw_text = ""
+                
+                data.append((start_ms, end_ms, raw_text, stt))
                 
         self.live_edit_applied.emit(data)
 

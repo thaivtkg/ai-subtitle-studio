@@ -40,12 +40,19 @@ class SubtitleOverlay(QLabel):
         self.update()
 
     def set_subtitle(self, text):
-        # Giữ nguyên ký tự \n để hỗ trợ multi-line
-        self.current_text = text
+        # [P2-T5] Phân biệt: Text rỗng của đoạn Active (Draft) khác với việc không có đoạn nào Active
+        if not text.strip():
+            self.current_text = "[...]"
+            self.is_placeholder = True
+        else:
+            self.current_text = text
+            self.is_placeholder = False
         self.update()
 
     def clear_subtitle(self):
+        # Trạng thái rỗng hoàn toàn: Kim thời gian đã chạy ra khỏi mọi khung Timing
         self.current_text = ""
+        self.is_placeholder = False
         self.update()
 
     def paintEvent(self, event):
@@ -56,13 +63,15 @@ class SubtitleOverlay(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # [Tối ưu] Ép QPainter vẽ bằng Font đã được đo đạc bằng Pixel
+        # [P2-T5] Áp dụng Opacity 60% làm mờ tinh tế nếu chỉ là Timing Preview
+        if getattr(self, 'is_placeholder', False):
+            painter.setOpacity(0.6)
+        
         if hasattr(self, 'custom_font'):
             painter.setFont(self.custom_font)
         else:
             painter.setFont(self.font())
 
-        # Xóa dấu ngắt dòng cứng để WordWrap tự tính toán
         display_text = self.current_text
 
         rect = self.rect()
@@ -83,7 +92,6 @@ class SubtitleOverlay(QLabel):
             margin = int(self.height() * 0.08) 
             rect.setBottom(rect.bottom() - margin)
 
-        # 1. Vẽ Outline
         if self.outline_width > 0:
             pen = QPen(self.outline_color)
             painter.setPen(pen)
@@ -96,6 +104,5 @@ class SubtitleOverlay(QLabel):
             for dx, dy in offsets:
                 painter.drawText(rect.translated(dx, dy), flags, display_text)
 
-        # 2. Vẽ Text chính
         painter.setPen(QPen(self.text_color))
         painter.drawText(rect, flags, display_text)

@@ -21,6 +21,7 @@ class SubtitleController(QObject):
         
 
     def load_srt(self, srt_path):
+        import re
         self.subtitles.clear()
         self.start_times.clear() # Clear cache
         self.current_idx = -1
@@ -33,15 +34,23 @@ class SubtitleController(QObject):
             with open(srt_path, 'r', encoding='utf-8') as f:
                 content = f.read().replace('\r\n', '\n')
 
-            blocks = content.strip().split('\n\n')
+            # [FIX P2-T3] Đồng bộ thuật toán Regex để nhận diện Timing Draft (chỉ có 2 dòng)
+            blocks = re.split(r'\n{2,}', content.strip())
             for block in blocks:
-                lines = block.split('\n')
-                if len(lines) >= 3:
-                    stt = int(lines[0].strip('\ufeff').strip()) 
+                lines = block.strip().split('\n')
+                # Yêu cầu tối thiểu 2 dòng: STT và Timecode (Text có thể rỗng)
+                if len(lines) >= 2 and '-->' in lines[1]:
+                    try:
+                        stt = int(lines[0].strip('\ufeff').strip()) 
+                    except ValueError:
+                        continue # Bỏ qua an toàn nếu STT bị rác
+                        
                     times = lines[1].split(' --> ')
                     start_ms = self.time_str_to_ms(times[0])
                     end_ms = self.time_str_to_ms(times[1])
-                    text = '\n'.join(lines[2:])
+                    
+                    # Ghép nội dung chữ, nếu không có thì mặc định chuỗi rỗng ""
+                    text = '\n'.join(lines[2:]) if len(lines) > 2 else ""
                     self.subtitles.append((start_ms, end_ms, text, stt))
 
             self.subtitles.sort(key=lambda x: x[0])
