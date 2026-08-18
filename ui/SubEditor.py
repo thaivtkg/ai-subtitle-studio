@@ -483,8 +483,12 @@ class SubtitleEditorWidget(QWidget):
     def on_row_double_clicked(self, row, column):
         start_item = self.table.item(row, 1)
         if start_item:
-            ms = self.time_str_to_ms(start_item.text())
-            self.seek_requested.emit(ms)
+            try:
+                ms = self.time_str_to_ms(start_item.text())
+                self.seek_requested.emit(ms)
+            except ValueError:
+                # Bỏ qua thao tác Seek nếu timestamp đang bị sai định dạng
+                pass
 
     # ================= LOGIC PREVIEW STYLE =================
     def _open_color_dialog(self, initial_color, title):
