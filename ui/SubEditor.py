@@ -31,7 +31,8 @@ class SubtitleEditorWidget(QWidget):
     style_changed = Signal(dict)
     preview_toggled = Signal(bool)
     live_edit_applied = Signal(list)
-    fill_text_requested = Signal()
+    # [P2-T13] Truyền tham số: (index_bắt_đầu, số_lượng_câu)
+    fill_text_requested = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,30 +102,50 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         left_layout.addWidget(self.table)
+
         
-        # --- CỤM 3 NÚT ĐIỀU KHIỂN DƯỚI BẢNG ---
+        
+        # =========================================================
+        # [P2-T13, P2-T14] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE
+        # =========================================================
+        ai_frame = QFrame()
+        ai_frame.setStyleSheet("background-color: #1A212E; border: 1px solid #273247; border-radius: 6px; padding: 4px;")
+        ai_layout = QHBoxLayout(ai_frame)
+        
+        self.lbl_progress = QLabel("Đã điền: 0 / 0")
+        self.lbl_progress.setStyleSheet("color: #98A2B3; font-weight: bold; border: none;")
+        ai_layout.addWidget(self.lbl_progress)
+        
+        ai_layout.addWidget(QLabel(" | Batch AI:", styleSheet="color: #98A2B3; border: none;"))
+        self.spin_batch = QSpinBox()
+        self.spin_batch.setRange(1, 100)
+        self.spin_batch.setValue(5)
+        self.spin_batch.setStyleSheet("QSpinBox { padding: 4px; min-height: 24px; max-width: 50px; }")
+        ai_layout.addWidget(self.spin_batch)
+        
+        self.btn_continue = QPushButton("▶ Tiếp tục từ câu...")
+        self.btn_continue.setStyleSheet("background-color: #7B61FF; color: #FFF; font-weight: bold; border-radius: 4px; padding: 6px 12px;")
+        self.btn_continue.clicked.connect(self.trigger_ai_fill)
+        ai_layout.addWidget(self.btn_continue)
+        
+        left_layout.addWidget(ai_frame)
+        
+        # --- CỤM NÚT LƯU & DUYỆT BÊN DƯỚI ---
         btn_layout = QHBoxLayout()
         
-        # Nút 1: Approve Timing (Đẩy State lên FINAL)
         self.approve_btn = QPushButton("✅ Chốt Timing")
         self.approve_btn.setStyleSheet("background-color: #33D17A; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px;")
         self.approve_btn.clicked.connect(self.approve_timing)
         
-        # Nút 2: Generate Text (AI Engine)
-        self.fill_text_btn = QPushButton("✨ Điền Chữ AI")
-        self.fill_text_btn.setObjectName("btn_primary")
-        self.fill_text_btn.clicked.connect(self.fill_text_requested.emit)
-        
         self.save_draft_btn = QPushButton("📦 Lưu Draft")
         self.save_draft_btn.setObjectName("btn_secondary")
-        self.save_draft_btn.clicked.connect(self.save_draft)
+        self.save_draft_btn.clicked.connect(lambda: self.save_draft(silent=False))
         
         self.save_btn = QPushButton("💾 Lưu SRT")
         self.save_btn.setObjectName("btn_secondary")
         self.save_btn.clicked.connect(self.save_srt)
         
         btn_layout.addWidget(self.approve_btn)
-        btn_layout.addWidget(self.fill_text_btn)
         btn_layout.addWidget(self.save_draft_btn)
         btn_layout.addWidget(self.save_btn)
         left_layout.addLayout(btn_layout)
@@ -323,6 +344,7 @@ class SubtitleEditorWidget(QWidget):
             self.all_segments[abs_idx]['text'] = raw_text
             
             self.sync_to_controller()
+            self.update_draft_progress()
 
     def highlight_row_by_stt(self, stt):
         target_idx = -1
@@ -403,6 +425,7 @@ class SubtitleEditorWidget(QWidget):
 
         self.current_page = 0
         self.render_page()
+        self.update_draft_progress()
 
     def save_srt(self):
         if not self.srt_path: return
@@ -479,6 +502,7 @@ class SubtitleEditorWidget(QWidget):
             
         self.current_page = 0
         self.render_page()
+        self.update_draft_progress()
 
     def on_row_double_clicked(self, row, column):
         start_item = self.table.item(row, 1)
@@ -541,3 +565,75 @@ class SubtitleEditorWidget(QWidget):
             seg['status'] = 'final'
             
         QMessageBox.information(self, "Đã duyệt", "Đã chốt khung thời gian (Timing Approved). Trạng thái đã được chuyển sang FINAL.\nBạn có thể tiến hành chạy AI điền chữ.")
+
+    # =================================================================
+    # LOGIC: DRAFT RESUME / CONTINUE (P2-T14)
+    # =================================================================
+    def update_draft_progress(self):
+        """ Quét trạng thái để tìm câu rỗng tiếp theo và cập nhật UI """
+        if not self.all_segments:
+            self.lbl_progress.setText("Trống")
+            self.btn_continue.setEnabled(False)
+            return
+            
+        done_count = sum(1 for s in self.all_segments if s.get('text', '').strip())
+        total = len(self.all_segments)
+        self.lbl_progress.setText(f"Đã điền: {done_count} / {total}")
+        
+        self.next_empty_idx = -1
+        for i, seg in enumerate(self.all_segments):
+            # Ưu tiên tìm dựa trên status hoặc text rỗng
+            if not seg.get('text', '').strip() or seg.get('status') == 'timing_only':
+                self.next_empty_idx = i
+                break
+                
+        if self.next_empty_idx != -1:
+            stt = self.all_segments[self.next_empty_idx]['stt']
+            self.btn_continue.setText(f"▶ Tiếp tục từ câu {stt}")
+            self.btn_continue.setEnabled(True)
+        else:
+            self.btn_continue.setText("✨ Đã hoàn thành toàn bộ")
+            self.btn_continue.setEnabled(False)
+
+    def trigger_ai_fill(self):
+        """ Phát tín hiệu gọi Backend chỉ xử lý đúng Range được yêu cầu """
+        if hasattr(self, 'next_empty_idx') and self.next_empty_idx != -1:
+            count = self.spin_batch.value()
+            self.fill_text_requested.emit(self.next_empty_idx, count)
+
+    def save_draft(self, silent=False):
+        """ Sửa lại save_draft để hỗ trợ lưu ngầm (Silent Save) sau mỗi Batch AI """
+        import json
+        from PySide6.QtWidgets import QFileDialog
+        
+        path = self.srt_path
+        if not silent or not path or not path.endswith('.ai-subtitle-draft'):
+            default_name = self.srt_path.replace('.srt', '.ai-subtitle-draft') if self.srt_path else "Project.ai-subtitle-draft"
+            path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
+            
+        if not path: return
+        
+        draft_data = {"version": 1.0, "segments": []}
+        for seg in self.all_segments:
+            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
+            current_status = seg.get('status', 'timing_only')
+            if current_status != 'final':
+                current_status = "draft" if raw_text.strip() else "timing_only"
+                
+            draft_data["segments"].append({
+                "id": seg['stt'],
+                "start_ms": self.time_str_to_ms(seg['start']),
+                "end_ms": self.time_str_to_ms(seg['end']),
+                "text": raw_text,
+                "status": current_status,
+                "metadata": seg.get('metadata', {"type": "normal"})
+            })
+            
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(draft_data, f, ensure_ascii=False, indent=4)
+            self.srt_path = path # Lưu vết đường dẫn để lần sau Silent Save
+            if not silent:
+                QMessageBox.information(self, "Thành công", f"Đã bảo lưu Draft tại:\n{path}")
+        except Exception as e:
+            if not silent: QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")

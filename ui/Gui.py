@@ -472,7 +472,8 @@ class MainWindow(QMainWindow):
         bottom_bar = QHBoxLayout()
         bottom_bar.setSpacing(8)
 
-        self.start_btn = QPushButton("Start Batch")
+        # [P2-T15] Đổi tên thành Start Queue để rạch ròi với Continue Draft
+        self.start_btn = QPushButton("▶ Start Queue")
         self.start_btn.setObjectName("btn_primary")
         self.start_btn.clicked.connect(self.start_processing)
 
@@ -1006,42 +1007,43 @@ class MainWindow(QMainWindow):
                 self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
     # =========================================================================
-    # ĐIỀU PHỐI LUỒNG FILL TEXT WORKER (P2-T9) & PHÂN TRANG (P2-T7)
+    # ĐIỀU PHỐI LUỒNG FILL TEXT WORKER (P2-T13, P2-T14)
     # =========================================================================
-    def start_fill_text_worker(self):
+    def start_fill_text_worker(self, start_idx, count):
         if not self.queue_mgr.active_vid:
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn video cần điền chữ.")
             return
             
-        # [P2-T7] Lấy toàn bộ dữ liệu trực tiếp từ Model thay vì Table giao diện
-        segments = []
-        for seg in self.sub_editor.all_segments:
-            start_ms = self.sub_editor.time_str_to_ms(seg['start'])
-            end_ms = self.sub_editor.time_str_to_ms(seg['end'])
-            raw_text = seg['text']
-            if raw_text == "[ Chưa có nội dung ]": raw_text = ""
-            try: stt = int(seg['stt'])
-            except: stt = 0
-            
-            segments.append((start_ms, end_ms, raw_text, stt))
+        # [P2-T13] CHỈ LẤY ĐÚNG RANGE (TỪ CÂU... ĐẾN CÂU...) ĐỂ ĐẨY CHO AI
+        target_segments = self.sub_editor.all_segments[start_idx : start_idx + count]
+        
+        segments_for_ai = []
+        for seg in target_segments:
+            s_ms = self.sub_editor.time_str_to_ms(seg['start'])
+            e_ms = self.sub_editor.time_str_to_ms(seg['end'])
+            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
+            stt = int(seg['stt']) if str(seg['stt']).isdigit() else 0
+            segments_for_ai.append((s_ms, e_ms, raw_text, stt))
                 
-        if not segments: 
+        if not segments_for_ai: 
             return
         
+        # Khóa Giao diện (Freeze UI)
         self.is_cancelled_flag = False
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.progress_bar.setValue(0)
-        self.sub_editor.fill_text_btn.setEnabled(False)
+        self.sub_editor.btn_continue.setEnabled(False)
+        self.sub_editor.save_draft_btn.setEnabled(False)
         self.sub_editor.save_btn.setEnabled(False)
         
         self.bottom_tabs.setCurrentIndex(2) 
-        self.append_log(f"\n[HỆ THỐNG] Bắt đầu chốt Timing và Điền chữ cho {len(segments)} câu...")
+        self.append_log(f"\n[HỆ THỐNG] Đang chạy AI Điền chữ cho {len(segments_for_ai)} câu (Từ dòng {start_idx + 1})...")
         
         from workers.TaskQueue import FillTextWorker
         self.worker = FillTextWorker(
             video_path=self.queue_mgr.active_vid,
-            segments_data=segments,
+            segments_data=segments_for_ai, # AI chỉ nhận đúng phần cần chạy
             initial_prompt=self.prompt_input.text().strip(),
             compute_type=self.compute_combo.currentData(),
             model_size=self.model_combo.currentData()
@@ -1055,23 +1057,30 @@ class MainWindow(QMainWindow):
     def on_fill_text_finished(self, filled_segments):
         self.bottom_tabs.setCurrentIndex(0)
         
-        # [P2-T7] Điền trực tiếp kết quả Text AI trả về vào Model Tổng
-        for row, (start_ms, end_ms, text, stt) in enumerate(filled_segments):
-            if row < len(self.sub_editor.all_segments):
-                self.sub_editor.all_segments[row]['text'] = text
+        # [P2-T14] Đưa Text đã dịch về đúng STT trong Model tổng
+        for start_ms, end_ms, text, stt in filled_segments:
+            for seg in self.sub_editor.all_segments:
+                if str(seg['stt']) == str(stt):
+                    seg['text'] = text
+                    seg['status'] = 'draft' # Cập nhật Status an toàn
+                    break
         
-        # Ra lệnh cho Giao diện Vẽ lại trang hiện tại và Đồng bộ với Video Controller
+        # UI Refresh
         self.sub_editor.render_page()
+        self.sub_editor.update_draft_progress()
         
+        # [P2-T14] AUTO-SAVE DRAFT (Silent Checkpoint)
+        self.sub_editor.save_draft(silent=True)
+        self.append_log("[HỆ THỐNG] Đã lưu Checkpoint Draft ngầm.")
+        
+        # Mở khóa Giao diện
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.progress_anim.stop()
         self.progress_bar.setValue(100)
-        self.lbl_speed_eta.setText("Điền chữ thành công! Hãy ấn Lưu (Ctrl+S).")
-        self.sub_editor.fill_text_btn.setEnabled(True)
+        self.lbl_speed_eta.setText("Batch AI hoàn tất! Sẵn sàng cho lượt tiếp theo.")
+        self.sub_editor.save_draft_btn.setEnabled(True)
         self.sub_editor.save_btn.setEnabled(True)
-        
-        QMessageBox.information(self, "Thành công", "Đã điền chữ xong! Vui lòng ấn 'Lưu thay đổi (Ctrl+S)' để lưu kết quả vào file.")
     
 if __name__ == "__main__":
     app = QApplication(sys.argv)
