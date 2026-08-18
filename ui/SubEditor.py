@@ -63,7 +63,7 @@ class SubtitleEditorWidget(QWidget):
         page_layout.addWidget(QLabel("Hiển thị:", styleSheet="font-weight:bold; color:#98A2B3;"))
         
         self.group_combo = QComboBox()
-        self.group_combo.addItems(["Tất cả", "5 dòng", "10 dòng", "20 dòng", "50 dòng"])
+        self.group_combo.addItems(["Tất cả", "1 dòng", "5 dòng", "10 dòng", "20 dòng", "50 dòng"])
         self.group_combo.currentIndexChanged.connect(self.change_group_size)
         page_layout.addWidget(self.group_combo)
         page_layout.addStretch()
@@ -105,7 +105,13 @@ class SubtitleEditorWidget(QWidget):
         # --- CỤM 3 NÚT ĐIỀU KHIỂN DƯỚI BẢNG ---
         btn_layout = QHBoxLayout()
         
-        self.fill_text_btn = QPushButton("✨ Chốt Timing & Điền Chữ AI")
+        # Nút 1: Approve Timing (Đẩy State lên FINAL)
+        self.approve_btn = QPushButton("✅ Chốt Timing")
+        self.approve_btn.setStyleSheet("background-color: #33D17A; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px;")
+        self.approve_btn.clicked.connect(self.approve_timing)
+        
+        # Nút 2: Generate Text (AI Engine)
+        self.fill_text_btn = QPushButton("✨ Điền Chữ AI")
         self.fill_text_btn.setObjectName("btn_primary")
         self.fill_text_btn.clicked.connect(self.fill_text_requested.emit)
         
@@ -113,10 +119,11 @@ class SubtitleEditorWidget(QWidget):
         self.save_draft_btn.setObjectName("btn_secondary")
         self.save_draft_btn.clicked.connect(self.save_draft)
         
-        self.save_btn = QPushButton("💾 Lưu thay đổi (Ctrl+S)")
+        self.save_btn = QPushButton("💾 Lưu SRT")
         self.save_btn.setObjectName("btn_secondary")
         self.save_btn.clicked.connect(self.save_srt)
         
+        btn_layout.addWidget(self.approve_btn)
         btn_layout.addWidget(self.fill_text_btn)
         btn_layout.addWidget(self.save_draft_btn)
         btn_layout.addWidget(self.save_btn)
@@ -284,12 +291,29 @@ class SubtitleEditorWidget(QWidget):
         abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
         if abs_idx >= len(self.all_segments): return
 
+        # Lấy dữ liệu cũ đề phòng user nhập sai
+        old_start = self.all_segments[abs_idx]['start']
+        old_end = self.all_segments[abs_idx]['end']
+
         it_stt = self.table.item(row, 0)
         it_start = self.table.item(row, 1)
         it_end = self.table.item(row, 2)
         it_text = self.table.item(row, 3)
 
         if it_stt and it_start and it_end and it_text:
+            try:
+                # Kiểm tra Validation
+                self.time_str_to_ms(it_start.text())
+                self.time_str_to_ms(it_end.text())
+            except ValueError:
+                QMessageBox.warning(self, "Lỗi định dạng", "Timestamp không hợp lệ.\nVui lòng nhập đúng chuẩn: HH:MM:SS,mmm")
+                # Block signal để revert giá trị không gây đệ quy
+                self.table.blockSignals(True)
+                it_start.setText(old_start)
+                it_end.setText(old_end)
+                self.table.blockSignals(False)
+                return
+
             self.all_segments[abs_idx]['stt'] = it_stt.text()
             self.all_segments[abs_idx]['start'] = it_start.text()
             self.all_segments[abs_idx]['end'] = it_end.text()
@@ -337,15 +361,12 @@ class SubtitleEditorWidget(QWidget):
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     def time_str_to_ms(self, time_str):
-        try:
-            time_str = time_str.strip()
-            parts = time_str.replace(',', ':').split(':')
-            if len(parts) == 4:
-                h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-                return (h * 3600 + m * 60 + s) * 1000 + ms
-            return 0
-        except Exception:
-            return 0
+        time_str = time_str.strip()
+        parts = time_str.replace(',', ':').split(':')
+        if len(parts) == 4:
+            h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+            return (h * 3600 + m * 60 + s) * 1000 + ms
+        raise ValueError("Sai định dạng HH:MM:SS,mmm")
 
     def load_srt_file(self, srt_path):
         self.srt_path = srt_path
@@ -375,7 +396,9 @@ class SubtitleEditorWidget(QWidget):
                     "stt": idx,
                     "start": start,
                     "end": end,
-                    "text": text
+                    "text": text,
+                    "status": "draft",
+                    "metadata": {"type": "normal"}
                 })
 
         self.current_page = 0
@@ -409,14 +432,19 @@ class SubtitleEditorWidget(QWidget):
         
         for seg in self.all_segments:
             raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
-            status = "draft" if raw_text.strip() else "timing_only"
+            
+            # [FIX HIGH] Bảo toàn Status, không tự ý ghi đè nếu đã là FINAL
+            current_status = seg.get('status', 'timing_only')
+            if current_status != 'final':
+                current_status = "draft" if raw_text.strip() else "timing_only"
+                
             draft_data["segments"].append({
                 "id": seg['stt'],
                 "start_ms": self.time_str_to_ms(seg['start']),
                 "end_ms": self.time_str_to_ms(seg['end']),
                 "text": raw_text,
-                "status": status,
-                "metadata": {"type": "normal"}
+                "status": current_status,
+                "metadata": seg.get('metadata', {"type": "normal"})
             })
             
         try:
@@ -427,6 +455,7 @@ class SubtitleEditorWidget(QWidget):
             QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")
 
     def load_draft_file(self, draft_path):
+        import json
         self.srt_path = draft_path 
         self.all_segments.clear()
         
@@ -438,11 +467,14 @@ class SubtitleEditorWidget(QWidget):
             data = json.load(f)
             
         for seg in data.get("segments", []):
+            # [FIX HIGH] Đọc và giữ nguyên Status + Metadata (Round-trip an toàn)
             self.all_segments.append({
                 "stt": str(seg.get("id", 0)),
                 "start": self.ms_to_time_str(seg.get("start_ms", 0)),
                 "end": self.ms_to_time_str(seg.get("end_ms", 0)),
-                "text": seg.get("text", "")
+                "text": seg.get("text", ""),
+                "status": seg.get("status", "timing_only"),
+                "metadata": seg.get("metadata", {"type": "normal"})
             })
             
         self.current_page = 0
@@ -495,3 +527,13 @@ class SubtitleEditorWidget(QWidget):
             "out_width": self.outline_spin.value(),
             "position": current_pos
         })
+
+    def approve_timing(self):
+        """ [P2-T8] Đẩy trạng thái của toàn bộ segment hiện tại sang FINAL """
+        if not self.all_segments:
+            return
+            
+        for seg in self.all_segments:
+            seg['status'] = 'final'
+            
+        QMessageBox.information(self, "Đã duyệt", "Đã chốt khung thời gian (Timing Approved). Trạng thái đã được chuyển sang FINAL.\nBạn có thể tiến hành chạy AI điền chữ.")

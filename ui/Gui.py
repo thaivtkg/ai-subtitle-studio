@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         # Sidebar
         sidebar_frame = QFrame()
         sidebar_frame.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 8px;")
-        sidebar_frame.setFixedWidth(260)
+        sidebar_frame.setFixedWidth(280)
         sidebar_layout = QVBoxLayout(sidebar_frame)
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(6)
