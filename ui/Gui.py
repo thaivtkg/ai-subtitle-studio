@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.Backend import is_garbage
 from core.queue_manager import QueueManager
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
@@ -243,6 +244,21 @@ class MainWindow(QMainWindow):
         ai_form_layout = QVBoxLayout()
         ai_form_layout.setSpacing(4)
 
+        # --- BẮT ĐẦU THÊM: [P2-T2] CHỌN CHẾ ĐỘ XỬ LÝ (MODE) ---
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Full Subtitle (AI sinh Text)", "full")
+        self.mode_combo.addItem("Timing Draft (Chỉ tạo khung thời gian)", "timing")
+        self.mode_combo.setStyleSheet("QComboBox { font-weight: bold; color: #35C8FF; }")
+        
+        ai_form_layout.addWidget(QLabel("Chế độ xử lý (Pipeline Mode):"))
+        ai_form_layout.addWidget(self.mode_combo)
+
+        self.mode_combo.currentIndexChanged.connect(
+            lambda: self.chk_hardsub.setEnabled(self.mode_combo.currentData() == "full")
+        )
+
+        # --- KẾT THÚC THÊM ---
+
         # --- THÊM PHẦN CHỌN MODEL Ở ĐÂY ---
         self.model_combo = QComboBox()
         self.model_combo.addItem("Large V3 Turbo (Khuyên dùng - Nhanh)", "large-v3-turbo")
@@ -346,6 +362,9 @@ class MainWindow(QMainWindow):
         # --- THÊM PHẦN NÀY: 4. Đồng bộ Real-time từ Bảng sang Lõi Controller ---
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         # -----------------------------------------------------------------------
+
+        # [P2-T9] Kích hoạt luồng AI Điền Chữ khi bấm Nút "Chốt Timing"
+        self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
 
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
@@ -541,7 +560,12 @@ class MainWindow(QMainWindow):
 
     def apply_saved_settings(self):
         settings = load_settings()
-        if not settings: return # Nếu chưa có cài đặt thì bỏ qua
+        if not settings: return 
+
+        # [P2-T2] Khôi phục Chế độ xử lý (Pipeline Mode)
+        if "mode" in settings:
+            idx = self.mode_combo.findData(settings["mode"])
+            if idx >= 0: self.mode_combo.setCurrentIndex(idx)
 
         # Khôi phục Model Whisper
         if "model_size" in settings:
@@ -627,7 +651,8 @@ class MainWindow(QMainWindow):
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if video_path:
-            srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file SRT", "", "Subtitle (*.srt)")
+            # [P2-T10] Mở rộng bộ lọc cho phép nạp cả file Draft
+            srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file Phụ đề / Draft", "", "Subtitle & Draft (*.srt *.ai-subtitle-draft)")
             if srt_path:
                 if video_path not in self.queue_mgr.get_items():
                     self.queue_mgr.add_video(video_path)
@@ -641,7 +666,7 @@ class MainWindow(QMainWindow):
     #     # [Clear All Requirements] Đảm bảo dọn dẹp Player, Editor và Overlay
     #     self.video_player.cleanup()
     #     self.video_player.sub_controller.load_srt(None)
-    #     self.sub_editor.table.setRowCount(0)
+    #     self.sub_editor.table.setRowCount(0)  
 
     def clear_files(self):
         # [Fix] Chỉ ra lệnh xóa Data Model. UI sẽ tự động dọn dẹp thông qua Signal
@@ -713,7 +738,8 @@ class MainWindow(QMainWindow):
                 compute_type=self.compute_combo.currentData(),
                 use_vad=self.chk_vad.isChecked(),
                 min_silence_ms=self.spin_silence.value(),
-                model_size=self.model_combo.currentData()
+                model_size=self.model_combo.currentData(),
+                generation_mode=self.mode_combo.currentData()
             )
             self.worker.progress_signal.connect(self.update_progress)
             self.worker.log_signal.connect(self.append_log)
@@ -747,7 +773,15 @@ class MainWindow(QMainWindow):
         self.append_log(f"[AI] {msg}")
         self.queue_mgr.set_srt_for_video(self.current_vid, srt_path) 
         
-        # Hộp thoại CHỈ được gọi khi AI vừa tạo ra một file SRT MỚI TINH
+        # [FIX TIMING WORKFLOW] Nếu là Timing Draft, chuyển thẳng sang Editor để kiểm duyệt
+        if self.mode_combo.currentData() == "timing":
+            self.append_log("[HỆ THỐNG] Đã tạo xong Timing Artifact. Chuyển sang Subtitle Editor để kiểm duyệt...")
+            self.on_queue_item_clicked(self.current_vid)
+            self.bottom_tabs.setCurrentIndex(0)
+            self.process_finished("Đã tạo xong khung thời gian (Timing Draft)! Vui lòng kiểm duyệt trên Editor.")
+            return
+
+        # Với Full Subtitle: Hỏi xác nhận Hardsub nếu có bật tùy chọn
         if self.chk_hardsub.isChecked():
             self.show_confirm_dialog(self.current_vid, srt_path)
         else:
@@ -844,13 +878,20 @@ class MainWindow(QMainWindow):
     def process_finished(self, msg):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        
+        # Mở khóa các nút điều khiển trong Subtitle Editor đề phòng trường hợp Cancel/Error
+        if hasattr(self, 'sub_editor'):
+            if hasattr(self.sub_editor, 'fill_text_btn'):
+                self.sub_editor.fill_text_btn.setEnabled(True)
+            if hasattr(self.sub_editor, 'save_btn'):
+                self.sub_editor.save_btn.setEnabled(True)
+
         self.lbl_status_val.setText("Idle")
         self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --")
         
-        # Gọi pop-up cuối cùng (cần import nếu chưa có ở đầu)
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.information(self, "Trạng thái", msg)
 
@@ -893,8 +934,9 @@ class MainWindow(QMainWindow):
             os.startfile(out_d)
 
     def closeEvent(self, event):
-        # --- THÊM ĐOẠN LƯU CÀI ĐẶT TRƯỚC KHI TẮT APP ---
+        # [P2-T2] Lưu cài đặt bao gồm cả "mode" trước khi đóng App
         settings = {
+            "mode": self.mode_combo.currentData(),
             "model_size": self.model_combo.currentData(),
             "compute_type": self.compute_combo.currentData(),
             "prompt": self.prompt_input.text().strip(),
@@ -906,7 +948,7 @@ class MainWindow(QMainWindow):
             "output_dir": self.out_input.text().strip()
         }
         save_settings(settings)
-        # -----------------------------------------------
+        
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
@@ -925,18 +967,22 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def on_queue_item_clicked(self, vid_path):
-        # Hàm duy nhất chịu trách nhiệm Load Video
         self.queue_mgr.set_active(vid_path)
-        
         _, srt_path = self.queue_mgr.get_active_data()
 
         self.video_player.load_video(vid_path)
         
         if srt_path and os.path.exists(srt_path):
-            self.sub_editor.load_srt_file(srt_path)
+            # [P2-T10] Phân luồng đọc theo Định dạng đuôi file
+            if srt_path.endswith('.ai-subtitle-draft'):
+                self.sub_editor.load_draft_file(srt_path)
+            else:
+                self.sub_editor.load_srt_file(srt_path)
+                
             self.video_player.sub_controller.load_srt(srt_path)
         else:
-            self.sub_editor.table.setRowCount(0)
+            self.sub_editor.all_segments.clear()
+            self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
 
         self.bottom_tabs.setCurrentIndex(0)
@@ -959,8 +1005,78 @@ class MainWindow(QMainWindow):
             if self.queue_mgr.active_vid:
                 self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
+    # =========================================================================
+    # ĐIỀU PHỐI LUỒNG FILL TEXT WORKER (P2-T9) & PHÂN TRANG (P2-T7)
+    # =========================================================================
+    def start_fill_text_worker(self):
+        if not self.queue_mgr.active_vid:
+            QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn video cần điền chữ.")
+            return
+            
+        # [P2-T7] Lấy toàn bộ dữ liệu trực tiếp từ Model thay vì Table giao diện
+        segments = []
+        for seg in self.sub_editor.all_segments:
+            start_ms = self.sub_editor.time_str_to_ms(seg['start'])
+            end_ms = self.sub_editor.time_str_to_ms(seg['end'])
+            raw_text = seg['text']
+            if raw_text == "[ Chưa có nội dung ]": raw_text = ""
+            try: stt = int(seg['stt'])
+            except: stt = 0
+            
+            segments.append((start_ms, end_ms, raw_text, stt))
+                
+        if not segments: 
+            return
+        
+        self.is_cancelled_flag = False
+        self.start_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.sub_editor.fill_text_btn.setEnabled(False)
+        self.sub_editor.save_btn.setEnabled(False)
+        
+        self.bottom_tabs.setCurrentIndex(2) 
+        self.append_log(f"\n[HỆ THỐNG] Bắt đầu chốt Timing và Điền chữ cho {len(segments)} câu...")
+        
+        from workers.TaskQueue import FillTextWorker
+        self.worker = FillTextWorker(
+            video_path=self.queue_mgr.active_vid,
+            segments_data=segments,
+            initial_prompt=self.prompt_input.text().strip(),
+            compute_type=self.compute_combo.currentData(),
+            model_size=self.model_combo.currentData()
+        )
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.finished_signal.connect(self.on_fill_text_finished)
+        self.worker.error_signal.connect(self.process_error)
+        self.worker.start()
+
+    def on_fill_text_finished(self, filled_segments):
+        self.bottom_tabs.setCurrentIndex(0)
+        
+        # [P2-T7] Điền trực tiếp kết quả Text AI trả về vào Model Tổng
+        for row, (start_ms, end_ms, text, stt) in enumerate(filled_segments):
+            if row < len(self.sub_editor.all_segments):
+                self.sub_editor.all_segments[row]['text'] = text
+        
+        # Ra lệnh cho Giao diện Vẽ lại trang hiện tại và Đồng bộ với Video Controller
+        self.sub_editor.render_page()
+        
+        self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.progress_anim.stop()
+        self.progress_bar.setValue(100)
+        self.lbl_speed_eta.setText("Điền chữ thành công! Hãy ấn Lưu (Ctrl+S).")
+        self.sub_editor.fill_text_btn.setEnabled(True)
+        self.sub_editor.save_btn.setEnabled(True)
+        
+        QMessageBox.information(self, "Thành công", "Đã điền chữ xong! Vui lòng ấn 'Lưu thay đổi (Ctrl+S)' để lưu kết quả vào file.")
+    
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+

@@ -74,7 +74,7 @@ class WhisperWorker(QThread):
     finished_signal = Signal(str, str)
     error_signal = Signal(str)
 
-    def __init__(self, video_path, output_dir, initial_prompt, compute_type, use_vad, min_silence_ms, model_size="large-v3-turbo"):
+    def __init__(self, video_path, output_dir, initial_prompt, compute_type, use_vad, min_silence_ms, model_size="large-v3-turbo", generation_mode="full"):
         super().__init__()
         self.video_path = video_path
         self.output_dir = output_dir
@@ -83,6 +83,7 @@ class WhisperWorker(QThread):
         self.use_vad = use_vad
         self.min_silence_ms = min_silence_ms
         self.model_size = model_size
+        self.generation_mode = generation_mode # [P2-T2] Biến lưu chế độ chạy
         self._is_cancelled = False
         
         self.actual_srt_path = None 
@@ -99,11 +100,13 @@ class WhisperWorker(QThread):
                 return
 
             video_duration = get_video_duration(self.video_path)
-            self.log_signal.emit(f"[AI] Đang nhận diện ngôn ngữ và khởi động mô hình...")
+            self.log_signal.emit(f"[AI] Đang nhận diện âm thanh và khởi động mô hình...")
             
-            from core.Backend import generate_srt
+            from core.Backend import generate_srt, generate_timing_draft
             
-            target_srt = OutputPathService.build_subtitle_path(self.output_dir, self.video_path, ".srt")
+            # Cấp phát đường dẫn tạm thời (Sẽ được ghi đè chính xác từ Log của Backend)
+            ext = "_timing.srt" if self.generation_mode == "timing" else ".srt"
+            target_srt = OutputPathService.build_subtitle_path(self.output_dir, self.video_path, ext)
             self.actual_srt_path = target_srt 
             target_dir = os.path.dirname(target_srt)
             
@@ -123,30 +126,46 @@ class WhisperWorker(QThread):
                         hw = get_hardware_stats()
                         stats_str = f" ({speed:.1f}x | Còn: {format_eta(remain_sec)} | {hw})"
 
-                self.progress_signal.emit(overall_p, f"Đang tạo Subtitle...{stats_str}")
+                self.progress_signal.emit(overall_p, f"Đang xử lý...{stats_str}")
                 
-                if "Đã hoàn tất xuất file SRT tại:" in msg:
+                # [FIX BLOCKER] Bắt (Hook) chính xác đường dẫn file được Backend xuất ra
+                if "tại:" in msg:
                     extracted_path = msg.split("tại:")[-1].strip()
                     self.actual_srt_path = extracted_path.replace('\\', '/') 
                 
                 if msg and "Đang" not in msg and "Processing" not in msg and "Hoàn tất" not in msg:
                     self.log_signal.emit(f"[Sub] ➜ {msg}")
 
-            generate_srt(
-                video_path=self.video_path,
-                output_dir=target_dir,
-                model_size=self.model_size,
-                compute_type=self.compute_type,
-                initial_prompt=self.initial_prompt,
-                use_vad=self.use_vad,
-                min_silence_ms=self.min_silence_ms,
-                progress_callback=whisper_progress,
-                cancel_check=lambda: self._is_cancelled, 
-                video_duration=video_duration
-            )
+            # [P2-T2] Rẽ nhánh tùy theo chế độ được yêu cầu từ UI
+            if self.generation_mode == "timing":
+                generate_timing_draft(
+                    video_path=self.video_path,
+                    output_dir=target_dir,
+                    model_size=self.model_size,
+                    compute_type=self.compute_type,
+                    use_vad=self.use_vad,
+                    min_silence_ms=self.min_silence_ms,
+                    progress_callback=whisper_progress,
+                    cancel_check=lambda: self._is_cancelled, 
+                    video_duration=video_duration
+                )
+            else:
+                generate_srt(
+                    video_path=self.video_path,
+                    output_dir=target_dir,
+                    model_size=self.model_size,
+                    compute_type=self.compute_type,
+                    initial_prompt=self.initial_prompt,
+                    use_vad=self.use_vad,
+                    min_silence_ms=self.min_silence_ms,
+                    progress_callback=whisper_progress,
+                    cancel_check=lambda: self._is_cancelled, 
+                    video_duration=video_duration
+                )
             
             if not self._is_cancelled:
-                self.progress_signal.emit(100, "Tạo Subtitle hoàn tất!")
+                mode_name = "Timing Draft" if self.generation_mode == "timing" else "Subtitle"
+                self.progress_signal.emit(100, f"Tạo {mode_name} hoàn tất!")
                 self.finished_signal.emit("Thành công", self.actual_srt_path)
             else:
                 self.error_signal.emit("Đã hủy tiến trình AI.")
@@ -252,3 +271,51 @@ class HardsubWorker(QThread):
                 self.error_signal.emit("Đã hủy tiến trình.")
             else:
                 self.error_signal.emit(f"Lỗi Render: {str(e)}")
+
+# ==========================================
+# 3. FILL TEXT WORKER (P2-T9: ĐIỀN CHỮ VÀO TIMING DRAFT)
+# ==========================================
+class FillTextWorker(QThread):
+    progress_signal = Signal(int, str)
+    log_signal = Signal(str)
+    finished_signal = Signal(list) # Trả về list các segment đã điền chữ
+    error_signal = Signal(str)
+
+    def __init__(self, video_path, segments_data, initial_prompt, compute_type, model_size="large-v3-turbo"):
+        super().__init__()
+        self.video_path = video_path
+        self.segments_data = segments_data
+        self.initial_prompt = initial_prompt
+        self.compute_type = compute_type
+        self.model_size = model_size
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        try:
+            from core.Backend import fill_text_for_segments
+            
+            self.log_signal.emit(f"[AI] Bắt đầu điền chữ cho {len(self.segments_data)} mốc thời gian...")
+            
+            result = fill_text_for_segments(
+                video_path=self.video_path,
+                segments_data=self.segments_data,
+                model_size=self.model_size,
+                compute_type=self.compute_type,
+                initial_prompt=self.initial_prompt,
+                progress_callback=lambda p, msg: self.progress_signal.emit(p, msg),
+                cancel_check=lambda: self._is_cancelled
+            )
+            
+            if not self._is_cancelled:
+                self.progress_signal.emit(100, "Điền chữ hoàn tất!")
+                self.finished_signal.emit(result)
+            else:
+                self.error_signal.emit("Đã hủy tiến trình điền chữ.")
+        except Exception as e:
+            if self._is_cancelled:
+                self.error_signal.emit("Đã hủy tiến trình.")
+            else:
+                self.error_signal.emit(f"Lỗi AI: {str(e)}")
