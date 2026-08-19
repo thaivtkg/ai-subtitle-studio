@@ -31,9 +31,14 @@ class CustomGraphicsView(QGraphicsView):
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet("background-color: #000000; border-radius: 6px; border: none;")
+        
+        # Giữ nền Đen tuyền (#000000) để tạo dải viền vô cực (Cinematic)
+        self.setStyleSheet("background-color: #000000; border-radius: 8px; border: none;")
 
-        # [Safety] Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật Overlay
+        # [FIX] Khôi phục lại bảo vệ tỷ lệ gốc, KHÔNG kéo dãn gây méo hình
+        self.video_item.setAspectRatioMode(Qt.KeepAspectRatio)
+
+        # Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật Overlay
         self.video_item.nativeSizeChanged.connect(self.update_overlay_geometry)
 
     def resizeEvent(self, event):
@@ -44,31 +49,27 @@ class CustomGraphicsView(QGraphicsView):
     def update_overlay_geometry(self, *args):
         view_rect = self.viewport().rect()
         
-        # [Safety Check] Chặn chia cho 0 nếu Viewport chưa kịp render
         if view_rect.height() == 0: 
             return
 
         native_size = self.video_item.nativeSize()
         
-        # Kiểm tra kích thước video thực tế hợp lệ
+        # Tính toán lại thuật toán cắt viền để Subtitle Overlay luôn căn giữa chính xác lên hình ảnh
         if native_size.isValid() and native_size.width() > 0 and native_size.height() > 0:
             view_ratio = view_rect.width() / view_rect.height()
             video_ratio = native_size.width() / native_size.height()
             
             if video_ratio > view_ratio:
-                # Video rộng hơn View -> Xuất hiện viền đen Letterbox (trên/dưới)
                 w = view_rect.width()
                 h = w / video_ratio
                 x = 0
                 y = (view_rect.height() - h) / 2
             else:
-                # Video hẹp hơn View -> Xuất hiện viền đen Pillarbox (trái/phải - như trong ảnh)
                 h = view_rect.height()
                 w = h * video_ratio
                 x = (view_rect.width() - w) / 2
                 y = 0
             
-            # Ép Overlay nằm khít với pixels của video
             self.overlay_proxy.setGeometry(QRectF(x, y, w, h))
         else:
             self.overlay_proxy.setGeometry(QRectF(view_rect))
@@ -84,7 +85,7 @@ class VideoPlayerWidget(QWidget):
         # Layout chính của Player
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
+        layout.setSpacing(8) 
 
         # --- VŨ KHÍ TỐI THƯỢNG: QGRAPHICSVIEW ---
         self.scene = QGraphicsScene(self)
@@ -95,55 +96,94 @@ class VideoPlayerWidget(QWidget):
 
         # 2. Subtitle Overlay (Lớp trên)
         self.subtitle_overlay = SubtitleOverlay()
-        # Đảm bảo nền Overlay phải trong suốt
         self.subtitle_overlay.setStyleSheet("background: transparent;")
 
         self.overlay_proxy = self.scene.addWidget(self.subtitle_overlay)
-        self.overlay_proxy.setZValue(1)  # Lệnh hoàng gia: Bắt buộc đè lên Video!
+        self.overlay_proxy.setZValue(1)  
 
         # 3. Tạo khung nhìn tổng
         self.view = CustomGraphicsView(self.scene, self.video_item, self.overlay_proxy)
-        layout.addWidget(self.view)
-        # ----------------------------------------
+        layout.addWidget(self.view, stretch=1)
+        
+        # =============================================================
+        # EMPTY STATE (Placeholder khi chưa có video)
+        # =============================================================
+        view_layout = QVBoxLayout(self.view)
+        
+        self.empty_state_lbl = QLabel(
+            "<div style='text-align: center;'>"
+            "<span style='font-size: 38px;'>🎬</span><br><br>"
+            "<span style='font-size: 14px; font-weight: bold; color: #F8FAFC;'>No video loaded</span><br><br>"
+            "<span style='font-size: 12px; color: #64748B;'>Select a video from the Queue to start editing</span>"
+            "</div>"
+        )
+        self.empty_state_lbl.setAlignment(Qt.AlignCenter)
+        self.empty_state_lbl.setStyleSheet("background: transparent; border: none;")
+        view_layout.addWidget(self.empty_state_lbl)
 
-        # Thanh điều khiển (Control Bar)
+        # =============================================================
+        # THANH ĐIỀU KHIỂN (MODERN CONTROL BAR)
+        # =============================================================
         controls_layout = QHBoxLayout()
-        controls_layout.setContentsMargins(5, 5, 5, 5)
+        controls_layout.setContentsMargins(10, 4, 10, 8)
+        controls_layout.setSpacing(12)
 
+        # [FIX] Nút Play/Pause dùng Text Unicode thay cho Icon Hệ thống để không bị đen chìm
         self.btn_play = QPushButton()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self.btn_play.setFixedSize(30, 30)
-        self.btn_play.setStyleSheet("background: #2B3547; border: none; border-radius: 15px;")
+        self.btn_play.setFixedSize(34, 34)
+        self.btn_play.setStyleSheet("""
+            QPushButton { 
+                background: #1B263B; 
+                border: none; 
+                border-radius: 17px; 
+            }
+            QPushButton:hover { background: #273247; }
+            QPushButton:pressed { background: #38BDF8; }
+        """)
         self.btn_play.clicked.connect(self.toggle_playback)
-        controls_layout.addWidget(self.btn_play)
+        controls_layout.addWidget(self.btn_play)    
 
+        # Timeline Slider
         self.slider_seek = ClickableSlider(Qt.Horizontal)
         self.slider_seek.setRange(0, 0)
         self.slider_seek.setStyleSheet("""
-            QSlider::groove:horizontal { background: #273247; height: 6px; border-radius: 3px; }
-            QSlider::sub-page:horizontal { background: #35C8FF; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #FFF; width: 12px; margin: -3px 0; border-radius: 6px; }
+            QSlider::groove:horizontal { 
+                background: #172033; height: 4px; border-radius: 2px; 
+            }
+            QSlider::sub-page:horizontal { 
+                background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #8B5CF6, stop: 1 #EC4899); 
+                border-radius: 2px; 
+            }
+            QSlider::handle:horizontal { 
+                background: #F8FAFC; width: 12px; margin: -4px 0; border-radius: 6px; 
+            }
+            QSlider::handle:horizontal:hover { background: #38BDF8; }
         """)
         self.slider_seek.sliderMoved.connect(self.set_position)
         controls_layout.addWidget(self.slider_seek)
 
-        self.lbl_time = QLabel("00:00 / --:--")
-        self.lbl_time.setStyleSheet("color: #98A2B3; font-size: 11px; font-family: Consolas;")
+        # Label Thời gian
+        self.lbl_time = QLabel("00:00 / 00:00")
+        self.lbl_time.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
         controls_layout.addWidget(self.lbl_time)
 
+        # Icon Loa
         self.lbl_vol_icon = QLabel("🔊")
-        self.lbl_vol_icon.setStyleSheet("color: #98A2B3; font-size: 12px; margin-left: 10px;")
+        self.lbl_vol_icon.setStyleSheet("color: #94A3B8; font-size: 14px; margin-left: 8px; background: transparent; border: none;")
         controls_layout.addWidget(self.lbl_vol_icon)
 
+        # Volume Slider
         self.slider_volume = QSlider(Qt.Horizontal)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(80)
-        self.slider_volume.setMaximumWidth(80)
+        self.slider_volume.setMaximumWidth(70)
         self.slider_volume.setToolTip("Volume: 80%")
         self.slider_volume.setStyleSheet("""
-            QSlider::groove:horizontal { background: #273247; height: 4px; border-radius: 2px; }
-            QSlider::sub-page:horizontal { background: #7B61FF; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #FFF; width: 10px; margin: -3px 0; border-radius: 5px; }
+            QSlider::groove:horizontal { background: #172033; height: 4px; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #38BDF8; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #F8FAFC; width: 10px; margin: -3px 0; border-radius: 5px; }
+            QSlider::handle:horizontal:hover { background: #FFFFFF; }
         """)
         self.slider_volume.valueChanged.connect(self.set_volume)
         controls_layout.addWidget(self.slider_volume)
@@ -154,11 +194,8 @@ class VideoPlayerWidget(QWidget):
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
-
-        # --- BƠM TRỰC TIẾP VIDEO VÀO GRAPHICS ITEM ---
         self.player.setVideoOutput(self.video_item)
 
-        # Nối hệ thống Subtitle Controller
         self.sub_controller = SubtitleController()
         self.player.positionChanged.connect(self.sub_controller.sync_position)
         self.sub_controller.subtitle_changed.connect(lambda stt, start, text: self.subtitle_overlay.set_subtitle(text))
@@ -170,8 +207,11 @@ class VideoPlayerWidget(QWidget):
         self.player.durationChanged.connect(self.duration_changed)
         self.player.playingChanged.connect(self.update_play_button)
 
+        self.update_play_button()
+
     def load_video(self, file_path):
         if os.path.exists(file_path):
+            self.empty_state_lbl.hide()
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.pause()
 
@@ -182,6 +222,7 @@ class VideoPlayerWidget(QWidget):
             self.player.play()
 
     def update_play_button(self):
+        # [FIX] Chỉ cần thay đổi Icon hệ thống, không cần đổi CSS hay Text
         if self.player.isPlaying():
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
         else:
@@ -218,6 +259,9 @@ class VideoPlayerWidget(QWidget):
     def cleanup(self):
         self.player.stop()
         self.player.setSource(QUrl())
+        self.empty_state_lbl.show()
+        self.slider_seek.setValue(0)
+        self.lbl_time.setText("00:00 / 00:00")
 
 
 class ClickableSlider(QSlider):

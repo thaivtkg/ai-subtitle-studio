@@ -1,15 +1,17 @@
 import os
 import re
+import subprocess
 import sys
 
-from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -32,185 +35,135 @@ from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
+from ui.theme import Theme
+from ui.toast import Toast
 from utils import load_settings, save_settings
-from workers.TaskQueue import HardsubWorker, WhisperWorker
+from workers.TaskQueue import FillTextWorker, HardsubWorker, WhisperWorker
 
-DARK_STUDIO_QSS = """
-QMainWindow {
-    background-color: #0D111A;
-}
-QWidget {
-    color: #F5F7FA;
-    font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
-    font-size: 12px;
-}
-QScrollBar:vertical {
-    background: #0D111A;
-    width: 6px;
-    margin: 0px;
-}
-QScrollBar::handle:vertical {
-    background: #273247;
-    min-height: 20px;
-    border-radius: 3px;
-}
-QLineEdit, QComboBox, QSpinBox {
-    background-color: #161B26;
-    border: 1px solid #273247;
-    border-radius: 5px;
-    padding: 4px 8px;
-    color: #F5F7FA;
-}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
-    border: 1px solid #35C8FF;
-}
-QTextEdit {
-    background-color: #10141F;
-    border: 1px solid #273247;
-    border-radius: 6px;
-    color: #98A2B3;
-    font-family: 'Consolas', monospace;
-    font-size: 12px;
-    padding: 6px;
-}
-QPushButton#SideBtn {
-    background-color: #161B26;
-    border: 1px solid #273247;
-    border-radius: 6px;
-    color: #F5F7FA;
-    text-align: left;
-    padding-left: 10px;
-    font-weight: 600;
-    min-height: 34px;
-}
-QPushButton#SideBtn:hover {
-    border: 1px solid #35C8FF;
-    color: #35C8FF;
-}
-/* =========================================
-   1. NÚT PRIMARY (Gradient - Start Batch)
-   ========================================= */
-QPushButton#btn_primary {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #4AC1FF, stop: 1 #8A75FF);
-    color: #FFFFFF;
-    font-weight: bold;
-    border-radius: 6px;
-    border: none;
-    padding: 8px 16px;
-}
-QPushButton#btn_primary:hover {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #6CD0FF, stop: 1 #9E8DFF);
-}
-QPushButton#btn_primary:pressed {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #3399D4, stop: 1 #6854CC);
-    padding-top: 10px; 
-    padding-bottom: 6px;
-}
-
-/* =========================================
-   2. NÚT DANGER (Đỏ - Cancel, X)
-   ========================================= */
-QPushButton#btn_danger {
-    background-color: #FF1F1F;
-    color: #FFFFFF;
-    font-weight: bold;
-    border-radius: 6px;
-    border: none;
-    padding: 8px 16px;
-}
-QPushButton#btn_danger:hover {
-    background-color: #FF758F;
-}
-QPushButton#btn_danger:pressed {
-    background-color: #D6425C;
-    padding-top: 10px;
-    padding-bottom: 6px;
-}
-
-/* =========================================
-   3. NÚT SECONDARY (Tối màu - Browse, Mở thư mục)
-   ========================================= */
-QPushButton#btn_secondary {
-    background-color: #2B3547;
-    color: #FFFFFF;
-    font-weight: bold;
-    border-radius: 6px;
-    border: 1px solid #1E2532;
-    padding: 8px 16px;
-}
-QPushButton#btn_secondary:hover {
-    background-color: #38455A;
-    border: 1px solid #4AC1FF;
-}
-QPushButton#btn_secondary:pressed {
-    background-color: #1A212E;
-    border: 1px solid #1A212E;
-    padding-top: 10px;
-    padding-bottom: 6px;
-}
-"""
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Subtitle Studio")
-        self.setMinimumSize(1024, 700)
-        self.resize(1100, 720)
-        self.setStyleSheet(DARK_STUDIO_QSS)
+        self.setMinimumSize(1280, 768)
+        self.resize(1366, 820)
+        self.setStyleSheet(Theme.get_global_stylesheet())
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.old_pos = QPoint()
+
         self.queue_mgr = QueueManager()
         self.queue_mgr.queue_updated.connect(self.on_queue_updated)
-
-        # [Fix] Đón Signal Highlight giao diện
         self.queue_mgr.active_changed.connect(
-            lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid)
+            lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid) if hasattr(self, 'queue_ui') else None
         )
-
         self.queue_mgr.item_removed.connect(self.on_queue_item_removed_handler)
-
         self.setAcceptDrops(True)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
+        # ========================================================
+        # 1. ROOT LAYOUT (MAIN APP SHELL)
+        # ========================================================
+        root_widget = QWidget()
+        self.setCentralWidget(root_widget)
+        root_layout = QHBoxLayout(root_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Thanh tiêu đề giả lập
-        title_bar = QHBoxLayout()
-        title_bar.setContentsMargins(4, 0, 4, 0)
-        logo_label = QLabel("✨ AI Subtitle Studio (Borderless)")
-        logo_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #35C8FF;")
-        title_bar.addWidget(logo_label)
-        title_bar.addStretch()
-        
+        # ========================================================
+        # 2. LEFT SIDEBAR NAVIGATION
+        # ========================================================
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("SidebarFrame") # [FIX] Đặt ID 
+        self.sidebar.setFixedWidth(240)
+        # [FIX] Khóa scope CSS chỉ áp dụng cho riêng SidebarFrame
+        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.SURFACE}; border-right: 1px solid {Theme.BORDER}; }}")
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(12, 16, 12, 16)
+        sidebar_layout.setSpacing(6)
+
+        logo_lbl = QLabel("✨ AI Subtitle Studio")
+        logo_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; padding: 6px 4px 12px 4px; border: none;")
+        sidebar_layout.addWidget(logo_lbl)
+
+        sidebar_layout.addWidget(QLabel("NHẬP DỮ LIỆU", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 6px;"))
+        sidebar_layout.addWidget(self.create_side_action_button("📂  Add Video...", self.select_videos))
+        sidebar_layout.addWidget(self.create_side_action_button("📝  Add SRT / Draft...", self.select_srt_for_video))
+        sidebar_layout.addWidget(self.create_side_action_button("✨  Edit Selected SRT", self.open_subtitle_editor))
+        sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
+
+        sidebar_layout.addWidget(QLabel("WORKSPACE", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 10px;"))
+        self.nav_btns = {}
+        self.btn_nav_workspace = self.create_nav_button("🎬  Video Workspace", 0)
+        sidebar_layout.addWidget(self.btn_nav_workspace)
+
+        sidebar_layout.addWidget(QLabel("PIPELINE", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 10px;"))
+        self.btn_nav_queue = self.create_nav_button("📋  Queue & Output", 1)
+        sidebar_layout.addWidget(self.btn_nav_queue)
+
+        sidebar_layout.addStretch()
+
+        sidebar_layout.addWidget(QLabel("CẤU HÌNH", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;"))
+        self.btn_nav_settings = self.create_nav_button("⚙  AI & Settings", 2)
+        sidebar_layout.addWidget(self.btn_nav_settings)
+
+        root_layout.addWidget(self.sidebar)
+
+        # ========================================================
+        # 3. RIGHT AREA (TOPBAR + DASHBOARD + STACK + BOTTOMBAR)
+        # ========================================================
+        right_area = QWidget()
+        right_area.setObjectName("RightArea")
+        right_area.setStyleSheet(f"#RightArea {{ background-color: {Theme.BG_APP}; }}")
+        right_layout = QVBoxLayout(right_area)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        # --- TOPBAR ---
+        topbar = QFrame()
+        topbar.setObjectName("TopbarFrame")
+        topbar.setFixedHeight(46)
+        topbar.setStyleSheet(f"#TopbarFrame {{ background-color: {Theme.BG_APP}; border-bottom: 1px solid {Theme.BORDER}; }}")
+        topbar_layout = QHBoxLayout(topbar)
+        topbar_layout.setContentsMargins(16, 0, 12, 0)
+
+        self.lbl_page_title = QLabel("Video Workspace")
+        self.lbl_page_title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; border: none;")
+        topbar_layout.addWidget(self.lbl_page_title)
+        topbar_layout.addStretch()
+
         btn_minimize = QPushButton("—")
         btn_minimize.setFixedSize(28, 24)
-        btn_minimize.setStyleSheet("background: #161B26; color: #FFF; border: none; border-radius: 4px;")
+        btn_minimize.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; }}
+            QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}
+        """)
         btn_minimize.clicked.connect(self.showMinimized)
-        
+
         btn_close = QPushButton("✕")
         btn_close.setFixedSize(28, 24)
-        btn_close.setStyleSheet("background: #FF5C73; color: #0D111A; font-weight: bold; border: none; border-radius: 4px;")
+        btn_close.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; }}
+            QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}
+        """)
         btn_close.clicked.connect(self.close)
 
-        title_bar.addWidget(btn_minimize)
-        title_bar.addWidget(btn_close)
-        main_layout.addLayout(title_bar)
+        topbar_layout.addWidget(btn_minimize)
+        topbar_layout.addWidget(btn_close)
+        right_layout.addWidget(topbar)
 
-        # Dashboard AI
+        # --- DASHBOARD HARDWARE CARDS ---
         dash_frame = QFrame()
-        dash_frame.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 8px;")
+        dash_frame.setObjectName("DashFrame")
+        dash_frame.setStyleSheet(f"#DashFrame {{ background-color: {Theme.SURFACE}; border-bottom: 1px solid {Theme.BORDER}; }}")
         dash_layout = QHBoxLayout(dash_frame)
-        dash_layout.setContentsMargins(10, 8, 10, 8)
-        
-        self.lbl_gpu_val, card_gpu = self.create_metric_widget("GPU", "Detecting...", "#35C8FF")
-        self.lbl_vram_val, card_vram = self.create_metric_widget("VRAM", "-- / -- GB", "#7B61FF")
-        self.lbl_cpu_val, card_cpu = self.create_metric_widget("CPU", "0%", "#35C8FF")
-        self.lbl_lang_val, card_lang = self.create_metric_widget("Language", "Auto", "#F5F7FA")
-        self.lbl_queue_val, card_queue = self.create_metric_widget("Queue", "0 video", "#35C8FF")
-        self.lbl_status_val, card_status = self.create_metric_widget("Status", "Idle", "#33D17A")
+        dash_layout.setContentsMargins(14, 6, 14, 6)
+        dash_layout.setSpacing(8)
+
+        self.lbl_gpu_val, card_gpu = self.create_metric_widget("GPU", "Detecting...", Theme.CYAN)
+        self.lbl_vram_val, card_vram = self.create_metric_widget("VRAM", "-- / -- GB", Theme.PRIMARY_PURPLE)
+        self.lbl_cpu_val, card_cpu = self.create_metric_widget("CPU", "0%", Theme.CYAN)
+        self.lbl_lang_val, card_lang = self.create_metric_widget("Language", "Auto", Theme.TEXT_PRIMARY)
+        self.lbl_queue_val, card_queue = self.create_metric_widget("Queue", "0 video", Theme.CYAN)
+        self.lbl_status_val, card_status = self.create_metric_widget("Status", "Idle", Theme.SUCCESS)
 
         dash_layout.addWidget(card_gpu)
         dash_layout.addWidget(card_vram)
@@ -218,135 +171,41 @@ class MainWindow(QMainWindow):
         dash_layout.addWidget(card_lang)
         dash_layout.addWidget(card_queue)
         dash_layout.addWidget(card_status)
-        main_layout.addWidget(dash_frame)
+        right_layout.addWidget(dash_frame)
 
-        # Khu vực giữa (Middle Section)
-        middle_layout = QHBoxLayout()
-        middle_layout.setSpacing(10)
+        # --- STACKED PAGES AREA ---
+        self.stack = QStackedWidget()
+        self.stack.setContentsMargins(12, 10, 12, 10)
 
-        # Sidebar
-        sidebar_frame = QFrame()
-        sidebar_frame.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 8px;")
-        sidebar_frame.setFixedWidth(280)
-        sidebar_layout = QVBoxLayout(sidebar_frame)
-        sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        sidebar_layout.setSpacing(6)
+        # PAGE 0: VIDEO WORKSPACE
+        self.page_workspace = QWidget()
+        workspace_layout = QVBoxLayout(self.page_workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(8)
 
-        sidebar_layout.addWidget(self.create_side_button("📂  Add Video...", self.select_videos))
-        sidebar_layout.addWidget(self.create_side_button("📝  Add SRT for Video...", self.select_srt_for_video))
-        sidebar_layout.addWidget(self.create_side_button("✨  Edit Selected SRT", self.open_subtitle_editor))
-        sidebar_layout.addWidget(self.create_side_button("🗑  Clear Queue", self.clear_files))
-        
-        settings_label = QLabel("⚙  AI & Hardsub Settings")
-        settings_label.setStyleSheet("font-weight: bold; color: #35C8FF; margin-top: 4px;")
-        sidebar_layout.addWidget(settings_label)
+        self.work_splitter = QSplitter(Qt.Vertical)
+        self.work_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 1px; margin: 1px 0px; }}")
 
-        ai_form_layout = QVBoxLayout()
-        ai_form_layout.setSpacing(4)
-
-        # --- BẮT ĐẦU THÊM: [P2-T2] CHỌN CHẾ ĐỘ XỬ LÝ (MODE) ---
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Full Subtitle (AI sinh Text)", "full")
-        self.mode_combo.addItem("Timing Draft (Chỉ tạo khung thời gian)", "timing")
-        self.mode_combo.setStyleSheet("QComboBox { font-weight: bold; color: #35C8FF; }")
-        
-        ai_form_layout.addWidget(QLabel("Chế độ xử lý (Pipeline Mode):"))
-        ai_form_layout.addWidget(self.mode_combo)
-
-        self.mode_combo.currentIndexChanged.connect(
-            lambda: self.chk_hardsub.setEnabled(self.mode_combo.currentData() == "full")
-        )
-
-        # --- KẾT THÚC THÊM ---
-
-        # --- THÊM PHẦN CHỌN MODEL Ở ĐÂY ---
-        self.model_combo = QComboBox()
-        self.model_combo.addItem("Large V3 Turbo (Khuyên dùng - Nhanh)", "large-v3-turbo")
-        self.model_combo.addItem("Large V3 (Chuẩn gốc)", "large-v3")
-        ai_form_layout.addWidget(QLabel("Whisper Model Size:"))
-        ai_form_layout.addWidget(self.model_combo)
-        # ----------------------------------
-        
-        self.compute_combo = QComboBox()
-        self.compute_combo.addItem("Float16 (RTX 4060)", "float16")
-        self.compute_combo.addItem("Int8_Float16 (Save VRAM)", "int8_float16")
-        ai_form_layout.addWidget(QLabel("AI Model & VRAM:"))
-        ai_form_layout.addWidget(self.compute_combo)
-
-        self.prompt_input = QLineEdit()
-        self.prompt_input.setPlaceholderText("Context / Prompt...")
-        ai_form_layout.addWidget(self.prompt_input)
-
-        vad_layout = QHBoxLayout()
-        self.chk_vad = QCheckBox("VAD Filter")
-        self.chk_vad.toggled.connect(lambda c: self.spin_silence.setEnabled(c))
-        self.spin_silence = QSpinBox()
-        self.spin_silence.setRange(100, 2000)
-        self.spin_silence.setValue(500)
-        self.spin_silence.setEnabled(False)
-        vad_layout.addWidget(self.chk_vad)
-        vad_layout.addWidget(self.spin_silence)
-        ai_form_layout.addLayout(vad_layout)
-
-        self.chk_hardsub = QCheckBox("Chèn Hardsub tự động")
-        self.chk_hardsub.setChecked(True)
-        ai_form_layout.addWidget(self.chk_hardsub)
-
-        style_row = QHBoxLayout()
-        self.font_combo = QComboBox()
-        font = self.font_combo.font()
-        font.setPointSize(10) # Bắt buộc phải set cứng một số > 0
-        self.font_combo.setFont(font)
-        for f in ["Noto Sans JP", "Arial", "Segoe UI"]: self.font_combo.addItem(f, f)
-        self.size_spin = QSpinBox()
-        self.size_spin.setRange(8, 72)
-        self.size_spin.setValue(42)
-        style_row.addWidget(self.font_combo)
-        style_row.addWidget(self.size_spin)
-        ai_form_layout.addLayout(style_row)
-
-        sidebar_layout.addLayout(ai_form_layout)
-        sidebar_layout.addStretch()
-        middle_layout.addWidget(sidebar_frame)
-
-        # Right Panel (Sử dụng QSplitter để chia đôi linh hoạt)
-        self.right_splitter = QSplitter(Qt.Vertical)
-        # [FIX UX] Thêm margin cho thanh kéo Splitter để tạo khoảng hở trên/dưới an toàn
-        self.right_splitter.setStyleSheet("QSplitter::handle { background: #273247; height: 1px; margin: 1px 0px; }")
-
-        # --- NỬA TRÊN: VIDEO PLAYER ---
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(250)
-        
-        # [FIX BLOCKER] Bơm thêm 12px đệm ở đáy Video Player để bảo vệ thanh Control (Play, Time) khỏi bị cắt xén
-        self.video_player.setContentsMargins(0, 0, 0, 12)
-        
-        self.right_splitter.addWidget(self.video_player)
+        self.video_player.setContentsMargins(0, 0, 0, 8)
+        self.work_splitter.addWidget(self.video_player)
 
-        # --- NỬA DƯỚI: TABS (Subtitle, Queue, Log) ---
         self.bottom_tabs = QTabWidget()
-        self.bottom_tabs.setStyleSheet("""
-                    QTabWidget::pane { border: 1px solid #273247; border-radius: 4px; background: #161B26; }
-                    QTabBar::tab { background: #10141F; color: #98A2B3; padding: 6px 16px; border: 1px solid #273247; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
-                    QTabBar::tab:selected { background: #35C8FF; color: #0D111A; }
-                    QTabBar::tab:hover:!selected { background: #1E2532; color: #FFF; }
-                """)
+        self.bottom_tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; border-radius: 4px; background: {Theme.SURFACE}; }}
+            QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }}
+            QTabBar::tab:selected {{ background: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; }}
+            QTabBar::tab:hover:!selected {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}
+        """)
 
-        # Tab 1: Subtitle Editor
         self.sub_editor = SubtitleEditorWidget()
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
-
-        # --- BẮT ĐẦU SỬA KHU VỰC NÀY ---
-        # 1. Cập nhật màu trên bảng khi tới câu mới
         self.video_player.sub_controller.subtitle_changed.connect(
             lambda stt, start, text: self.sub_editor.highlight_row_by_stt(stt)
         )
-        # --- THÊM PHẦN KẾT NỐI MỚI ---
-        # 2. Toggle Bật/Tắt chữ trên Video
         self.sub_editor.preview_toggled.connect(self.video_player.sub_controller.toggle_preview)
-
-        # 3. Apply Style đổi theo thời gian thực lên Video Overlay
         self.sub_editor.style_changed.connect(
             lambda s: self.video_player.subtitle_overlay.update_style(
                 family=s.get("family"),
@@ -357,122 +216,209 @@ class MainWindow(QMainWindow):
                 position=s.get("position")
             )
         )
-        # -----------------------------
-
-        # --- THÊM PHẦN NÀY: 4. Đồng bộ Real-time từ Bảng sang Lõi Controller ---
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
-        # -----------------------------------------------------------------------
-
-        # [P2-T9] Kích hoạt luồng AI Điền Chữ khi bấm Nút "Chốt Timing"
         self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
 
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
-        # Tab 2: Video Queue & Output
-        queue_wrapper = QWidget()
-        queue_wrapper_layout = QVBoxLayout(queue_wrapper)
-
-        self.queue_ui = QueueWidget()
-        self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
-        self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
-        queue_wrapper_layout.addWidget(self.queue_ui)
-
-        output_layout = QHBoxLayout()
-        self.out_input = QLineEdit()
-        self.out_input.setPlaceholderText("Thư mục lưu kết quả mặc định...")
-        out_btn = QPushButton("Browse...")
-        out_btn.setObjectName("btn_secondary")
-        out_btn.clicked.connect(self.select_output_dir)
-        output_layout.addWidget(QLabel("Output:"))
-        output_layout.addWidget(self.out_input)
-        output_layout.addWidget(out_btn)
-
-        queue_wrapper_layout.addLayout(output_layout)
-        self.bottom_tabs.addTab(self.queue_ui, "📋 Video Queue")
-
-        # [FIX BLOCKER #2] ĐÃ XÓA ĐOẠN ĐẦU NỐI DUPLICATE BỊ LẶP 2 LẦN Ở ĐÂY
-
-        # Tab 3: Live Log
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setPlaceholderText("Nhật ký trạng thái hoạt động...")
         self.bottom_tabs.addTab(self.log_box, "📜 Live Log")
 
-        self.right_splitter.addWidget(self.bottom_tabs)
+        self.work_splitter.addWidget(self.bottom_tabs)
+        self.work_splitter.setStretchFactor(0, 1)
+        self.work_splitter.setStretchFactor(1, 0)
+        self.work_splitter.setSizes([430, 240])
 
-        # =========================================================================
-        # [FIX BLOCKER] Ép Splitter ưu tiên 100% không gian thừa cho Video Player (Stretch=1).
-        # Ép cụm Tabs giữ nguyên kích thước tối thiểu, không được tự phình to (Stretch=0).
-        # =========================================================================
-        self.right_splitter.setStretchFactor(0, 1)
-        self.right_splitter.setStretchFactor(1, 0)
-        self.right_splitter.setSizes([450, 200]) # Cấp mồi 450px cho Video Player để nó không bị ép lúc mở App
+        workspace_layout.addWidget(self.work_splitter)
+        self.stack.addWidget(self.page_workspace)
 
-        # [FIX UX] Bọc nửa bên phải vào một Container (Hộp chứa) riêng.
-        # Giúp thanh Output không bị tràn sang cắn lẹm vào phần Sidebar bên trái.
-        right_container = QWidget()
-        right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(8)
-        
-        right_layout.addWidget(self.right_splitter, stretch=1)
+        # PAGE 1: QUEUE & OUTPUT
+        self.page_queue = QWidget()
+        queue_page_layout = QVBoxLayout(self.page_queue)
+        queue_page_layout.setContentsMargins(0, 0, 0, 0)
+        queue_page_layout.setSpacing(10)
 
-        # === BẮT ĐẦU: GLOBAL OUTPUT FOLDER ===
-        output_layout = QHBoxLayout()
-        output_layout.setContentsMargins(4, 0, 4, 0)
-        
-        lbl_out = QLabel("📁 Output Folder:")
-        lbl_out.setStyleSheet("font-weight: bold; color: #98A2B3; font-size: 12px;")
-        
+        self.queue_ui = QueueWidget()
+        self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
+        self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
+        queue_page_layout.addWidget(self.queue_ui, stretch=1)
+        self.stack.addWidget(self.page_queue)
+
+        # PAGE 2: AI & SETTINGS
+        self.page_settings = QWidget()
+        settings_page_layout = QVBoxLayout(self.page_settings)
+        settings_page_layout.setContentsMargins(10, 10, 10, 10)
+        settings_page_layout.setSpacing(12)
+
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setStyleSheet(f"QScrollArea {{ border: none; background: transparent; }}")
+
+        settings_content = QWidget()
+        settings_form = QVBoxLayout(settings_content)
+        settings_form.setSpacing(10)
+
+        # Settings Card 1
+        ai_card = QFrame()
+        ai_card.setObjectName("SettingsCard")
+        ai_card.setStyleSheet(f"#SettingsCard {{ background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 10px; }}")
+        ai_card_layout = QVBoxLayout(ai_card)
+        ai_card_layout.setSpacing(8)
+
+        ai_card_title = QLabel("🤖 Cấu hình Whisper Engine")
+        ai_card_title.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {Theme.CYAN}; border: none;")
+        ai_card_layout.addWidget(ai_card_title)
+
+        ai_grid = QGridLayout()
+        ai_grid.setSpacing(8)
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Full Subtitle (AI sinh Text)", "full")
+        self.mode_combo.addItem("Timing Draft (Chỉ tạo khung thời gian)", "timing")
+        self.mode_combo.currentIndexChanged.connect(
+            lambda: self.chk_hardsub.setEnabled(self.mode_combo.currentData() == "full")
+        )
+        ai_grid.addWidget(QLabel("Chế độ xử lý (Pipeline Mode):"), 0, 0)
+        ai_grid.addWidget(self.mode_combo, 0, 1)
+
+        self.model_combo = QComboBox()
+        self.model_combo.addItem("Large V3 Turbo (Khuyên dùng - Nhanh)", "large-v3-turbo")
+        self.model_combo.addItem("Large V3 (Chuẩn gốc)", "large-v3")
+        ai_grid.addWidget(QLabel("Whisper Model Size:"), 1, 0)
+        ai_grid.addWidget(self.model_combo, 1, 1)
+
+        self.compute_combo = QComboBox()
+        self.compute_combo.addItem("Float16 (RTX GPU)", "float16")
+        self.compute_combo.addItem("Int8_Float16 (Save VRAM)", "int8_float16")
+        ai_grid.addWidget(QLabel("Kiểu tính toán (VRAM):"), 2, 0)
+        ai_grid.addWidget(self.compute_combo, 2, 1)
+
+        self.prompt_input = QLineEdit()
+        self.prompt_input.setPlaceholderText("Context / Thuật ngữ chuyên ngành...")
+        ai_grid.addWidget(QLabel("Initial Prompt:"), 3, 0)
+        ai_grid.addWidget(self.prompt_input, 3, 1)
+
+        vad_box = QHBoxLayout()
+        self.chk_vad = QCheckBox("Bật VAD Filter")
+        self.spin_silence = QSpinBox()
+        self.spin_silence.setRange(100, 2000)
+        self.spin_silence.setValue(500)
+        self.spin_silence.setEnabled(False)
+        self.chk_vad.toggled.connect(lambda c: self.spin_silence.setEnabled(c))
+        vad_box.addWidget(self.chk_vad)
+        vad_box.addWidget(QLabel("Silence (ms):"))
+        vad_box.addWidget(self.spin_silence)
+        ai_grid.addWidget(QLabel("Lọc khoảng lặng:"), 4, 0)
+        ai_grid.addLayout(vad_box, 4, 1)
+
+        ai_card_layout.addLayout(ai_grid)
+        settings_form.addWidget(ai_card)
+
+        # Settings Card 2
+        hardsub_card = QFrame()
+        hardsub_card.setObjectName("SettingsCard")
+        hardsub_card.setStyleSheet(f"#SettingsCard {{ background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 10px; }}")
+        hardsub_card_layout = QVBoxLayout(hardsub_card)
+        hardsub_card_layout.setSpacing(8)
+
+        hardsub_card_title = QLabel("🎬 Cấu hình Hardsub FFmpeg")
+        hardsub_card_title.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {Theme.CYAN}; border: none;")
+        hardsub_card_layout.addWidget(hardsub_card_title)
+
+        hardsub_grid = QGridLayout()
+        hardsub_grid.setSpacing(8)
+
+        self.chk_hardsub = QCheckBox("Chèn Hardsub tự động vào Video")
+        self.chk_hardsub.setChecked(True)
+        hardsub_grid.addWidget(self.chk_hardsub, 0, 0, 1, 2)
+
+        self.font_combo = QComboBox()
+        font = self.font_combo.font()
+        font.setPointSize(10)
+        self.font_combo.setFont(font)
+        for f in ["Noto Sans JP", "Arial", "Segoe UI"]:
+            self.font_combo.addItem(f, f)
+
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(8, 72)
+        self.size_spin.setValue(42)
+
+        font_box = QHBoxLayout()
+        font_box.addWidget(self.font_combo, stretch=2)
+        font_box.addWidget(QLabel("Cỡ chữ:"))
+        font_box.addWidget(self.size_spin, stretch=1)
+
+        hardsub_grid.addWidget(QLabel("Font chữ mặc định:"), 1, 0)
+        hardsub_grid.addLayout(font_box, 1, 1)
+
+        hardsub_card_layout.addLayout(hardsub_grid)
+        settings_form.addWidget(hardsub_card)
+        settings_form.addStretch()
+
+        settings_scroll.setWidget(settings_content)
+        settings_page_layout.addWidget(settings_scroll)
+        self.stack.addWidget(self.page_settings)
+
+        right_layout.addWidget(self.stack, stretch=1)
+
+        # =========================================================
+        # 4. GLOBAL BOTTOM CONTROL BAR (PROGRESS & ACTIONS)
+        # =========================================================
+        bottom_frame = QFrame()
+        bottom_frame.setObjectName("BottomFrame")
+        bottom_frame.setStyleSheet(f"#BottomFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; }}")
+        bottom_layout = QVBoxLayout(bottom_frame)
+        bottom_layout.setContentsMargins(14, 8, 14, 10)
+        bottom_layout.setSpacing(6)
+
+        output_row = QHBoxLayout()
+        output_row.setSpacing(8)
+        lbl_out = QLabel("📁 Output:")
+        lbl_out.setStyleSheet(f"font-weight: bold; color: {Theme.TEXT_MUTED}; font-size: 11px;")
         self.out_input = QLineEdit()
-        self.out_input.setPlaceholderText("Thư mục lưu kết quả xuất video...")
-        
+        self.out_input.setPlaceholderText("Thư mục lưu kết quả xuất video mặc định...")
         out_btn = QPushButton("Browse...")
         out_btn.setObjectName("btn_secondary")
         out_btn.clicked.connect(self.select_output_dir)
-        
-        output_layout.addWidget(lbl_out)
-        output_layout.addWidget(self.out_input)
-        output_layout.addWidget(out_btn)
-        
-        # Nhét thanh Output vào dưới cùng của hộp chứa bên phải
-        right_layout.addLayout(output_layout)
-        # =============================================================
 
-        # Nạp hộp chứa bên phải vào Layout ngang ở giữa
-        middle_layout.addWidget(right_container, stretch=1)
-        main_layout.addLayout(middle_layout)
+        output_row.addWidget(lbl_out)
+        output_row.addWidget(self.out_input, stretch=1)
+        output_row.addWidget(out_btn)
+        bottom_layout.addLayout(output_row)
 
-        # === BẮT ĐẦU: THÊM LẠI THANH TIẾN ĐỘ Ở NGAY TRÊN NÚT START ===
-        prog_layout = QHBoxLayout()
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(10)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet("""
-                    QProgressBar {
-                        background-color: #161B26; border: 1px solid #273247;
-                        border-radius: 5px; text-align: center; color: #F5F7FA; height: 16px;
-                    }
-                    QProgressBar::chunk {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #35C8FF, stop:1 #7B61FF);
-                        border-radius: 4px;
-                    }
-                """)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {Theme.BG_APP};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 4px;
+                text-align: center;
+                color: {Theme.TEXT_PRIMARY};
+                height: 14px;
+            }}
+            QProgressBar::chunk {{
+                background: {Theme.PRIMARY_GRADIENT};
+                border-radius: 3px;
+            }}
+        """)
         self.progress_anim = QPropertyAnimation(self.progress_bar, b"value")
         self.progress_anim.setDuration(400)
 
         self.lbl_speed_eta = QLabel("Speed: 0.0x  |  ETA: --")
-        self.lbl_speed_eta.setStyleSheet("color: #98A2B3; font-weight: bold; font-size: 11px;")
+        self.lbl_speed_eta.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 11px;")
 
-        prog_layout.addWidget(self.progress_bar, stretch=4)
-        prog_layout.addWidget(self.lbl_speed_eta, stretch=1)
-        main_layout.addLayout(prog_layout)
-        # === KẾT THÚC: THÊM LẠI THANH TIẾN ĐỘ ===
+        prog_row.addWidget(self.progress_bar, stretch=4)
+        prog_row.addWidget(self.lbl_speed_eta, stretch=1)
+        bottom_layout.addLayout(prog_row)
 
-        # Bottom Control Bar
-        bottom_bar = QHBoxLayout()
-        bottom_bar.setSpacing(8)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
 
-        # [P2-T15] Đổi tên thành Start Queue để rạch ròi với Continue Draft
         self.start_btn = QPushButton("▶ Start Queue")
         self.start_btn.setObjectName("btn_primary")
         self.start_btn.clicked.connect(self.start_processing)
@@ -486,36 +432,153 @@ class MainWindow(QMainWindow):
         open_folder_btn.setObjectName("btn_secondary")
         open_folder_btn.clicked.connect(self.open_output_folder)
 
-        bottom_bar.addWidget(self.start_btn, stretch=3)
-        bottom_bar.addWidget(self.cancel_btn, stretch=1)
-        bottom_bar.addWidget(open_folder_btn, stretch=1)
-        main_layout.addLayout(bottom_bar)
+        action_row.addWidget(self.start_btn, stretch=3)
+        action_row.addWidget(self.cancel_btn, stretch=1)
+        action_row.addWidget(open_folder_btn, stretch=1)
+        bottom_layout.addLayout(action_row)
 
+        right_layout.addWidget(bottom_frame)
+        root_layout.addWidget(right_area)
+
+        # =========================================================
+        # 5. POST INITIALIZATION
+        # =========================================================
+        self.switch_page(0)
         self.on_queue_updated()
         self.update_hardware_info()
         self.update_cpu_usage()
-
-        # --- THÊM ĐOẠN KHÔI PHỤC CÀI ĐẶT TỪ JSON ---
         self.apply_saved_settings()
-        # ------------------------------------------
-        
+
         self.stats_timer = QTimer(self)
         self.stats_timer.timeout.connect(self.update_hardware_info)
         self.stats_timer.timeout.connect(self.update_cpu_usage)
         self.stats_timer.start(1000)
 
-        # --- THÊM DÒNG NÀY: ÉP ĐỒNG BỘ STYLE NGAY KHI MỞ APP ---
         self.sub_editor.emit_style()
-        # -------------------------------------------------------
 
-        
+    # =========================================================
+    # NAVIGATION HELPERS
+    # =========================================================
+    def create_nav_button(self, text, page_index, disabled=False):
+        btn = QPushButton(text)
+        btn.setFixedHeight(34)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {Theme.TEXT_SECONDARY};
+                text-align: left;
+                padding-left: 10px;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.SURFACE_SOFT};
+                color: {Theme.TEXT_PRIMARY};
+            }}
+            QPushButton:disabled {{
+                color: {Theme.TEXT_DISABLED};
+            }}
+        """)
+        if disabled:
+            btn.setEnabled(False)
+        else:
+            btn.clicked.connect(lambda: self.switch_page(page_index))
+        self.nav_btns[page_index] = btn
+        return btn
 
+    def create_side_action_button(self, text, slot):
+        btn = QPushButton(text)
+        btn.setFixedHeight(32)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                color: {Theme.TEXT_PRIMARY};
+                text-align: left;
+                padding-left: 10px;
+                font-weight: 600;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid {Theme.CYAN};
+                color: {Theme.CYAN};
+                background-color: {Theme.SURFACE_SOFT};
+            }}
+        """)
+        btn.clicked.connect(slot)
+        return btn
+
+    def switch_page(self, index):
+        self.stack.setCurrentIndex(index)
+        for idx, btn in self.nav_btns.items():
+            if idx == index:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {Theme.SURFACE_SOFT};
+                        color: {Theme.PRIMARY_PURPLE};
+                        text-align: left;
+                        padding-left: 10px;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        font-size: 12px;
+                        border: 1px solid {Theme.BORDER};
+                    }}
+                """)
+                clean_title = btn.text().replace('🎬', '').replace('📋', '').replace('⚙', '').strip()
+                self.lbl_page_title.setText(clean_title)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        color: {Theme.TEXT_SECONDARY};
+                        text-align: left;
+                        padding-left: 10px;
+                        border-radius: 6px;
+                        font-weight: 600;
+                        font-size: 12px;
+                        border: none;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {Theme.SURFACE_SOFT};
+                        color: {Theme.TEXT_PRIMARY};
+                    }}
+                """)
+
+    # --- KHẮC PHỤC SCOPE CHO HÀM TẠO METRIC CARD ---
+    def create_metric_widget(self, title, value, color):
+        frame = QFrame()
+        frame.setObjectName("MetricCard")
+        frame.setStyleSheet(f"#MetricCard {{ background: {Theme.BG_APP}; border: 1px solid {Theme.BORDER}; border-radius: 5px; padding: 2px 8px; }}")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(1)
+
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;")
+        lbl_val = QLabel(value)
+        lbl_val.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold; border: none;")
+
+        layout.addWidget(lbl_title)
+        layout.addWidget(lbl_val)
+        return lbl_val, frame
+
+    # =========================================================
+    # EVENT HANDLERS & LOGIC PRESERVATION (SPRINT 5 CORE)
+    # =========================================================
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             self.old_pos = event.globalPosition().toPoint()
 
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() == Qt.LeftButton:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.move(self.x() + delta.x(), self.y() + delta.y())
+            self.old_pos = event.globalPosition().toPoint()
+
     def dragEnterEvent(self, event):
-        # Chỉ chấp nhận nếu dữ liệu kéo vào là đường dẫn (file/thư mục)
         if event.mimeData().hasUrls():
             event.accept()
         else:
@@ -524,72 +587,54 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         valid_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
-        
+
         added_files = []
         for url in urls:
             file_path = url.toLocalFile()
             if file_path.lower().endswith(valid_extensions):
                 if self.queue_mgr.add_video(file_path):
                     added_files.append(file_path)
-        
+
         if added_files:
             self._start_metadata_worker(added_files)
             self.on_queue_item_clicked(added_files[-1])
 
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() == Qt.LeftButton:
-            delta = event.globalPosition().toPoint() - self.old_pos
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPosition().toPoint()
-
-    def create_metric_widget(self, title, value, color):
-        frame = QFrame()
-        frame.setStyleSheet("background: #10141F; border: 1px solid #273247; border-radius: 5px; padding: 2px 8px;")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(1)
-        
-        lbl_title = QLabel(title)
-        # Sửa lỗi font size -1 bằng cách đẩy kích thước lên 10px
-        lbl_title.setStyleSheet("color: #98A2B3; font-size: 10px; font-weight: bold;")
-        lbl_val = QLabel(value)
-        lbl_val.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: bold;")
-        
-        layout.addWidget(lbl_title)
-        layout.addWidget(lbl_val)
-        return lbl_val, frame
-
     def apply_saved_settings(self):
         settings = load_settings()
-        if not settings: return 
+        if not settings:
+            return
 
-        # [P2-T2] Khôi phục Chế độ xử lý (Pipeline Mode)
         if "mode" in settings:
             idx = self.mode_combo.findData(settings["mode"])
-            if idx >= 0: self.mode_combo.setCurrentIndex(idx)
+            if idx >= 0:
+                self.mode_combo.setCurrentIndex(idx)
 
-        # Khôi phục Model Whisper
         if "model_size" in settings:
             idx = self.model_combo.findData(settings["model_size"])
-            if idx >= 0: self.model_combo.setCurrentIndex(idx)
-            
-        # Khôi phục Compute Type (VRAM)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+
         if "compute_type" in settings:
             idx = self.compute_combo.findData(settings["compute_type"])
-            if idx >= 0: self.compute_combo.setCurrentIndex(idx)
-            
-        # Khôi phục Prompt, Font, Hardsub
-        if "prompt" in settings: self.prompt_input.setText(settings["prompt"])
-        if "font_name" in settings: self.font_combo.setCurrentText(settings["font_name"])
-        if "font_size" in settings: self.size_spin.setValue(settings["font_size"])
-        if "do_hardsub" in settings: self.chk_hardsub.setChecked(settings["do_hardsub"])
-        
-        # Khôi phục VAD
-        if "use_vad" in settings: self.chk_vad.setChecked(settings["use_vad"])
-        if "silence_ms" in settings: self.spin_silence.setValue(settings["silence_ms"])
-        
-        # Khôi phục Thư mục Output
-        if "output_dir" in settings: self.out_input.setText(settings["output_dir"])
+            if idx >= 0:
+                self.compute_combo.setCurrentIndex(idx)
+
+        if "prompt" in settings:
+            self.prompt_input.setText(settings["prompt"])
+        if "font_name" in settings:
+            self.font_combo.setCurrentText(settings["font_name"])
+        if "font_size" in settings:
+            self.size_spin.setValue(settings["font_size"])
+        if "do_hardsub" in settings:
+            self.chk_hardsub.setChecked(settings["do_hardsub"])
+
+        if "use_vad" in settings:
+            self.chk_vad.setChecked(settings["use_vad"])
+        if "silence_ms" in settings:
+            self.spin_silence.setValue(settings["silence_ms"])
+
+        if "output_dir" in settings:
+            self.out_input.setText(settings["output_dir"])
 
     def update_hardware_info(self):
         try:
@@ -612,26 +657,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def create_side_button(self, text, slot):
-        btn = QPushButton(text)
-        btn.setObjectName("SideBtn")
-        btn.clicked.connect(slot)
-        return btn
-
     def _start_metadata_worker(self, video_paths):
         if not video_paths:
             return
-            
-        # [Predictive Fix] Dùng List để giữ reference, chống Python thu hồi RAM (GC) làm chết Worker ngầm
+
         if not hasattr(self, 'meta_workers'):
             self.meta_workers = []
 
         worker = MetadataWorker(video_paths)
         worker.metadata_parsed.connect(self.queue_mgr.update_metadata)
-        
-        # Tự động tự hủy reference khi Worker chạy xong
         worker.finished.connect(lambda w=worker: self.meta_workers.remove(w) if w in self.meta_workers else None)
-        
+
         self.meta_workers.append(worker)
         worker.start()
 
@@ -642,61 +678,50 @@ class MainWindow(QMainWindow):
             for f in files:
                 if self.queue_mgr.add_video(f):
                     added_files.append(f)
-            
-            # Khởi chạy Worker ngầm cho các file vừa thêm (Chống đơ UI)
+
             self._start_metadata_worker(added_files)
-            
             if added_files:
                 self.on_queue_item_clicked(added_files[-1])
 
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if video_path:
-            # [P2-T10] Mở rộng bộ lọc cho phép nạp cả file Draft
             srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file Phụ đề / Draft", "", "Subtitle & Draft (*.srt *.ai-subtitle-draft)")
             if srt_path:
                 if video_path not in self.queue_mgr.get_items():
                     self.queue_mgr.add_video(video_path)
                     self._start_metadata_worker([video_path])
-                    
+
                 self.queue_mgr.set_srt_for_video(video_path, srt_path)
                 self.on_queue_item_clicked(video_path)
 
-    # def clear_files(self):
-    #     self.queue_mgr.clear_queue()
-    #     # [Clear All Requirements] Đảm bảo dọn dẹp Player, Editor và Overlay
-    #     self.video_player.cleanup()
-    #     self.video_player.sub_controller.load_srt(None)
-    #     self.sub_editor.table.setRowCount(0)  
-
     def clear_files(self):
-        # [Fix] Chỉ ra lệnh xóa Data Model. UI sẽ tự động dọn dẹp thông qua Signal
         self.queue_mgr.clear_queue()
 
     def select_output_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục đầu ra")
-        if d: self.out_input.setText(d)
+        if d:
+            self.out_input.setText(d)
 
-    # --- HÀM MỚI THAY THẾ refresh_queue_ui ---
     def on_queue_updated(self):
         items = self.queue_mgr.get_items()
         self.queue_ui.sync_with_manager(items, self.queue_mgr.active_vid)
-        
+
         count = len(items)
         self.lbl_queue_val.setText(f"{count} video" if count <= 1 else f"{count} videos")
-        
-        # [Fix Blocker] Đã xóa đoạn IF auto-load video gây vòng lặp đệ quy. 
-        # Chỉ dọn dẹp màn hình nếu Queue rỗng.
+
         if count == 0:
             if hasattr(self, 'video_player'):
                 self.video_player.cleanup()
                 self.video_player.sub_controller.load_srt(None)
             if hasattr(self, 'sub_editor'):
-                self.sub_editor.table.setRowCount(0)
+                self.sub_editor.all_segments.clear()
+                self.sub_editor.render_page()
 
     def start_processing(self):
         items = self.queue_mgr.get_items()
-        if not items: return
+        if not items:
+            return
 
         self.is_cancelled_flag = False
         self.batch_queue = [(vid, data.get("srt_path")) for vid, data in items.items()]
@@ -707,10 +732,10 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.log_box.clear()
-        
+
         self.lbl_status_val.setText("Processing")
-        self.lbl_status_val.setStyleSheet("color: #F5B942; font-size: 12px; font-weight: bold;")
-        
+        self.lbl_status_val.setStyleSheet(f"color: {Theme.WARNING}; font-size: 11px; font-weight: bold; border: none;")
+
         self.process_next_batch_item()
 
     def process_next_batch_item(self):
@@ -718,11 +743,11 @@ class MainWindow(QMainWindow):
             if not self.is_cancelled_flag:
                 self.process_finished("Toàn bộ tiến trình đã hoàn tất!")
             return
-            
+
         self.current_batch_index += 1
         self.current_vid, current_srt = self.batch_queue.pop(0)
         file_name = os.path.basename(self.current_vid)
-        
+
         self.append_log(f"\n==================================================")
         self.append_log(f"🎬 ĐANG XỬ LÝ VIDEO [{self.current_batch_index}/{self.total_batch_items}]: {file_name}")
         self.append_log(f"==================================================")
@@ -730,7 +755,6 @@ class MainWindow(QMainWindow):
         self.on_queue_item_clicked(self.current_vid)
 
         if not current_srt:
-            # Tình huống 1: Chưa có SRT -> Chạy AI Whisper
             self.append_log("[HỆ THỐNG] Khởi tạo luồng AI Whisper...")
             self.worker = WhisperWorker(
                 video_path=self.current_vid,
@@ -748,10 +772,8 @@ class MainWindow(QMainWindow):
             self.worker.error_signal.connect(self.process_error)
             self.worker.start()
         else:
-            # Tình huống 2: ĐÃ CÓ SẴN FILE (SRT hoặc Draft)
             self.append_log(f"[HỆ THỐNG] Phát hiện file đính kèm: {current_srt}")
-            
-            # [FIX HIGH] Chặn tuyệt đối việc ném file .ai-subtitle-draft vào FFmpeg
+
             if current_srt.endswith('.ai-subtitle-draft'):
                 self.append_log("❌ [TỪ CHỐI] Không thể chèn Hardsub trực tiếp từ file Draft JSON.")
                 self.append_log("💡 Hướng dẫn: Mở Draft trên Editor ➜ Điền chữ AI ➜ [Lưu SRT] ➜ Đưa file SRT vào Queue để Hardsub.")
@@ -779,17 +801,16 @@ class MainWindow(QMainWindow):
 
     def on_whisper_finished(self, msg, srt_path):
         self.append_log(f"[AI] {msg}")
-        self.queue_mgr.set_srt_for_video(self.current_vid, srt_path) 
-        
-        # [FIX TIMING WORKFLOW] Nếu là Timing Draft, chuyển thẳng sang Editor để kiểm duyệt
+        self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
+
         if self.mode_combo.currentData() == "timing":
             self.append_log("[HỆ THỐNG] Đã tạo xong Timing Artifact. Chuyển sang Subtitle Editor để kiểm duyệt...")
+            self.switch_page(0)
             self.on_queue_item_clicked(self.current_vid)
             self.bottom_tabs.setCurrentIndex(0)
             self.process_finished("Đã tạo xong khung thời gian (Timing Draft)! Vui lòng kiểm duyệt trên Editor.")
             return
 
-        # Với Full Subtitle: Hỏi xác nhận Hardsub nếu có bật tùy chọn
         if self.chk_hardsub.isChecked():
             self.show_confirm_dialog(self.current_vid, srt_path)
         else:
@@ -805,11 +826,11 @@ class MainWindow(QMainWindow):
     def show_confirm_dialog(self, vid_path, srt_path):
         self.progress_bar.setValue(100)
         self.lbl_speed_eta.setText("Chờ xác nhận từ người dùng...")
-        
+
         from ui.hardsub_confirm_dialog import HardsubConfirmDialog
         dialog = HardsubConfirmDialog(vid_path, self)
         dialog.exec()
-        
+
         choice = dialog.user_choice
         if choice == HardsubConfirmDialog.HARDSUB:
             self.append_log("[HỆ THỐNG] Chấp thuận. Khởi chạy luồng Hardsub (FFmpeg)...")
@@ -826,22 +847,21 @@ class MainWindow(QMainWindow):
             self.worker.finished_signal.connect(self.on_hardsub_finished)
             self.worker.error_signal.connect(self.process_error)
             self.worker.start()
-            
+
         elif choice == HardsubConfirmDialog.EDIT:
             self.append_log("[HỆ THỐNG] User chọn Edit. Tạm dừng tiến trình Batch để chỉnh sửa.")
-            # [FIX BLOCKER] Chuyển Tab và Load Subtitle mà không làm kẹt luồng UI
+            self.switch_page(0)
             self.bottom_tabs.setCurrentIndex(0)
             self.on_queue_item_clicked(vid_path)
-            
-            # Reset UI như hàm Finished nhưng không văng Pop-up block
+
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
             self.lbl_status_val.setText("Idle")
-            self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
+            self.lbl_status_val.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 11px; font-weight: bold; border: none;")
             self.progress_anim.stop()
             self.progress_bar.setValue(0)
             self.lbl_speed_eta.setText("Tiến trình tạm dừng để chỉnh sửa.")
-            
+
         else:
             if hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
                 self.append_log("[HỆ THỐNG] User chọn Bỏ qua. SRT đã được bảo toàn. Next Video...")
@@ -851,7 +871,7 @@ class MainWindow(QMainWindow):
 
     def on_hardsub_finished(self, msg, out_video_path):
         self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
-        self.process_next_batch_item() 
+        self.process_next_batch_item()
 
     def cancel_processing(self):
         self.is_cancelled_flag = True
@@ -868,12 +888,12 @@ class MainWindow(QMainWindow):
             global_val = int(base_p + file_p)
         else:
             global_val = val
-            
+
         self.progress_anim.stop()
         self.progress_anim.setStartValue(self.progress_bar.value())
         self.progress_anim.setEndValue(global_val)
         self.progress_anim.start()
-        
+
         if msg and "Chờ xác nhận" not in self.lbl_speed_eta.text():
             self.lbl_speed_eta.setText(msg)
 
@@ -886,8 +906,7 @@ class MainWindow(QMainWindow):
     def process_finished(self, msg):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        
-        # Mở khóa các nút điều khiển trong Subtitle Editor đề phòng trường hợp Cancel/Error
+
         if hasattr(self, 'sub_editor'):
             if hasattr(self.sub_editor, 'fill_text_btn'):
                 self.sub_editor.fill_text_btn.setEnabled(True)
@@ -895,17 +914,15 @@ class MainWindow(QMainWindow):
                 self.sub_editor.save_btn.setEnabled(True)
 
         self.lbl_status_val.setText("Idle")
-        self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
+        self.lbl_status_val.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 11px; font-weight: bold; border: none;")
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --")
-        
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Trạng thái", msg)
+
+        Toast.show_success(self, msg)
 
     def process_error(self, err):
         self.append_log(f"❌ [LỖI] {err}")
-        # [FIX] Nhận diện thông báo Hủy để Log chính xác
         if getattr(self, 'is_cancelled_flag', False) or "hủy" in str(err).lower():
             self.process_finished("Tiến trình đã bị dừng.")
         elif hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
@@ -915,8 +932,9 @@ class MainWindow(QMainWindow):
             self.process_finished("Tiến trình hoàn tất (có phát sinh lỗi ở file cuối).")
 
     def open_subtitle_editor(self):
-        if not self.queue_mgr.get_items(): return
-        
+        if not self.queue_mgr.get_items():
+            return
+
         vid, srt = self.queue_mgr.get_active_data()
         if not vid:
             vid = list(self.queue_mgr.get_items().keys())[0]
@@ -930,6 +948,7 @@ class MainWindow(QMainWindow):
                     f.write("1\n00:00:00,000 --> 00:00:05,000\n[AI Subtitle Studio Placeholder]\n")
             self.queue_mgr.set_srt_for_video(vid, srt)
 
+        self.switch_page(0)
         self.on_queue_item_clicked(vid)
 
     def open_output_folder(self):
@@ -937,12 +956,11 @@ class MainWindow(QMainWindow):
         items = self.queue_mgr.get_items()
         if not out_d and items:
             out_d = os.path.dirname(list(items.keys())[0])
-            
+
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
     def closeEvent(self, event):
-        # [P2-T2] Lưu cài đặt bao gồm cả "mode" trước khi đóng App
         settings = {
             "mode": self.mode_combo.currentData(),
             "model_size": self.model_combo.currentData(),
@@ -956,17 +974,16 @@ class MainWindow(QMainWindow):
             "output_dir": self.out_input.text().strip()
         }
         save_settings(settings)
-        
+
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
 
-        import subprocess
         try:
             if os.name == 'nt':
                 subprocess.Popen(
-                    ["taskkill", "/f", "/im", "ffmpeg.exe"], 
-                    stdout=subprocess.DEVNULL, 
+                    ["taskkill", "/f", "/im", "ffmpeg.exe"],
+                    stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
@@ -979,14 +996,13 @@ class MainWindow(QMainWindow):
         _, srt_path = self.queue_mgr.get_active_data()
 
         self.video_player.load_video(vid_path)
-        
+
         if srt_path and os.path.exists(srt_path):
-            # [P2-T10] Phân luồng đọc theo Định dạng đuôi file
             if srt_path.endswith('.ai-subtitle-draft'):
                 self.sub_editor.load_draft_file(srt_path)
             else:
                 self.sub_editor.load_srt_file(srt_path)
-                
+
             self.video_player.sub_controller.load_srt(srt_path)
         else:
             self.sub_editor.all_segments.clear()
@@ -998,17 +1014,16 @@ class MainWindow(QMainWindow):
     def on_queue_item_removed_handler(self, vid_path):
         items = self.queue_mgr.get_items()
         if not items:
-            # [FIX] Ép buộc QMediaPlayer cắt đứt hoàn toàn File Source đang giữ
             try:
-                from PySide6.QtCore import QUrl
                 self.video_player.player.stop()
                 self.video_player.player.setSource(QUrl())
             except Exception:
                 pass
-            
+
             self.video_player.cleanup()
             self.video_player.sub_controller.load_srt(None)
-            self.sub_editor.table.setRowCount(0)
+            self.sub_editor.all_segments.clear()
+            self.sub_editor.render_page()
         else:
             if self.queue_mgr.active_vid:
                 self.on_queue_item_clicked(self.queue_mgr.active_vid)
@@ -1018,12 +1033,11 @@ class MainWindow(QMainWindow):
     # =========================================================================
     def start_fill_text_worker(self, start_idx, count):
         if not self.queue_mgr.active_vid:
-            QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn video cần điền chữ.")
+            Toast.show_info(self, "Vui lòng chọn video từ Hàng đợi để điền chữ.")
             return
-            
-        # [P2-T13] CHỈ LẤY ĐÚNG RANGE (TỪ CÂU... ĐẾN CÂU...) ĐỂ ĐẨY CHO AI
+
         target_segments = self.sub_editor.all_segments[start_idx : start_idx + count]
-        
+
         segments_for_ai = []
         for seg in target_segments:
             s_ms = self.sub_editor.time_str_to_ms(seg['start'])
@@ -1031,11 +1045,10 @@ class MainWindow(QMainWindow):
             raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
             stt = int(seg['stt']) if str(seg['stt']).isdigit() else 0
             segments_for_ai.append((s_ms, e_ms, raw_text, stt))
-                
-        if not segments_for_ai: 
+
+        if not segments_for_ai:
             return
-        
-        # Khóa Giao diện (Freeze UI)
+
         self.is_cancelled_flag = False
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -1043,14 +1056,14 @@ class MainWindow(QMainWindow):
         self.sub_editor.btn_continue.setEnabled(False)
         self.sub_editor.save_draft_btn.setEnabled(False)
         self.sub_editor.save_btn.setEnabled(False)
-        
-        self.bottom_tabs.setCurrentIndex(2) 
+
+        self.switch_page(0)
+        self.bottom_tabs.setCurrentIndex(1)
         self.append_log(f"\n[HỆ THỐNG] Đang chạy AI Điền chữ cho {len(segments_for_ai)} câu (Từ dòng {start_idx + 1})...")
-        
-        from workers.TaskQueue import FillTextWorker
+
         self.worker = FillTextWorker(
             video_path=self.queue_mgr.active_vid,
-            segments_data=segments_for_ai, # AI chỉ nhận đúng phần cần chạy
+            segments_data=segments_for_ai,
             initial_prompt=self.prompt_input.text().strip(),
             compute_type=self.compute_combo.currentData(),
             model_size=self.model_combo.currentData()
@@ -1062,25 +1075,22 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def on_fill_text_finished(self, filled_segments):
+        self.switch_page(0)
         self.bottom_tabs.setCurrentIndex(0)
-        
-        # [P2-T14] Đưa Text đã dịch về đúng STT trong Model tổng
+
         for start_ms, end_ms, text, stt in filled_segments:
             for seg in self.sub_editor.all_segments:
                 if str(seg['stt']) == str(stt):
                     seg['text'] = text
-                    seg['status'] = 'draft' # Cập nhật Status an toàn
+                    seg['status'] = 'draft'
                     break
-        
-        # UI Refresh
+
         self.sub_editor.render_page()
         self.sub_editor.update_draft_progress()
-        
-        # [P2-T14] AUTO-SAVE DRAFT (Silent Checkpoint)
+
         self.sub_editor.save_draft(silent=True)
         self.append_log("[HỆ THỐNG] Đã lưu Checkpoint Draft ngầm.")
-        
-        # Mở khóa Giao diện
+
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.progress_anim.stop()
@@ -1088,11 +1098,10 @@ class MainWindow(QMainWindow):
         self.lbl_speed_eta.setText("Batch AI hoàn tất! Sẵn sàng cho lượt tiếp theo.")
         self.sub_editor.save_draft_btn.setEnabled(True)
         self.sub_editor.save_btn.setEnabled(True)
-    
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-
-
