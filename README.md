@@ -23,6 +23,10 @@
    - [Bước 5: Cấu hình tăng tốc GPU (CUDA)](#bước-5-cấu-hình-tăng-tốc-gpu-cuda)
 5. [Cấu trúc thư mục dự án](#-cấu-trúc-thư-mục-dự-án)
 6. [Hướng dẫn sử dụng](#-hướng-dẫn-sử-dụng)
+   - [1. Khởi động ứng dụng](#1-khởi-động-ứng-dụng)
+   - [2. Quy trình Queue Pipeline (Tự động hóa)](#2-quy-trình-queue-pipeline-tự-động-hóa)
+   - [3. Quy trình Timestamp-First Workflow (Timing Draft & AI Fill)](#3-quy-trình-timestamp-first-workflow-timing-draft--ai-fill)
+   - [4. Thao tác nâng cao trong Subtitle Editor](#4-thao-tác-nâng-cao-trong-subtitle-editor)
 7. [Xử lý sự cố thường gặp (Troubleshooting)](#-xử-lý-sự-cố-thường-gặp-troubleshooting)
 8. [Lộ trình phát triển (Roadmap)](#-lộ-trình-phát-triển-roadmap)
 
@@ -46,16 +50,27 @@
 - 🕒 **Kiến trúc Timing Draft (Timestamp-First)**  
   Tạo khung phụ đề rỗng chỉ gồm mốc thời gian (`[ Chưa có nội dung ]`), phục vụ kiểm duyệt nhịp điệu cắt câu trước khi sinh text.
 
+- ✨ **Động cơ Điền chữ AI theo Batch (Zero Disk I/O & Resume)**
+  - Tải toàn bộ dải âm thanh lên RAM 1 lần duy nhất và cắt trực tiếp trên mảng dữ liệu (Array Slicing), tối ưu hóa tốc độ và giảm hao mòn ổ cứng.
+  - Hỗ trợ điền chữ theo từng cụm câu linh hoạt (Batch AI 1, 5, 10... dòng).
+  - Tự động quét trạng thái để **Tiếp tục từ câu rỗng tiếp theo** và tự động lưu Checkpoint ngầm (Silent Save).
+
+- 📦 **Bảo toàn Dữ liệu Artifact (`.ai-subtitle-draft`)**  
+  Định dạng lưu trữ độc quyền chuẩn JSON, bảo toàn toàn bộ vòng đời trạng thái (`TIMING_ONLY`, `DRAFT`, `FINAL`) và Metadata của từng câu phụ đề.
+
 - 🎨 **Trình biên tập phụ đề & Live Video Overlay**
+  - Hỗ trợ phân trang linh hoạt (**Tất cả, 1 dòng, 5 dòng, 10 dòng, 20 dòng, 50 dòng**) chống giật lag khi tải video dài.
+  - **Auto-Flip Pagination:** Bảng phụ đề tự động lật trang tương ứng khi phát video.
   - Xem trước phụ đề ngay trên video player với viền chữ nổi sắc nét.
-  - Chỉnh sửa trực tiếp trên bảng dữ liệu, tự động đồng bộ thời gian thực (Live Sync).
+  - Chỉnh sửa trực tiếp trên bảng dữ liệu, bảo vệ dữ liệu khỏi timestamp sai định dạng.
   - Tùy biến toàn diện: Font chữ, Cỡ chữ, Màu sắc, Độ dày viền (Stroke) và Vị trí (Top/Center/Bottom).
 
 - 🎬 **Render Hardsub không giật lag (Non-blocking UI)**  
   Luồng FFmpeg chạy ngầm độc lập, đo đạc tốc độ xử lý (FPS, Speed x, ETA) và mức tiêu thụ phần cứng (CPU/GPU).
 
 - 🗂️ **Hàng đợi Batch Processing thông minh**
-  - Tự động bỏ qua xác nhận đối với video đã có sẵn SRT.
+  - Phân tách độc lập giữa **Start Queue** (xử lý hàng loạt cấp độ File) và **Continue Draft** (xử lý cục bộ cấp độ Artifact).
+  - Ngăn chặn triệt để tình trạng đưa file `.ai-subtitle-draft` vào luồng chèn Hardsub FFmpeg.
   - Cơ chế **Failure Recovery**: Một video lỗi không làm dừng cả hàng đợi.
   - Tự động kiểm tra luồng âm thanh (Pre-check Audio) ngăn chặn lỗi sập Backend.
 
@@ -118,10 +133,10 @@ pip install -r requirements.txt
 ```text
 PySide6>=6.5.0
 faster-whisper>=1.0.0
-psutil>=5.9.0
-gputil>=1.4.0
 torch>=2.0.0
-ctranslate2>=3.20.0
+torchaudio>=2.0.0
+psutil>=5.9.0
+numpy>=1.24.0
 ```
 
 ### Bước 4: Cấu hình FFmpeg
@@ -153,26 +168,25 @@ ai-subtitle-studio/
 │   ├── ffmpeg.exe
 │   └── ffprobe.exe
 ├── core/                         # Kiến trúc tầng Logic & Backend
-│   ├── Backend.py                # Whisper Inference & FFmpeg Hardsub Core
+│   ├── Backend.py                # Whisper (SRT/Timing/FillText) & FFmpeg Hardsub Core
 │   ├── output_path_service.py    # Quản lý cấu trúc thư mục Output
-│   ├── subtitle_controller.py    # Bộ điều phối đồng bộ thời gian Video & Editor
-│   ├── subtitle_exporter.py      # Dịch vụ xuất file SRT / VTT / TXT
-│   └── subtitle_model.py         # Data Model (Timing Artifact, SubtitleSegment)
+│   ├── queue_manager.py          # Logic quản lý danh sách hàng đợi Video
+│   ├── subtitle_controller.py    # Bộ điều phối đồng bộ thời gian Video & Subtitle/Draft
+│   ├── subtitle_exporter.py      # Dịch vụ xuất file phụ đề đa định dạng
+│   ├── subtitle_model.py         # Data Model (Timing Artifact, Lifecycle Status)
+│   └── video_metadata.py         # Worker đọc thông số Video ngầm
 ├── player/                       # Video Player Components
-│   ├── subtitle_overlay.py       # Lớp vẽ chữ phụ đề nổi trên video
-│   └── video_player.py           # Widget Media Player (QGraphicsView)
+│   ├── subtitle_overlay.py       # Lớp vẽ chữ phụ đề nổi trên video (Hỗ trợ Timing Draft)
+│   └── video_player.py           # Widget Media Player tích hợp QGraphicsView
 ├── ui/                           # Giao diện người dùng (PySide6)
-│   ├── Gui.py                    # Cửa sổ chính & Điều phối Batch Queue
+│   ├── Gui.py                    # Cửa sổ chính, Dashboard & Điều phối Queue
 │   ├── hardsub_confirm_dialog.py # Hộp thoại xác nhận sau khi tạo SRT
-│   ├── QueueManager.py           # Logic quản lý danh sách Video
-│   ├── QueueUI.py                # Bảng giao diện hàng đợi
-│   └── SubEditor.py              # Bảng biên tập & Preview Style phụ đề
-├── utils/                        # Công cụ tiện ích hệ thống
-│   └── resource_path.py          # Xử lý đường dẫn tài nguyên PyInstaller
+│   ├── queue_widget.py           # Bảng giao diện hàng đợi
+│   └── SubEditor.py              # Bảng biên tập, Phân trang, AI Batch Range & Style Preview
 ├── workers/                      # Background Thread Workers
-│   └── TaskQueue.py              # WhisperWorker & HardsubWorker
+│   └── TaskQueue.py              # WhisperWorker, HardsubWorker, FillTextWorker
+├── utils.py                      # Công cụ tiện ích hệ thống & lưu trữ cấu hình
 ├── requirements.txt              # Danh sách thư viện Python
-├── main.py                       # Điểm khởi chạy ứng dụng
 └── README.md                     # Tài liệu hướng dẫn
 ```
 
@@ -183,17 +197,17 @@ ai-subtitle-studio/
 ### 1. Khởi động ứng dụng
 
 ```bash
-python main.py
+python ui/Gui.py
 ```
 
-### 2. Quy trình làm việc tiêu chuẩn (Standard Workflow)
+### 2. Quy trình Queue Pipeline (Tự động hóa)
 
 ```text
 [Thêm Video vào Queue]
            ↓
-[Cấu hình Mô hình & Prompt]
+[Chọn Mode: Full Subtitle (AI sinh Text)]
            ↓
-[Nhấn "Start Processing"]
+[Nhấn "▶ Start Queue"]
            ↓
 [AI tạo phụ đề (.srt)]
            ↓
@@ -205,12 +219,33 @@ python main.py
 └───────────────────────────────────────────────┘
 ```
 
-### 3. Tinh chỉnh trong Subtitle Editor
+### 3. Quy trình Timestamp-First Workflow (Timing Draft & AI Fill)
 
-- **Chỉnh sửa Text/Time**: Click đúp trực tiếp vào ô tương ứng trên bảng để sửa.
-- **Seek video**: Click đúp vào cột *Bắt đầu* để tua nhanh video đến đúng vị trí câu thoại.
+```text
+[Thêm Video vào Queue] ──► [Chọn Mode: Timing Draft] ──► [Nhấn "▶ Start Queue"]
+                                                                   │
+       ┌───────────────────────────────────────────────────────────┘
+       ▼
+[Tự động mở Subtitle Editor] (Hiển thị placeholder "[ Chưa có nội dung ]")
+       │
+       ├─► [Chỉnh sửa mốc thời gian / Điều hướng phân trang 1/5/10/20 dòng]
+       │
+       ├─► [Nhấn "✅ Chốt Timing"] (Khóa mốc thời gian sang trạng thái FINAL)
+       │
+       ├─► [Chọn Batch AI: 5] ──► [Nhấn "▶ Tiếp tục từ câu..."] (Cắt Audio trên RAM)
+       │                                                                  │
+       ├─► [Nhấn "📦 Lưu Draft"] ◄──(Tự động lưu Checkpoint ngầm)────────┘
+       │
+       └─► [Nhấn "💾 Lưu SRT"] ──► [Đưa vào Queue để Render Hardsub]
+```
+
+### 4. Thao tác nâng cao trong Subtitle Editor
+
+- **Điều hướng phân trang**: Chọn số dòng hiển thị (1, 5, 10, 20, 50 hoặc Tất cả) ở góc trên bên trái bảng để tăng tốc độ phản hồi giao diện.
+- **Tua nhanh (Seek)**: Click đúp vào ô thời gian bắt đầu để tua nhanh video đến đúng vị trí câu thoại.
+- **Chỉnh sửa an toàn**: Tự động chặn và hoàn tác nếu người dùng nhập sai định dạng timestamp (`HH:MM:SS,mmm`).
+- **AI Batch & Continue**: Thiết lập số lượng câu cần điền chữ rồi nhấn nút **Tiếp tục**. Sau mỗi đợt điền chữ thành công, hệ thống tự động Checkpoint vào file Draft.
 - **Tùy biến Style**: Thay đổi Font, Cỡ chữ, Màu sắc, Viền chữ ở bảng điều khiển bên phải. Thay đổi sẽ hiển thị ngay lập tức lên màn hình video.
-- **Lưu thay đổi**: Nhấn nút **Lưu thay đổi** (`Ctrl + S`) để cập nhật file SRT trên ổ đĩa.
 
 ---
 
@@ -246,12 +281,14 @@ Nếu kết quả trả về `0`, hãy cài đặt lại gói `torch` bản CUDA
 
 ## 🗺️ Lộ trình phát triển (Roadmap)
 
-- [ ] Hỗ trợ đa ngôn ngữ (Auto-detect + Translate)
-- [ ] Export phụ đề định dạng ASS / SSA với style nâng cao
-- [ ] Tích hợp mô hình Whisper lớn hơn / fine-tuned cho tiếng Việt
-- [ ] Hỗ trợ macOS và Linux
-- [ ] Chế độ Batch Render Hardsub hàng loạt
-- [ ] Plugin hệ thống font tùy chỉnh
+- [x] **Sprint 1**: Khởi tạo kiến trúc Giao diện PySide6 & Tích hợp GPU CUDA Dashboard.
+- [x] **Sprint 2**: Tích hợp Faster-Whisper, VAD Filter và Engine Hardsub FFmpeg.
+- [x] **Sprint 3**: Trình phát Video đồng bộ thời gian thực & Lớp phủ Subtitle Overlay.
+- [x] **Sprint 4**: Quản lý hàng đợi đa Video (Video Queue) & Trích xuất Metadata ngầm.
+- [x] **Sprint 5 (Phase 1)**: Chuẩn hóa đường dẫn xuất file (Output Architecture) & Batch Hardsub Workflow.
+- [x] **Sprint 5 (Phase 2)**: Timestamp-First Architecture (Timing Draft, Subtitle Editor Model-View, Phân trang Auto-Flip, Điền chữ theo Range & Persistence `.ai-subtitle-draft`).
+- [ ] **Sprint 6**: Subtitle Editor Tools (Tách/Gộp dòng câu, Dịch tự động qua LLM API, Undo/Redo).
+- [ ] **Sprint 7**: Project Persistence & Workspace State Management.
 
 ---
 

@@ -106,25 +106,117 @@ class SubtitleEditorWidget(QWidget):
         
         
         # =========================================================
-        # [P2-T13, P2-T14] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE
+        # [P2-T13, P2-T14] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE (FIX UI)
         # =========================================================
         ai_frame = QFrame()
-        ai_frame.setStyleSheet("background-color: #1A212E; border: 1px solid #273247; border-radius: 6px; padding: 4px;")
+        ai_frame.setStyleSheet("background-color: #1A212E; border: 1px solid #273247; border-radius: 6px;")
         ai_layout = QHBoxLayout(ai_frame)
+        ai_layout.setContentsMargins(10, 6, 10, 6)
+        ai_layout.setSpacing(10)
         
+        # Phần hiển thị tiến độ (Căn trái)
         self.lbl_progress = QLabel("Đã điền: 0 / 0")
-        self.lbl_progress.setStyleSheet("color: #98A2B3; font-weight: bold; border: none;")
+        self.lbl_progress.setStyleSheet("color: #35C8FF; font-weight: bold; font-size: 12px; border: none;")
         ai_layout.addWidget(self.lbl_progress)
         
-        ai_layout.addWidget(QLabel(" | Batch AI:", styleSheet="color: #98A2B3; border: none;"))
+        # Đẩy cụm điều khiển sang bên phải để không bị chèn ép
+        ai_layout.addStretch()
+        
+        lbl_batch = QLabel("Batch AI:")
+        lbl_batch.setStyleSheet("color: #98A2B3; font-weight: bold; border: none;")
+        ai_layout.addWidget(lbl_batch)
+        
+        # Ô SpinBox mở rộng kích thước chuẩn
+        # Ô SpinBox mở rộng, dùng CSS Triangles để vẽ mũi tên (Không dùng SVG)
         self.spin_batch = QSpinBox()
         self.spin_batch.setRange(1, 100)
         self.spin_batch.setValue(5)
-        self.spin_batch.setStyleSheet("QSpinBox { padding: 4px; min-height: 24px; max-width: 50px; }")
+        self.spin_batch.setFixedWidth(65)
+        self.spin_batch.setStyleSheet("""
+            QSpinBox {
+                background-color: #10141F;
+                color: #F5F7FA;
+                border: 1px solid #273247;
+                border-radius: 4px;
+                padding-left: 6px;
+                padding-right: 20px;
+                min-height: 26px;
+                font-weight: bold;
+            }
+            QSpinBox:focus {
+                border: 1px solid #35C8FF;
+            }
+            QSpinBox::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 18px;
+                border-left: 1px solid #273247;
+                border-bottom: 1px solid #273247;
+                background-color: #161B26;
+                border-top-right-radius: 3px;
+            }
+            QSpinBox::up-button:hover {
+                background-color: #273247;
+            }
+            QSpinBox::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 18px;
+                border-left: 1px solid #273247;
+                background-color: #161B26;
+                border-bottom-right-radius: 3px;
+            }
+            QSpinBox::down-button:hover {
+                background-color: #273247;
+            }
+            
+            /* Kỹ thuật CSS Triangles: Dùng viền trong suốt để ép ra hình tam giác */
+            QSpinBox::up-arrow {
+                width: 0px;
+                height: 0px;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-bottom: 5px solid #98A2B3;
+                margin-top: 1px;
+            }
+            QSpinBox::up-arrow:hover {
+                border-bottom: 5px solid #FFFFFF;
+            }
+            
+            QSpinBox::down-arrow {
+                width: 0px;
+                height: 0px;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #98A2B3;
+                margin-bottom: 1px;
+            }
+            QSpinBox::down-arrow:hover {
+                border-top: 5px solid #FFFFFF;
+            }
+        """)
         ai_layout.addWidget(self.spin_batch)
         
+        # Nút Tiếp tục với padding rộng và trạng thái hover/disabled rõ ràng
         self.btn_continue = QPushButton("▶ Tiếp tục từ câu...")
-        self.btn_continue.setStyleSheet("background-color: #7B61FF; color: #FFF; font-weight: bold; border-radius: 4px; padding: 6px 12px;")
+        self.btn_continue.setStyleSheet("""
+            QPushButton {
+                background-color: #7B61FF;
+                color: #FFFFFF;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 5px 16px;
+                min-height: 20px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #927DFF;
+            }
+            QPushButton:disabled {
+                background-color: #273247;
+                color: #667085;
+            }
+        """)
         self.btn_continue.clicked.connect(self.trigger_ai_fill)
         ai_layout.addWidget(self.btn_continue)
         
@@ -443,20 +535,29 @@ class SubtitleEditorWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể lưu file: {str(e)}")
 
-    def save_draft(self):
-        default_name = self.srt_path.replace('.srt', '.ai-subtitle-draft') if self.srt_path else "Project.ai-subtitle-draft"
-        path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
+    def save_draft(self, silent=False):
+        """ [FIX MEDIUM] Đảm bảo Silent Save hoàn toàn 'câm' và tự động định tuyến file """
+        import json
+        from PySide6.QtWidgets import QFileDialog
+        
+        path = self.srt_path
+        
+        if silent:
+            # Ép kiểu đường dẫn tự động khi lưu ngầm, KHÔNG mở hộp thoại
+            if not path:
+                path = "Project.ai-subtitle-draft"
+            elif not path.endswith('.ai-subtitle-draft'):
+                path = path.replace('.srt', '.ai-subtitle-draft')
+        else:
+            # Lưu thủ công: Mở hộp thoại cho người dùng chọn
+            default_name = path.replace('.srt', '.ai-subtitle-draft') if path else "Project.ai-subtitle-draft"
+            path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
+            
         if not path: return
         
-        draft_data = {
-            "version": 1.0,
-            "segments": []
-        }
-        
+        draft_data = {"version": 1.0, "segments": []}
         for seg in self.all_segments:
             raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
-            
-            # [FIX HIGH] Bảo toàn Status, không tự ý ghi đè nếu đã là FINAL
             current_status = seg.get('status', 'timing_only')
             if current_status != 'final':
                 current_status = "draft" if raw_text.strip() else "timing_only"
@@ -473,9 +574,13 @@ class SubtitleEditorWidget(QWidget):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(draft_data, f, ensure_ascii=False, indent=4)
-            QMessageBox.information(self, "Thành công", f"Đã lưu Timing Draft tại:\n{path}")
+                
+            self.srt_path = path # Lưu vết đường dẫn để lần sau ghi đè trực tiếp
+            
+            if not silent:
+                QMessageBox.information(self, "Thành công", f"Đã bảo lưu Draft tại:\n{path}")
         except Exception as e:
-            QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")
+            if not silent: QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")
 
     def load_draft_file(self, draft_path):
         import json

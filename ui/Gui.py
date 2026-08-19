@@ -748,10 +748,17 @@ class MainWindow(QMainWindow):
             self.worker.error_signal.connect(self.process_error)
             self.worker.start()
         else:
-            # Tình huống 2: ĐÃ CÓ SẴN SRT (Vừa chỉnh sửa xong hoặc Import tay)
-            self.append_log(f"[HỆ THỐNG] Phát hiện file SRT có sẵn: {current_srt}")
+            # Tình huống 2: ĐÃ CÓ SẴN FILE (SRT hoặc Draft)
+            self.append_log(f"[HỆ THỐNG] Phát hiện file đính kèm: {current_srt}")
+            
+            # [FIX HIGH] Chặn tuyệt đối việc ném file .ai-subtitle-draft vào FFmpeg
+            if current_srt.endswith('.ai-subtitle-draft'):
+                self.append_log("❌ [TỪ CHỐI] Không thể chèn Hardsub trực tiếp từ file Draft JSON.")
+                self.append_log("💡 Hướng dẫn: Mở Draft trên Editor ➜ Điền chữ AI ➜ [Lưu SRT] ➜ Đưa file SRT vào Queue để Hardsub.")
+                self.process_next_batch_item()
+                return
+
             if self.chk_hardsub.isChecked():
-                # [FIX BLOCKER UX] Bỏ qua Hộp thoại xác nhận, Render luôn để đảm bảo tự động hóa Batch!
                 self.append_log("[HỆ THỐNG] Bỏ qua xác nhận. Khởi chạy luồng Hardsub (FFmpeg) ngay lập tức...")
                 self.worker = HardsubWorker(
                     video_path=self.current_vid,
