@@ -521,11 +521,13 @@ class SubtitleEditorWidget(QWidget):
 
     def save_srt(self):
         from PySide6.QtWidgets import QFileDialog
+        import os
         
-        # [FIX HIGH] Chặn ghi đè SRT lên file JSON Draft
+        # [FIX HIGH] Đảm bảo Save SRT luôn hướng tới file .srt, bảo vệ an toàn cho Draft JSON
         path = self.srt_path
-        if not path or path.endswith('.ai-subtitle-draft'):
-            default_name = path.replace('.ai-subtitle-draft', '.srt') if path else "Project.srt"
+        if not path or not path.endswith('.srt'):
+            base = os.path.splitext(path)[0] if path else "Project"
+            default_name = f"{base}.srt"
             path, _ = QFileDialog.getSaveFileName(self, "Xuất file SRT", default_name, "SubRip Subtitle (*.srt)")
             if not path: return
             
@@ -539,30 +541,29 @@ class SubtitleEditorWidget(QWidget):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(new_blocks) + "\n")
                 
-            # Cập nhật lại srt_path thành file .srt (Lưu ý: save_draft vẫn an toàn vì nó tự đổi đuôi ngược lại)
             self.srt_path = path 
-            
             QMessageBox.information(self, "Thành công", f"Đã xuất file SRT an toàn tại:\n{path}")
             self.srt_saved.emit(self.srt_path)
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể lưu file SRT: {str(e)}")
 
     def save_draft(self, silent=False):
-        """ [FIX MEDIUM] Đảm bảo Silent Save hoàn toàn 'câm' và tự động định tuyến file """
+        """ Hợp nhất duy nhất 1 hàm save_draft. Tự động định tuyến đuôi file an toàn """
         import json
+        import os
         from PySide6.QtWidgets import QFileDialog
         
         path = self.srt_path
         
         if silent:
-            # Ép kiểu đường dẫn tự động khi lưu ngầm, KHÔNG mở hộp thoại
             if not path:
                 path = "Project.ai-subtitle-draft"
             elif not path.endswith('.ai-subtitle-draft'):
-                path = path.replace('.srt', '.ai-subtitle-draft')
+                base = os.path.splitext(path)[0]
+                path = f"{base}.ai-subtitle-draft"
         else:
-            # Lưu thủ công: Mở hộp thoại cho người dùng chọn
-            default_name = path.replace('.srt', '.ai-subtitle-draft') if path else "Project.ai-subtitle-draft"
+            base = os.path.splitext(path)[0] if path else "Project"
+            default_name = f"{base}.ai-subtitle-draft"
             path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
             
         if not path: return
@@ -571,6 +572,7 @@ class SubtitleEditorWidget(QWidget):
         for seg in self.all_segments:
             raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
             current_status = seg.get('status', 'timing_only')
+            
             if current_status != 'final':
                 current_status = "draft" if raw_text.strip() else "timing_only"
                 
@@ -587,7 +589,7 @@ class SubtitleEditorWidget(QWidget):
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(draft_data, f, ensure_ascii=False, indent=4)
                 
-            self.srt_path = path # Lưu vết đường dẫn để lần sau ghi đè trực tiếp
+            self.srt_path = path # Giữ Tracker bám sát file Draft cho các lượt Silent Checkpoint kế tiếp
             
             if not silent:
                 QMessageBox.information(self, "Thành công", f"Đã bảo lưu Draft tại:\n{path}")
@@ -596,6 +598,8 @@ class SubtitleEditorWidget(QWidget):
 
     def load_draft_file(self, draft_path):
         import json
+        import os
+        
         self.srt_path = draft_path 
         self.all_segments.clear()
         
@@ -607,7 +611,6 @@ class SubtitleEditorWidget(QWidget):
             data = json.load(f)
             
         for seg in data.get("segments", []):
-            # [FIX HIGH] Đọc và giữ nguyên Status + Metadata (Round-trip an toàn)
             self.all_segments.append({
                 "stt": str(seg.get("id", 0)),
                 "start": self.ms_to_time_str(seg.get("start_ms", 0)),
