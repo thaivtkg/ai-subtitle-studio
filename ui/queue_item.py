@@ -34,6 +34,7 @@ class QueueItemWidget(QFrame):
         
         self.btn_remove = QPushButton("✕")
         self.btn_remove.setFixedSize(24, 24)
+        self.btn_remove.setToolTip("Xóa video khỏi hàng đợi")
         self.btn_remove.setStyleSheet(f"""
             QPushButton {{ background: transparent; color: {Theme.TEXT_MUTED}; font-weight: bold; border: none; font-size: 14px; border-radius: 4px; }}
             QPushButton:hover {{ color: #FFFFFF; background: {Theme.DANGER}; }}
