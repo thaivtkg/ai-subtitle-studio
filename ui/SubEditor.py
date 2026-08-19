@@ -520,7 +520,15 @@ class SubtitleEditorWidget(QWidget):
         self.update_draft_progress()
 
     def save_srt(self):
-        if not self.srt_path: return
+        from PySide6.QtWidgets import QFileDialog
+        
+        # [FIX HIGH] Chặn ghi đè SRT lên file JSON Draft
+        path = self.srt_path
+        if not path or path.endswith('.ai-subtitle-draft'):
+            default_name = path.replace('.ai-subtitle-draft', '.srt') if path else "Project.srt"
+            path, _ = QFileDialog.getSaveFileName(self, "Xuất file SRT", default_name, "SubRip Subtitle (*.srt)")
+            if not path: return
+            
         new_blocks = []
         for seg in self.all_segments:
             raw_text = seg['text']
@@ -528,12 +536,16 @@ class SubtitleEditorWidget(QWidget):
             new_blocks.append(f"{seg['stt']}\n{seg['start']} --> {seg['end']}\n{raw_text}")
             
         try:
-            with open(self.srt_path, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(new_blocks) + "\n")
-            QMessageBox.information(self, "Thành công", "Đã lưu file SRT thành công!")
+                
+            # Cập nhật lại srt_path thành file .srt (Lưu ý: save_draft vẫn an toàn vì nó tự đổi đuôi ngược lại)
+            self.srt_path = path 
+            
+            QMessageBox.information(self, "Thành công", f"Đã xuất file SRT an toàn tại:\n{path}")
             self.srt_saved.emit(self.srt_path)
         except Exception as e:
-            QMessageBox.critical(self, "Lỗi", f"Không thể lưu file: {str(e)}")
+            QMessageBox.critical(self, "Lỗi", f"Không thể lưu file SRT: {str(e)}")
 
     def save_draft(self, silent=False):
         """ [FIX MEDIUM] Đảm bảo Silent Save hoàn toàn 'câm' và tự động định tuyến file """
