@@ -2,11 +2,13 @@ import json
 import os
 import time
 
+import PySide6
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from ui.components.empty_state import EmptyStateWidget
 from ui.theme import Theme
+from ui.toast import Toast
 
 
 class DraftCenterPage(QWidget):
@@ -62,7 +65,9 @@ class DraftCenterPage(QWidget):
         layout.addWidget(self.scroll)
 
     def set_directory(self, d):
-        self.active_dir = d
+        # [FIX MEDIUM #9] Quét thư mục 'subtitles' theo chuẩn Output Architecture của Sprint 5
+        target_dir = os.path.join(d, "subtitles") if d else ""
+        self.active_dir = target_dir if os.path.exists(target_dir) else d
         self.scan_drafts()
 
     def scan_drafts(self):
@@ -140,9 +145,18 @@ class DraftCenterPage(QWidget):
         return card
 
     def _delete_draft(self, path, card_widget):
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-            card_widget.deleteLater()
-        except Exception:
-            pass
+        # [FIX MEDIUM #10] Thêm hộp thoại xác nhận (Confirmation) và không nuốt lỗi
+        reply = QMessageBox.question(
+            self, "Xác nhận xóa", 
+            f"Bạn có chắc chắn muốn xóa bản nháp:\n{os.path.basename(path)}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                card_widget.deleteLater()
+                Toast.show_success(self.window(), "Đã xóa bản nháp thành công.")
+            except Exception as e:
+                Toast.show_error(self.window(), f"Lỗi xóa file: {str(e)}")

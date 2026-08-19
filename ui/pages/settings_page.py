@@ -81,6 +81,14 @@ class SettingsCenterPage(QWidget):
         self.chk_vad = QCheckBox("Kích hoạt Silero VAD Filter")
         grid_ai.addWidget(self.chk_vad, 2, 0, 1, 2)
 
+        # Thêm vào sau chk_vad trong SettingsCenterPage
+        grid_ai.addWidget(QLabel("Min Silence (ms):"), 3, 0)
+        self.silence_spin = QSpinBox()
+        self.silence_spin.setRange(100, 2000)
+        self.silence_spin.setValue(500)
+        self.silence_spin.setSingleStep(100)
+        grid_ai.addWidget(self.silence_spin, 3, 1)
+
         l_ai.addWidget(card_ai)
         l_ai.addStretch()
         self.stack.addWidget(page_ai)

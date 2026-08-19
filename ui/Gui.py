@@ -228,7 +228,11 @@ class MainWindow(QMainWindow):
 
         # Page 5 (Index 4): Export Center
         self.page_export = ExportCenterPage()
-        self.page_export.export_srt_requested.connect(self.sub_editor.save_srt)
+        # [FIX] Nối nút xuất file tới hàm xử lý đa định dạng thay vì chỉ lưu SRT của Editor
+        self.page_export.export_srt_requested.connect(self._trigger_export_softsub)
+        
+        # [FIX MEDIUM #4] Kích hoạt nút Retry
+        self.ai_panel.retry_requested.connect(self._retry_current_task)
         self.page_export.burn_hardsub_requested.connect(self._trigger_export_hardsub)
         self.stack.addWidget(self.page_export)
 
@@ -408,6 +412,27 @@ class MainWindow(QMainWindow):
         if "output_dir" in s:
             self.out_input.setText(s["output_dir"])
             self.page_export.out_edit.setText(s["output_dir"])
+        if "model_size" in s:
+            idx = self.page_settings.model_combo.findData(s["model_size"])
+            if idx >= 0: self.page_settings.model_combo.setCurrentIndex(idx)
+        if "compute_type" in s:
+            idx = self.page_settings.compute_combo.findData(s["compute_type"])
+            if idx >= 0: self.page_settings.compute_combo.setCurrentIndex(idx)
+        if "use_vad" in s:
+            self.page_settings.chk_vad.setChecked(s["use_vad"])
+        if "min_silence_ms" in s:
+            self.page_settings.silence_spin.setValue(s.get("min_silence_ms", 500))
+        if "do_hardsub" in s:
+            self.page_settings.chk_hardsub_enable.setChecked(s["do_hardsub"])
+        if "font_name" in s:
+            self.page_settings.font_combo.setCurrentText(s["font_name"])
+        if "font_size" in s:
+            self.page_settings.size_spin.setValue(s["font_size"])
+        if "ai_mode" in s:
+            idx = self.ai_panel.mode_combo.findData(s["ai_mode"])
+            if idx >= 0: self.ai_panel.mode_combo.setCurrentIndex(idx)
+        if "prompt" in s:
+            self.ai_panel.prompt_edit.setText(s["prompt"])
 
     def update_hardware_info(self):
         try:
@@ -503,6 +528,16 @@ class MainWindow(QMainWindow):
             self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
     def _load_draft_from_center(self, draft_path):
+        # Đối chiếu tìm video gốc trong Queue trước khi load Draft
+        draft_base = os.path.basename(draft_path).replace(".ai-subtitle-draft", "")
+        target_vid = next((vid for vid in self.queue_mgr.get_items().keys() if os.path.basename(vid).startswith(draft_base)), None)
+        
+        if target_vid:
+            self.on_queue_item_clicked(target_vid)
+        else:
+            Toast.show_error(self, "Không tìm thấy video gốc tương ứng với Draft trong Queue.")
+            return
+
         self.sub_editor.load_draft_file(draft_path)
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
@@ -512,11 +547,26 @@ class MainWindow(QMainWindow):
         if not self.queue_mgr.active_vid:
             Toast.show_error(self, "Vui lòng chọn video từ Workspace để hardsub.")
             return
+            
         _, srt_path = self.queue_mgr.get_active_data()
         if not srt_path or not os.path.exists(srt_path):
             Toast.show_error(self, "Không tìm thấy file phụ đề SRT tương ứng.")
             return
-        self.start_processing()
+            
+        out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
+        self.worker = HardsubWorker(
+            video_path=self.queue_mgr.active_vid,
+            srt_path=srt_path,
+            output_dir=out_dir,
+            font_size=self.page_settings.size_spin.value(),
+            font_color="white",
+            font_name=self.page_settings.font_combo.currentText()
+        )
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.finished_signal.connect(lambda msg, path: Toast.show_success(self, f"Render Hardsub xong: {path}"))
+        self.worker.error_signal.connect(lambda err: Toast.show_error(self, f"Lỗi Hardsub: {err}"))
+        self.worker.start()
 
     def start_processing(self):
         items = self.queue_mgr.get_items()
@@ -557,7 +607,7 @@ class MainWindow(QMainWindow):
                 initial_prompt=self.ai_panel.prompt_edit.text().strip(),
                 compute_type=self.page_settings.compute_combo.currentData(),
                 use_vad=self.page_settings.chk_vad.isChecked(),
-                min_silence_ms=500,
+                min_silence_ms=self.page_settings.silence_spin.value(), # [FIX MEDIUM #11]
                 model_size=self.page_settings.model_combo.currentData(),
                 generation_mode=self.ai_panel.mode_combo.currentData()
             )
@@ -589,11 +639,19 @@ class MainWindow(QMainWindow):
     def on_whisper_finished(self, msg, srt_path):
         self.append_log(f"[AI] {msg}")
         self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
+        
         if self.ai_panel.mode_combo.currentData() == "timing":
             self.switch_page(1)
             self.bottom_tabs.setCurrentIndex(0)
             self.process_finished("Đã tạo Timing Draft thành công!")
             return
+            
+        # Kiểm tra cờ thiết lập Hardsub
+        if not self.page_settings.chk_hardsub_enable.isChecked():
+            self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Chuyển sang xử lý tiếp theo...")
+            self.process_next_batch_item()
+            return
+
         from ui.hardsub_confirm_dialog import HardsubConfirmDialog
         dlg = HardsubConfirmDialog(self.current_vid, self)
         dlg.exec()
@@ -661,7 +719,19 @@ class MainWindow(QMainWindow):
     def process_error(self, err):
         self.append_log(f"❌ [LỖI] {err}")
         self.ai_panel.set_state("ERROR", str(err))
-        self.process_finished("Tiến trình hoàn tất (có lỗi phát sinh).")
+
+        if getattr(self, "is_cancelled_flag", False):
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            return
+
+        if hasattr(self, "batch_queue") and self.batch_queue:
+            self.append_log("[HỆ THỐNG] Bỏ qua video lỗi, tiếp tục video tiếp theo trong Queue...")
+            self.process_next_batch_item()
+            return
+
+        self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
 
     def open_output_folder(self):
         out_d = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
@@ -672,7 +742,10 @@ class MainWindow(QMainWindow):
         if not self.queue_mgr.active_vid:
             Toast.show_info(self, "Vui lòng chọn video để điền chữ.")
             return
-        target_segs = self.sub_editor.all_segments[start_idx : start_idx + count]
+            
+        # [FIX MEDIUM #5] Ưu tiên lấy Batch Size từ AI Panel làm Source of Truth
+        actual_count = self.ai_panel.batch_spin.value()
+        target_segs = self.sub_editor.all_segments[start_idx : start_idx + actual_count]
         segments_for_ai = []
         for s in target_segs:
             s_ms = self.sub_editor.time_str_to_ms(s['start'])
@@ -718,8 +791,13 @@ class MainWindow(QMainWindow):
             "output_dir": self.out_input.text().strip(),
             "model_size": self.page_settings.model_combo.currentData(),
             "compute_type": self.page_settings.compute_combo.currentData(),
+            "use_vad": self.page_settings.chk_vad.isChecked(),
+            "min_silence_ms": self.page_settings.silence_spin.value(),
+            "do_hardsub": self.page_settings.chk_hardsub_enable.isChecked(),
             "font_name": self.page_settings.font_combo.currentText(),
-            "font_size": self.page_settings.size_spin.value()
+            "font_size": self.page_settings.size_spin.value(),
+            "ai_mode": self.ai_panel.mode_combo.currentData(),
+            "prompt": self.ai_panel.prompt_edit.text().strip()
         })
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
@@ -730,6 +808,63 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         event.accept()
+        
+    def _trigger_export_softsub(self):
+        if not self.queue_mgr.active_vid:
+            Toast.show_error(self, "Vui lòng chọn video để xuất phụ đề.")
+            return
+
+        if not self.sub_editor.all_segments:
+            Toast.show_error(self, "Không có dữ liệu phụ đề để xuất.")
+            return
+
+        out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
+        if not out_dir:
+            Toast.show_error(self, "Vui lòng chọn thư mục lưu.")
+            return
+            
+        os.makedirs(out_dir, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(self.queue_mgr.active_vid))[0]
+        exported = []
+
+        # Nạp Service xuất file hiện có của hệ thống
+        try:
+            from core.SubtitleExportService import SubtitleExportService
+            exporter = SubtitleExportService()
+        except ImportError:
+            Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core.")
+            return
+
+        # Kiểm tra Checkbox và xuất tương ứng
+        if self.page_export.chk_srt.isChecked():
+            path = os.path.join(out_dir, f"{base_name}.srt")
+            exporter.export_srt(self.sub_editor.all_segments, path)
+            exported.append("SRT")
+        
+        if self.page_export.chk_vtt.isChecked():
+            path = os.path.join(out_dir, f"{base_name}.vtt")
+            exporter.export_vtt(self.sub_editor.all_segments, path)
+            exported.append("VTT")
+
+        if self.page_export.chk_txt.isChecked():
+            path = os.path.join(out_dir, f"{base_name}.txt")
+            exporter.export_txt(self.sub_editor.all_segments, path)
+            exported.append("TXT")
+
+        if exported:
+            Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
+        else:
+            Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
+
+    def _retry_current_task(self):
+        # [FIX MEDIUM #4] Khôi phục lại trạng thái và chạy lại Item vừa bị lỗi
+        self.ai_panel.set_state("READY", "Đang thử lại...")
+        if hasattr(self, 'current_batch_index') and self.current_batch_index > 0:
+            self.current_batch_index -= 1
+            self.batch_queue.insert(0, (self.current_vid, self.queue_mgr.get_items()[self.current_vid].get("srt_path")))
+            self.process_next_batch_item()
+        elif hasattr(self, 'queue_mgr') and self.queue_mgr.active_vid:
+            self.start_processing()
 
 
 if __name__ == "__main__":
