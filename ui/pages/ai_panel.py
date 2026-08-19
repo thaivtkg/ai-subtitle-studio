@@ -29,7 +29,7 @@ class AIGenerationPanel(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
-        # Status Banner
+        # 1. Status Banner
         self.status_card = QFrame()
         self.status_card.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-left: 4px solid {Theme.SUCCESS}; border-radius: 6px;")
         s_layout = QHBoxLayout(self.status_card)
@@ -37,103 +37,107 @@ class AIGenerationPanel(QWidget):
 
         self.lbl_status = QLabel("● AI ENGINE STATUS: READY")
         self.lbl_status.setStyleSheet(f"font-weight: bold; color: {Theme.SUCCESS}; font-size: 13px; border: none;")
-        self.lbl_status.setMinimumHeight(20)
-        s_layout.addWidget(self.lbl_status)
+        self.lbl_status.setMinimumHeight(24)
+        s_layout.addWidget(self.lbl_status, alignment=Qt.AlignVCenter)
         s_layout.addStretch()
 
         self.lbl_batch_stat = QLabel("Progress: 0 / 0 segments")
         self.lbl_batch_stat.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 12px; border: none;")
-        self.lbl_batch_stat.setMinimumHeight(20)
-        s_layout.addWidget(self.lbl_batch_stat)
+        self.lbl_batch_stat.setMinimumHeight(24)
+        s_layout.addWidget(self.lbl_batch_stat, alignment=Qt.AlignVCenter)
         layout.addWidget(self.status_card)
 
-        # Generation Configuration Form
+        # 2. Generation Configuration Form
         cfg_frame = QFrame()
-        # [FIX] Xóa padding trong CSS
         cfg_frame.setStyleSheet(f"background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         grid = QGridLayout(cfg_frame)
-        # [FIX] Dùng margin của Layout
-        grid.setContentsMargins(14, 14, 14, 14)
-        grid.setSpacing(12)
+        grid.setContentsMargins(16, 16, 16, 16)
+        grid.setVerticalSpacing(14)
+        grid.setHorizontalSpacing(16)
 
+        # Pipeline Mode Row
         lbl_pipeline = QLabel("Generation Pipeline:")
-        lbl_pipeline.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
-        lbl_pipeline.setMinimumHeight(24) # [FIX] Chống ép dẹp Text
-        grid.addWidget(lbl_pipeline, 0, 0)
+        lbl_pipeline.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 12px; border: none;")
+        lbl_pipeline.setMinimumHeight(28)
+        grid.addWidget(lbl_pipeline, 0, 0, Qt.AlignVCenter)
         
         self.mode_combo = QComboBox()
-        self.mode_combo.setMinimumHeight(28)
+        self.mode_combo.setMinimumHeight(34)
+        self.mode_combo.setStyleSheet(f"QComboBox {{ padding: 4px 10px; font-size: 12px; }}")
         self.mode_combo.addItem("Full Pipeline (Whisper AI Text Generation)", "full")
         self.mode_combo.addItem("Timing Only Draft (Fast VAD / Timestamp Split)", "timing")
         grid.addWidget(self.mode_combo, 0, 1)
 
+        # Batch Size Row
         lbl_batch = QLabel("AI Batch Size (Segments):")
-        lbl_batch.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
-        lbl_batch.setMinimumHeight(24)
-        grid.addWidget(lbl_batch, 1, 0)
+        lbl_batch.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 12px; border: none;")
+        lbl_batch.setMinimumHeight(28)
+        grid.addWidget(lbl_batch, 1, 0, Qt.AlignVCenter)
         
         self.batch_spin = QSpinBox()
-        self.batch_spin.setMinimumHeight(28)
+        self.batch_spin.setMinimumHeight(34)
+        self.batch_spin.setStyleSheet(f"QSpinBox {{ padding: 4px 10px; font-size: 12px; }}")
         self.batch_spin.setRange(1, 50)
         self.batch_spin.setValue(5)
         grid.addWidget(self.batch_spin, 1, 1)
 
+        # Context Prompt Row
         lbl_prompt = QLabel("Context Prompt / Glossary:")
-        lbl_prompt.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
-        lbl_prompt.setMinimumHeight(24)
-        grid.addWidget(lbl_prompt, 2, 0)
+        lbl_prompt.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 12px; border: none;")
+        lbl_prompt.setMinimumHeight(30)
+        grid.addWidget(lbl_prompt, 2, 0, Qt.AlignVCenter)
         
         self.prompt_edit = QLineEdit()
-        self.prompt_edit.setMinimumHeight(28)
+        self.prompt_edit.setMinimumHeight(34)
+        self.prompt_edit.setStyleSheet(f"QLineEdit {{ padding: 4px 10px; font-size: 12px; line-height: 1.2; }}")
         self.prompt_edit.setPlaceholderText("Nhập ngữ cảnh, thuật ngữ đặc biệt để AI nhận diện chuẩn xác...")
         grid.addWidget(self.prompt_edit, 2, 1)
 
         layout.addWidget(cfg_frame)
 
-        # Progress Monitor
+        # 3. Progress Monitor
         prog_frame = QFrame()
-        # [FIX] Xóa padding trong CSS
         prog_frame.setStyleSheet(f"background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         p_layout = QVBoxLayout(prog_frame)
-        p_layout.setContentsMargins(14, 14, 14, 14)
+        p_layout.setContentsMargins(16, 14, 16, 14)
         p_layout.setSpacing(10)
 
         self.lbl_step_info = QLabel("Chờ bắt đầu tác vụ...")
         self.lbl_step_info.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; border: none;")
-        self.lbl_step_info.setMinimumHeight(18)
+        self.lbl_step_info.setMinimumHeight(22)
         p_layout.addWidget(self.lbl_step_info)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(10)
-        self.progress_bar.setTextVisible(False) # [FIX] Ẩn chữ % bị kẹt
-        self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_APP}; border: none; border-radius: 5px; }} QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 5px; }}")
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_APP}; border: none; border-radius: 4px; }} QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 4px; }}")
         p_layout.addWidget(self.progress_bar)
         layout.addWidget(prog_frame)
 
         layout.addStretch()
 
-        # Action Button Row
+        # 4. Action Buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
         self.btn_retry = QPushButton("🔄 Thử lại")
         self.btn_retry.setObjectName("btn_secondary")
-        self.btn_retry.setMinimumHeight(32)
+        self.btn_retry.setMinimumHeight(34)
         self.btn_retry.setEnabled(False)
         self.btn_retry.clicked.connect(self.retry_requested.emit)
         btn_row.addWidget(self.btn_retry)
 
         self.btn_cancel = QPushButton("Hủy tác vụ")
         self.btn_cancel.setObjectName("btn_danger")
-        self.btn_cancel.setMinimumHeight(32)
+        self.btn_cancel.setMinimumHeight(34)
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_requested.emit)
         btn_row.addWidget(self.btn_cancel)
 
         self.btn_start = QPushButton("▶ Bắt đầu xử lý AI")
         self.btn_start.setObjectName("btn_primary")
-        self.btn_start.setMinimumHeight(32)
+        self.btn_start.setMinimumHeight(34)
         self.btn_start.clicked.connect(self.start_requested.emit)
         btn_row.addWidget(self.btn_start, stretch=1)
 

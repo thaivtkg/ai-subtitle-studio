@@ -553,6 +553,11 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Không tìm thấy file phụ đề SRT tương ứng.")
             return
             
+        # [FIX HIGH #4] Chặn đứng hành động đưa file JSON Draft cho FFmpeg
+        if srt_path.lower().endswith('.ai-subtitle-draft'):
+            Toast.show_error(self, "Draft chưa phải SRT. Hãy mở Draft và chọn Lưu SRT (Softsub) trước khi Hardsub.")
+            return
+            
         out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
         self.worker = HardsubWorker(
             video_path=self.queue_mgr.active_vid,
@@ -619,6 +624,12 @@ class MainWindow(QMainWindow):
         else:
             if current_srt.endswith('.ai-subtitle-draft'):
                 self.append_log("❌ File Draft cần được lưu thành SRT trước khi Hardsub.")
+                self.process_next_batch_item()
+                return
+
+            # [FIX HIGH #3] Áp dụng Guard Hardsub cho cả nhánh Existing SRT
+            if not self.page_settings.chk_hardsub_enable.isChecked():
+                self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Bỏ qua Hardsub cho video hiện tại.")
                 self.process_next_batch_item()
                 return
 
@@ -823,38 +834,55 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Vui lòng chọn thư mục lưu.")
             return
             
-        os.makedirs(out_dir, exist_ok=True)
+        # [FIX MEDIUM #5] Bọc try-except bắt lỗi phân quyền/filesystem khi tạo thư mục
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception as e:
+            Toast.show_error(self, f"Lỗi hệ thống tập tin: {str(e)}")
+            return
+
         base_name = os.path.splitext(os.path.basename(self.queue_mgr.active_vid))[0]
         exported = []
 
-        # Nạp Service xuất file hiện có của hệ thống
+        # [FIX HIGH #1] Import đúng path module của Core
         try:
-            from core.SubtitleExportService import SubtitleExportService
+            from core.subtitle_exporter import SubtitleExportService
             exporter = SubtitleExportService()
         except ImportError:
-            Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core.")
+            Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core. Kiểm tra lại module.")
             return
 
-        # Kiểm tra Checkbox và xuất tương ứng
-        if self.page_export.chk_srt.isChecked():
-            path = os.path.join(out_dir, f"{base_name}.srt")
-            exporter.export_srt(self.sub_editor.all_segments, path)
-            exported.append("SRT")
-        
-        if self.page_export.chk_vtt.isChecked():
-            path = os.path.join(out_dir, f"{base_name}.vtt")
-            exporter.export_vtt(self.sub_editor.all_segments, path)
-            exported.append("VTT")
+        # [FIX HIGH #2] Ép kiểu từ Data Model của UI (List Dict) sang Data Model của Core (List Tuples, ms)
+        subtitles_for_export = []
+        for seg in self.sub_editor.all_segments:
+            start_ms = self.sub_editor.time_str_to_ms(seg["start"])
+            end_ms = self.sub_editor.time_str_to_ms(seg["end"])
+            text = seg["text"] if seg["text"] != "[ Chưa có nội dung ]" else ""
+            subtitles_for_export.append((start_ms, end_ms, text))
 
-        if self.page_export.chk_txt.isChecked():
-            path = os.path.join(out_dir, f"{base_name}.txt")
-            exporter.export_txt(self.sub_editor.all_segments, path)
-            exported.append("TXT")
+        # [FIX MEDIUM #5] Bọc try-except toàn bộ quá trình xuất file
+        try:
+            if self.page_export.chk_srt.isChecked():
+                path = os.path.join(out_dir, f"{base_name}.srt")
+                exporter.export_srt(subtitles_for_export, path)
+                exported.append("SRT")
+            
+            if self.page_export.chk_vtt.isChecked():
+                path = os.path.join(out_dir, f"{base_name}.vtt")
+                exporter.export_vtt(subtitles_for_export, path)
+                exported.append("VTT")
 
-        if exported:
-            Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
-        else:
-            Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
+            if self.page_export.chk_txt.isChecked():
+                path = os.path.join(out_dir, f"{base_name}.txt")
+                exporter.export_txt(subtitles_for_export, path)
+                exported.append("TXT")
+
+            if exported:
+                Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
+            else:
+                Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
+        except Exception as e:
+            Toast.show_error(self, f"Lỗi trong quá trình ghi file: {str(e)}")
 
     def _retry_current_task(self):
         # [FIX MEDIUM #4] Khôi phục lại trạng thái và chạy lại Item vừa bị lỗi
