@@ -26,13 +26,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.Backend import is_garbage
 from core.queue_manager import QueueManager
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from utils import load_settings, save_settings
-from workers.TaskQueue import AdvancedWorkerThread
+from workers.TaskQueue import HardsubWorker, WhisperWorker
 
 DARK_STUDIO_QSS = """
 QMainWindow {
@@ -166,6 +167,8 @@ class MainWindow(QMainWindow):
             lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid)
         )
 
+        self.queue_mgr.item_removed.connect(self.on_queue_item_removed_handler)
+
         self.setAcceptDrops(True)
 
         central_widget = QWidget()
@@ -224,7 +227,7 @@ class MainWindow(QMainWindow):
         # Sidebar
         sidebar_frame = QFrame()
         sidebar_frame.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 8px;")
-        sidebar_frame.setFixedWidth(260)
+        sidebar_frame.setFixedWidth(280)
         sidebar_layout = QVBoxLayout(sidebar_frame)
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(6)
@@ -240,6 +243,21 @@ class MainWindow(QMainWindow):
 
         ai_form_layout = QVBoxLayout()
         ai_form_layout.setSpacing(4)
+
+        # --- BẮT ĐẦU THÊM: [P2-T2] CHỌN CHẾ ĐỘ XỬ LÝ (MODE) ---
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Full Subtitle (AI sinh Text)", "full")
+        self.mode_combo.addItem("Timing Draft (Chỉ tạo khung thời gian)", "timing")
+        self.mode_combo.setStyleSheet("QComboBox { font-weight: bold; color: #35C8FF; }")
+        
+        ai_form_layout.addWidget(QLabel("Chế độ xử lý (Pipeline Mode):"))
+        ai_form_layout.addWidget(self.mode_combo)
+
+        self.mode_combo.currentIndexChanged.connect(
+            lambda: self.chk_hardsub.setEnabled(self.mode_combo.currentData() == "full")
+        )
+
+        # --- KẾT THÚC THÊM ---
 
         # --- THÊM PHẦN CHỌN MODEL Ở ĐÂY ---
         self.model_combo = QComboBox()
@@ -344,6 +362,9 @@ class MainWindow(QMainWindow):
         # --- THÊM PHẦN NÀY: 4. Đồng bộ Real-time từ Bảng sang Lõi Controller ---
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         # -----------------------------------------------------------------------
+
+        # [P2-T9] Kích hoạt luồng AI Điền Chữ khi bấm Nút "Chốt Timing"
+        self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
 
         self.bottom_tabs.addTab(self.sub_editor, "📝 Subtitle Editor")
 
@@ -451,7 +472,8 @@ class MainWindow(QMainWindow):
         bottom_bar = QHBoxLayout()
         bottom_bar.setSpacing(8)
 
-        self.start_btn = QPushButton("Start Batch")
+        # [P2-T15] Đổi tên thành Start Queue để rạch ròi với Continue Draft
+        self.start_btn = QPushButton("▶ Start Queue")
         self.start_btn.setObjectName("btn_primary")
         self.start_btn.clicked.connect(self.start_processing)
 
@@ -539,7 +561,12 @@ class MainWindow(QMainWindow):
 
     def apply_saved_settings(self):
         settings = load_settings()
-        if not settings: return # Nếu chưa có cài đặt thì bỏ qua
+        if not settings: return 
+
+        # [P2-T2] Khôi phục Chế độ xử lý (Pipeline Mode)
+        if "mode" in settings:
+            idx = self.mode_combo.findData(settings["mode"])
+            if idx >= 0: self.mode_combo.setCurrentIndex(idx)
 
         # Khôi phục Model Whisper
         if "model_size" in settings:
@@ -625,7 +652,8 @@ class MainWindow(QMainWindow):
     def select_srt_for_video(self):
         video_path, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
         if video_path:
-            srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file SRT", "", "Subtitle (*.srt)")
+            # [P2-T10] Mở rộng bộ lọc cho phép nạp cả file Draft
+            srt_path, _ = QFileDialog.getOpenFileName(self, "Chọn file Phụ đề / Draft", "", "Subtitle & Draft (*.srt *.ai-subtitle-draft)")
             if srt_path:
                 if video_path not in self.queue_mgr.get_items():
                     self.queue_mgr.add_video(video_path)
@@ -639,7 +667,7 @@ class MainWindow(QMainWindow):
     #     # [Clear All Requirements] Đảm bảo dọn dẹp Player, Editor và Overlay
     #     self.video_player.cleanup()
     #     self.video_player.sub_controller.load_srt(None)
-    #     self.sub_editor.table.setRowCount(0)
+    #     self.sub_editor.table.setRowCount(0)  
 
     def clear_files(self):
         # [Fix] Chỉ ra lệnh xóa Data Model. UI sẽ tự động dọn dẹp thông qua Signal
@@ -666,18 +694,15 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'sub_editor'):
                 self.sub_editor.table.setRowCount(0)
 
-    # HÃY XÓA TOÀN BỘ 4 DÒNG NÀY ĐI:
-    # def remove_single_file(self, vid_path):
-    #     if vid_path in self.file_pairs:
-    #         del self.file_pairs[vid_path]
-    #         self.refresh_queue_ui()
-
     def start_processing(self):
         items = self.queue_mgr.get_items()
         if not items: return
 
-        tasks = [(vid, data.get("srt_path")) for vid, data in items.items()]
-        output_dir = self.out_input.text().strip()
+        self.is_cancelled_flag = False
+        self.batch_queue = [(vid, data.get("srt_path")) for vid, data in items.items()]
+        self.total_batch_items = len(self.batch_queue)
+        self.current_batch_index = 0
+        self.output_dir = self.out_input.text().strip()
 
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -685,36 +710,175 @@ class MainWindow(QMainWindow):
         
         self.lbl_status_val.setText("Processing")
         self.lbl_status_val.setStyleSheet("color: #F5B942; font-size: 12px; font-weight: bold;")
+        
+        self.process_next_batch_item()
 
-        self.worker = AdvancedWorkerThread(
-            tasks, output_dir, self.prompt_input.text().strip(), 0.0, 
-            self.chk_hardsub.isChecked(), self.size_spin.value(), "white", 
-            self.font_combo.currentText(), self.compute_combo.currentData(), # Thay currentData bằng currentText cho font
-            self.chk_vad.isChecked(), self.spin_silence.value(),model_size=self.model_combo.currentData()
-        )
-        self.worker.progress_signal.connect(self.update_progress)
-        self.worker.log_signal.connect(self.append_log)
-        self.worker.finished_signal.connect(self.process_finished)
-        self.worker.error_signal.connect(self.process_error)
-        self.worker.start()
+    def process_next_batch_item(self):
+        if self.is_cancelled_flag or not hasattr(self, 'batch_queue') or len(self.batch_queue) == 0:
+            if not self.is_cancelled_flag:
+                self.process_finished("Toàn bộ tiến trình đã hoàn tất!")
+            return
+            
+        self.current_batch_index += 1
+        self.current_vid, current_srt = self.batch_queue.pop(0)
+        file_name = os.path.basename(self.current_vid)
+        
+        self.append_log(f"\n==================================================")
+        self.append_log(f"🎬 ĐANG XỬ LÝ VIDEO [{self.current_batch_index}/{self.total_batch_items}]: {file_name}")
+        self.append_log(f"==================================================")
+
+        self.on_queue_item_clicked(self.current_vid)
+
+        if not current_srt:
+            # Tình huống 1: Chưa có SRT -> Chạy AI Whisper
+            self.append_log("[HỆ THỐNG] Khởi tạo luồng AI Whisper...")
+            self.worker = WhisperWorker(
+                video_path=self.current_vid,
+                output_dir=self.output_dir,
+                initial_prompt=self.prompt_input.text().strip(),
+                compute_type=self.compute_combo.currentData(),
+                use_vad=self.chk_vad.isChecked(),
+                min_silence_ms=self.spin_silence.value(),
+                model_size=self.model_combo.currentData(),
+                generation_mode=self.mode_combo.currentData()
+            )
+            self.worker.progress_signal.connect(self.update_progress)
+            self.worker.log_signal.connect(self.append_log)
+            self.worker.finished_signal.connect(self.on_whisper_finished)
+            self.worker.error_signal.connect(self.process_error)
+            self.worker.start()
+        else:
+            # Tình huống 2: ĐÃ CÓ SẴN FILE (SRT hoặc Draft)
+            self.append_log(f"[HỆ THỐNG] Phát hiện file đính kèm: {current_srt}")
+            
+            # [FIX HIGH] Chặn tuyệt đối việc ném file .ai-subtitle-draft vào FFmpeg
+            if current_srt.endswith('.ai-subtitle-draft'):
+                self.append_log("❌ [TỪ CHỐI] Không thể chèn Hardsub trực tiếp từ file Draft JSON.")
+                self.append_log("💡 Hướng dẫn: Mở Draft trên Editor ➜ Điền chữ AI ➜ [Lưu SRT] ➜ Đưa file SRT vào Queue để Hardsub.")
+                self.process_next_batch_item()
+                return
+
+            if self.chk_hardsub.isChecked():
+                self.append_log("[HỆ THỐNG] Bỏ qua xác nhận. Khởi chạy luồng Hardsub (FFmpeg) ngay lập tức...")
+                self.worker = HardsubWorker(
+                    video_path=self.current_vid,
+                    srt_path=current_srt,
+                    output_dir=self.output_dir,
+                    font_size=self.size_spin.value(),
+                    font_color="white",
+                    font_name=self.font_combo.currentText()
+                )
+                self.worker.progress_signal.connect(self.update_progress)
+                self.worker.log_signal.connect(self.append_log)
+                self.worker.finished_signal.connect(self.on_hardsub_finished)
+                self.worker.error_signal.connect(self.process_error)
+                self.worker.start()
+            else:
+                self.log_skip_hardsub()
+                self.process_next_batch_item()
+
+    def on_whisper_finished(self, msg, srt_path):
+        self.append_log(f"[AI] {msg}")
+        self.queue_mgr.set_srt_for_video(self.current_vid, srt_path) 
+        
+        # [FIX TIMING WORKFLOW] Nếu là Timing Draft, chuyển thẳng sang Editor để kiểm duyệt
+        if self.mode_combo.currentData() == "timing":
+            self.append_log("[HỆ THỐNG] Đã tạo xong Timing Artifact. Chuyển sang Subtitle Editor để kiểm duyệt...")
+            self.on_queue_item_clicked(self.current_vid)
+            self.bottom_tabs.setCurrentIndex(0)
+            self.process_finished("Đã tạo xong khung thời gian (Timing Draft)! Vui lòng kiểm duyệt trên Editor.")
+            return
+
+        # Với Full Subtitle: Hỏi xác nhận Hardsub nếu có bật tùy chọn
+        if self.chk_hardsub.isChecked():
+            self.show_confirm_dialog(self.current_vid, srt_path)
+        else:
+            self.log_skip_hardsub()
+            self.process_next_batch_item()
+
+    def log_skip_hardsub(self):
+        if hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+            self.append_log("[HỆ THỐNG] Bỏ qua Hardsub (theo Cài đặt). Chuyển sang Video tiếp theo...")
+        else:
+            self.append_log("[HỆ THỐNG] Bỏ qua Hardsub (theo Cài đặt). Đã xử lý xong video cuối cùng.")
+
+    def show_confirm_dialog(self, vid_path, srt_path):
+        self.progress_bar.setValue(100)
+        self.lbl_speed_eta.setText("Chờ xác nhận từ người dùng...")
+        
+        from ui.hardsub_confirm_dialog import HardsubConfirmDialog
+        dialog = HardsubConfirmDialog(vid_path, self)
+        dialog.exec()
+        
+        choice = dialog.user_choice
+        if choice == HardsubConfirmDialog.HARDSUB:
+            self.append_log("[HỆ THỐNG] Chấp thuận. Khởi chạy luồng Hardsub (FFmpeg)...")
+            self.worker = HardsubWorker(
+                video_path=vid_path,
+                srt_path=srt_path,
+                output_dir=self.output_dir,
+                font_size=self.size_spin.value(),
+                font_color="white",
+                font_name=self.font_combo.currentText()
+            )
+            self.worker.progress_signal.connect(self.update_progress)
+            self.worker.log_signal.connect(self.append_log)
+            self.worker.finished_signal.connect(self.on_hardsub_finished)
+            self.worker.error_signal.connect(self.process_error)
+            self.worker.start()
+            
+        elif choice == HardsubConfirmDialog.EDIT:
+            self.append_log("[HỆ THỐNG] User chọn Edit. Tạm dừng tiến trình Batch để chỉnh sửa.")
+            # [FIX BLOCKER] Chuyển Tab và Load Subtitle mà không làm kẹt luồng UI
+            self.bottom_tabs.setCurrentIndex(0)
+            self.on_queue_item_clicked(vid_path)
+            
+            # Reset UI như hàm Finished nhưng không văng Pop-up block
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            self.lbl_status_val.setText("Idle")
+            self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
+            self.progress_anim.stop()
+            self.progress_bar.setValue(0)
+            self.lbl_speed_eta.setText("Tiến trình tạm dừng để chỉnh sửa.")
+            
+        else:
+            if hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+                self.append_log("[HỆ THỐNG] User chọn Bỏ qua. SRT đã được bảo toàn. Next Video...")
+            else:
+                self.append_log("[HỆ THỐNG] User chọn Bỏ qua. SRT đã được bảo toàn. Đã xử lý xong.")
+            self.process_next_batch_item()
+
+    def on_hardsub_finished(self, msg, out_video_path):
+        self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
+        self.process_next_batch_item() 
 
     def cancel_processing(self):
+        self.is_cancelled_flag = True
+        self.batch_queue = []
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.append_log("[HỆ THỐNG] Đang hủy tiến trình an toàn...")
             self.cancel_btn.setEnabled(False)
 
     def update_progress(self, val, msg):
-        # Kích hoạt Animation trượt mượt mà thay vì nhảy cóc
+        if hasattr(self, 'total_batch_items') and self.total_batch_items > 0:
+            base_p = ((self.current_batch_index - 1) / self.total_batch_items) * 100
+            file_p = (val / self.total_batch_items)
+            global_val = int(base_p + file_p)
+        else:
+            global_val = val
+            
         self.progress_anim.stop()
         self.progress_anim.setStartValue(self.progress_bar.value())
-        self.progress_anim.setEndValue(val)
+        self.progress_anim.setEndValue(global_val)
         self.progress_anim.start()
+        
+        if msg and "Chờ xác nhận" not in self.lbl_speed_eta.text():
+            self.lbl_speed_eta.setText(msg)
 
     def append_log(self, msg):
         self.log_box.append(msg)
-        
-        # Chỉ cập nhật speed từ FFmpeg nếu có
         speed_match = re.search(r"speed=\s*([0-9\.]+x)", msg)
         if speed_match:
             self.lbl_speed_eta.setText(f"Speed: {speed_match.group(1)}")
@@ -722,26 +886,33 @@ class MainWindow(QMainWindow):
     def process_finished(self, msg):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.lbl_status_val.setText("Idle")
-        self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
-        # --- THÊM ĐOẠN NÀY ĐỂ RESET THANH TIẾN ĐỘ ---
-        self.progress_anim.stop()           # Dừng hiệu ứng chạy mượt
-        self.progress_bar.setValue(0)       # Trả thanh % về 0
-        self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --") # Reset text tốc độ
-        # ---------------------------------------------
-        QMessageBox.information(self, "Hoàn tất", msg)
+        
+        # Mở khóa các nút điều khiển trong Subtitle Editor đề phòng trường hợp Cancel/Error
+        if hasattr(self, 'sub_editor'):
+            if hasattr(self.sub_editor, 'fill_text_btn'):
+                self.sub_editor.fill_text_btn.setEnabled(True)
+            if hasattr(self.sub_editor, 'save_btn'):
+                self.sub_editor.save_btn.setEnabled(True)
 
-    def process_error(self, err):
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
         self.lbl_status_val.setText("Idle")
         self.lbl_status_val.setStyleSheet("color: #33D17A; font-size: 12px; font-weight: bold;")
-        # --- THÊM ĐOẠN NÀY ĐỂ RESET THANH TIẾN ĐỘ ---
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Speed: 0.0x  |  ETA: --")
-        # ---------------------------------------------
-        QMessageBox.critical(self, "Lỗi", err)
+        
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Trạng thái", msg)
+
+    def process_error(self, err):
+        self.append_log(f"❌ [LỖI] {err}")
+        # [FIX] Nhận diện thông báo Hủy để Log chính xác
+        if getattr(self, 'is_cancelled_flag', False) or "hủy" in str(err).lower():
+            self.process_finished("Tiến trình đã bị dừng.")
+        elif hasattr(self, 'batch_queue') and len(self.batch_queue) > 0:
+            self.append_log("[HỆ THỐNG] Bỏ qua video lỗi, tiếp tục với video tiếp theo trong Queue...")
+            self.process_next_batch_item()
+        else:
+            self.process_finished("Tiến trình hoàn tất (có phát sinh lỗi ở file cuối).")
 
     def open_subtitle_editor(self):
         if not self.queue_mgr.get_items(): return
@@ -771,8 +942,9 @@ class MainWindow(QMainWindow):
             os.startfile(out_d)
 
     def closeEvent(self, event):
-        # --- THÊM ĐOẠN LƯU CÀI ĐẶT TRƯỚC KHI TẮT APP ---
+        # [P2-T2] Lưu cài đặt bao gồm cả "mode" trước khi đóng App
         settings = {
+            "mode": self.mode_combo.currentData(),
             "model_size": self.model_combo.currentData(),
             "compute_type": self.compute_combo.currentData(),
             "prompt": self.prompt_input.text().strip(),
@@ -784,7 +956,7 @@ class MainWindow(QMainWindow):
             "output_dir": self.out_input.text().strip()
         }
         save_settings(settings)
-        # -----------------------------------------------
+        
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
@@ -803,24 +975,124 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def on_queue_item_clicked(self, vid_path):
-        # Hàm duy nhất chịu trách nhiệm Load Video
         self.queue_mgr.set_active(vid_path)
-        
         _, srt_path = self.queue_mgr.get_active_data()
 
         self.video_player.load_video(vid_path)
         
         if srt_path and os.path.exists(srt_path):
-            self.sub_editor.load_srt_file(srt_path)
+            # [P2-T10] Phân luồng đọc theo Định dạng đuôi file
+            if srt_path.endswith('.ai-subtitle-draft'):
+                self.sub_editor.load_draft_file(srt_path)
+            else:
+                self.sub_editor.load_srt_file(srt_path)
+                
             self.video_player.sub_controller.load_srt(srt_path)
         else:
-            self.sub_editor.table.setRowCount(0)
+            self.sub_editor.all_segments.clear()
+            self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
 
         self.bottom_tabs.setCurrentIndex(0)
 
+    def on_queue_item_removed_handler(self, vid_path):
+        items = self.queue_mgr.get_items()
+        if not items:
+            # [FIX] Ép buộc QMediaPlayer cắt đứt hoàn toàn File Source đang giữ
+            try:
+                from PySide6.QtCore import QUrl
+                self.video_player.player.stop()
+                self.video_player.player.setSource(QUrl())
+            except Exception:
+                pass
+            
+            self.video_player.cleanup()
+            self.video_player.sub_controller.load_srt(None)
+            self.sub_editor.table.setRowCount(0)
+        else:
+            if self.queue_mgr.active_vid:
+                self.on_queue_item_clicked(self.queue_mgr.active_vid)
+
+    # =========================================================================
+    # ĐIỀU PHỐI LUỒNG FILL TEXT WORKER (P2-T13, P2-T14)
+    # =========================================================================
+    def start_fill_text_worker(self, start_idx, count):
+        if not self.queue_mgr.active_vid:
+            QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn video cần điền chữ.")
+            return
+            
+        # [P2-T13] CHỈ LẤY ĐÚNG RANGE (TỪ CÂU... ĐẾN CÂU...) ĐỂ ĐẨY CHO AI
+        target_segments = self.sub_editor.all_segments[start_idx : start_idx + count]
+        
+        segments_for_ai = []
+        for seg in target_segments:
+            s_ms = self.sub_editor.time_str_to_ms(seg['start'])
+            e_ms = self.sub_editor.time_str_to_ms(seg['end'])
+            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
+            stt = int(seg['stt']) if str(seg['stt']).isdigit() else 0
+            segments_for_ai.append((s_ms, e_ms, raw_text, stt))
+                
+        if not segments_for_ai: 
+            return
+        
+        # Khóa Giao diện (Freeze UI)
+        self.is_cancelled_flag = False
+        self.start_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.sub_editor.btn_continue.setEnabled(False)
+        self.sub_editor.save_draft_btn.setEnabled(False)
+        self.sub_editor.save_btn.setEnabled(False)
+        
+        self.bottom_tabs.setCurrentIndex(2) 
+        self.append_log(f"\n[HỆ THỐNG] Đang chạy AI Điền chữ cho {len(segments_for_ai)} câu (Từ dòng {start_idx + 1})...")
+        
+        from workers.TaskQueue import FillTextWorker
+        self.worker = FillTextWorker(
+            video_path=self.queue_mgr.active_vid,
+            segments_data=segments_for_ai, # AI chỉ nhận đúng phần cần chạy
+            initial_prompt=self.prompt_input.text().strip(),
+            compute_type=self.compute_combo.currentData(),
+            model_size=self.model_combo.currentData()
+        )
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.finished_signal.connect(self.on_fill_text_finished)
+        self.worker.error_signal.connect(self.process_error)
+        self.worker.start()
+
+    def on_fill_text_finished(self, filled_segments):
+        self.bottom_tabs.setCurrentIndex(0)
+        
+        # [P2-T14] Đưa Text đã dịch về đúng STT trong Model tổng
+        for start_ms, end_ms, text, stt in filled_segments:
+            for seg in self.sub_editor.all_segments:
+                if str(seg['stt']) == str(stt):
+                    seg['text'] = text
+                    seg['status'] = 'draft' # Cập nhật Status an toàn
+                    break
+        
+        # UI Refresh
+        self.sub_editor.render_page()
+        self.sub_editor.update_draft_progress()
+        
+        # [P2-T14] AUTO-SAVE DRAFT (Silent Checkpoint)
+        self.sub_editor.save_draft(silent=True)
+        self.append_log("[HỆ THỐNG] Đã lưu Checkpoint Draft ngầm.")
+        
+        # Mở khóa Giao diện
+        self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.progress_anim.stop()
+        self.progress_bar.setValue(100)
+        self.lbl_speed_eta.setText("Batch AI hoàn tất! Sẵn sàng cho lượt tiếp theo.")
+        self.sub_editor.save_draft_btn.setEnabled(True)
+        self.sub_editor.save_btn.setEnabled(True)
+    
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+

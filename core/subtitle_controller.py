@@ -21,35 +21,50 @@ class SubtitleController(QObject):
         
 
     def load_srt(self, srt_path):
+        import re
+        import json
         self.subtitles.clear()
-        self.start_times.clear() # Clear cache
+        self.start_times.clear()
         self.current_idx = -1
         self.subtitle_cleared.emit()
 
-        if not srt_path:
+        if not srt_path or not os.path.exists(srt_path):
             return
 
         try:
-            with open(srt_path, 'r', encoding='utf-8') as f:
-                content = f.read().replace('\r\n', '\n')
-
-            blocks = content.strip().split('\n\n')
-            for block in blocks:
-                lines = block.split('\n')
-                if len(lines) >= 3:
-                    stt = int(lines[0].strip('\ufeff').strip()) 
-                    times = lines[1].split(' --> ')
-                    start_ms = self.time_str_to_ms(times[0])
-                    end_ms = self.time_str_to_ms(times[1])
-                    text = '\n'.join(lines[2:])
+            # [P2-T10] NẾU LÀ ĐỊNH DẠNG ARTIFACT DRAFT (.ai-subtitle-draft)
+            if srt_path.endswith('.ai-subtitle-draft'):
+                with open(srt_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for seg in data.get("segments", []):
+                    start_ms = seg.get("start_ms", 0)
+                    end_ms = seg.get("end_ms", 0)
+                    text = seg.get("text", "")
+                    stt = seg.get("id", 0)
                     self.subtitles.append((start_ms, end_ms, text, stt))
+            
+            # NẾU LÀ ĐỊNH DẠNG SRT TRUYỀN THỐNG
+            else:
+                with open(srt_path, 'r', encoding='utf-8') as f:
+                    content = f.read().replace('\r\n', '\n')
+                blocks = re.split(r'\n{2,}', content.strip())
+                for block in blocks:
+                    lines = block.strip().split('\n')
+                    if len(lines) >= 2 and '-->' in lines[1]:
+                        try: stt = int(lines[0].strip('\ufeff').strip()) 
+                        except ValueError: continue
+                        
+                        times = lines[1].split(' --> ')
+                        start_ms = self.time_str_to_ms(times[0])
+                        end_ms = self.time_str_to_ms(times[1])
+                        text = '\n'.join(lines[2:]) if len(lines) > 2 else ""
+                        self.subtitles.append((start_ms, end_ms, text, stt))
 
             self.subtitles.sort(key=lambda x: x[0])
-            # Tính toán mảng start_times DUY NHẤT 1 LẦN ở đây (O(n))
             self.start_times = [s[0] for s in self.subtitles]
 
         except Exception as e:
-            print(f"Error loading SRT: {e}")
+            print(f"Error loading Subtitle/Draft: {e}")
 
     def sync_position(self, ms):
         self.last_ms = ms
