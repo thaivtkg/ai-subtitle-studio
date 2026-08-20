@@ -38,8 +38,22 @@ from ui.theme import Theme
 from ui.toast import Toast
 from utils import load_settings, save_settings
 from workers.TaskQueue import FillTextWorker, HardsubWorker, WhisperWorker
+from PySide6.QtCore import QObject, Signal
 
 
+class StreamRedirector(QObject):
+    text_written = Signal(str)
+    
+    def __init__(self, stream):
+        super().__init__()
+        self.stream = stream
+
+    def write(self, text):
+        if text.strip():
+            self.text_written.emit(text.strip())
+
+    def flush(self):
+        pass
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -277,6 +291,7 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimumHeight(12)
         self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_APP}; border: none; border-radius: 4px; }} QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 4px; }}")
 
         self.progress_anim = QPropertyAnimation(self.progress_bar, b"value")
@@ -310,6 +325,14 @@ class MainWindow(QMainWindow):
         bottom_layout.addLayout(prog_action_row)
         right_layout.addWidget(bottom_frame)
         root_layout.addWidget(right_area)
+
+        self.stdout_redirector = StreamRedirector(sys.stdout)
+        self.stdout_redirector.text_written.connect(self.append_log)
+        sys.stdout = self.stdout_redirector
+
+        self.stderr_redirector = StreamRedirector(sys.stderr)
+        self.stderr_redirector.text_written.connect(self.append_log)
+        sys.stderr = self.stderr_redirector
 
         # 5. Initialization
         self.switch_page(0)
@@ -532,13 +555,20 @@ class MainWindow(QMainWindow):
         draft_base = os.path.basename(draft_path).replace(".ai-subtitle-draft", "")
         target_vid = next((vid for vid in self.queue_mgr.get_items().keys() if os.path.basename(vid).startswith(draft_base)), None)
         
-        if target_vid:
-            self.on_queue_item_clicked(target_vid)
-        else:
+        if not target_vid:
             Toast.show_error(self, "Không tìm thấy video gốc tương ứng với Draft trong Queue.")
             return
 
-        self.sub_editor.load_draft_file(draft_path)
+        # [FIX] 1. Phải gán file Draft này vào QueueManager để hệ thống đồng bộ
+        self.queue_mgr.set_srt_for_video(target_vid, draft_path)
+        
+        # [FIX] 2. Kích hoạt sự kiện click để hệ thống tự động nạp Draft vào cả Player và Editor
+        self.on_queue_item_clicked(target_vid)
+        
+        # [FIX] 3. Ép SubEditor vẽ lại giao diện bảng (phòng trường hợp hàm nạp file không tự động vẽ)
+        if hasattr(self.sub_editor, 'render_page'):
+            self.sub_editor.render_page()
+
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
         Toast.show_info(self, f"Đã nạp bản nháp: {os.path.basename(draft_path)}")
@@ -652,6 +682,14 @@ class MainWindow(QMainWindow):
         self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
         
         if self.ai_panel.mode_combo.currentData() == "timing":
+            # [FIX] Tự động nạp kết quả Timing vào Editor và Video Player
+            if srt_path and os.path.exists(srt_path):
+                if srt_path.endswith('.ai-subtitle-draft'):
+                    self.sub_editor.load_draft_file(srt_path)
+                else:
+                    self.sub_editor.load_srt_file(srt_path)
+                self.video_player.sub_controller.load_srt(srt_path)
+            
             self.switch_page(1)
             self.bottom_tabs.setCurrentIndex(0)
             self.process_finished("Đã tạo Timing Draft thành công!")
@@ -667,10 +705,11 @@ class MainWindow(QMainWindow):
         dlg = HardsubConfirmDialog(self.current_vid, self)
         dlg.exec()
         if dlg.user_choice == HardsubConfirmDialog.HARDSUB:
+            out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
             self.worker = HardsubWorker(
                 video_path=self.current_vid,
                 srt_path=srt_path,
-                output_dir=self.output_dir,
+                output_dir=out_dir,
                 font_size=self.page_settings.size_spin.value(),
                 font_color="white",
                 font_name=self.page_settings.font_combo.currentText()
