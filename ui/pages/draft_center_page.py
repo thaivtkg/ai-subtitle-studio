@@ -133,13 +133,13 @@ class DraftCenterPage(QWidget):
 
         btn_open = QPushButton("Mở Editor")
         btn_open.setObjectName("btn_secondary")
-        btn_open.clicked.connect(lambda p=path: self.open_draft_requested.emit(p))
+        btn_open.clicked.connect(lambda checked=False, p=path: self.open_draft_requested.emit(p))
         l.addWidget(btn_open)
 
         btn_del = QPushButton("✕")
         btn_del.setToolTip("Xóa bản nháp này")
         btn_del.setStyleSheet(f"background: transparent; color: {Theme.DANGER}; font-weight: bold; border: none; font-size: 14px;")
-        btn_del.clicked.connect(lambda p=path, c=card: self._delete_draft(p, c))
+        btn_del.clicked.connect(lambda checked=False, p=path, c=card: self._delete_draft(p, c))
         l.addWidget(btn_del)
 
         return card

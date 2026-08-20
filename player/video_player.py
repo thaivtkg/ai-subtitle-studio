@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import QRectF, Qt, QUrl
+from PySide6.QtCore import QRectF, QSizeF, Qt, QUrl
 from PySide6.QtGui import QPainter
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -35,44 +35,55 @@ class CustomGraphicsView(QGraphicsView):
         # Giữ nền Đen tuyền (#000000) để tạo dải viền vô cực (Cinematic)
         self.setStyleSheet("background-color: #000000; border-radius: 8px; border: none;")
 
-        # [FIX] Khôi phục lại bảo vệ tỷ lệ gốc, KHÔNG kéo dãn gây méo hình
-        self.video_item.setAspectRatioMode(Qt.KeepAspectRatio)
+        # [FIX] Khóa căn giữa tuyệt đối cho khung nhìn
+        self.setAlignment(Qt.AlignCenter)
 
-        # Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật Overlay
-        self.video_item.nativeSizeChanged.connect(self.update_overlay_geometry)
+        # Tắt Aspect Ratio mặc định của Qt để tự tính toán thủ công (chống lệch sang phải)
+        self.video_item.setAspectRatioMode(Qt.IgnoreAspectRatio)
+        
+        # Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật
+        self.video_item.nativeSizeChanged.connect(self.update_layout)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.video_item.setSize(QRectF(self.viewport().rect()).size())
-        self.update_overlay_geometry()
+        self.update_layout()
 
-    def update_overlay_geometry(self, *args):
-        view_rect = self.viewport().rect()
-        
-        if view_rect.height() == 0: 
+    def update_layout(self, *args):
+        """Tự động tính toán khung hình để video và subtitle luôn nằm chính giữa, không bị méo."""
+        view_w = self.viewport().width()
+        view_h = self.viewport().height()
+
+        if view_w <= 0 or view_h <= 0:
             return
+
+        # Ép không gian diễn họa (Scene) bằng đúng kích thước Viewport
+        self.scene().setSceneRect(0, 0, view_w, view_h)
 
         native_size = self.video_item.nativeSize()
         
-        # Tính toán lại thuật toán cắt viền để Subtitle Overlay luôn căn giữa chính xác lên hình ảnh
         if native_size.isValid() and native_size.width() > 0 and native_size.height() > 0:
-            view_ratio = view_rect.width() / view_rect.height()
-            video_ratio = native_size.width() / native_size.height()
+            aspect = native_size.width() / native_size.height()
+            target_w = view_w
+            target_h = int(target_w / aspect)
+
+            # Nếu chiều cao tính ra lớn hơn khung nhìn, scale ngược lại theo chiều cao
+            if target_h > view_h:
+                target_h = view_h
+                target_w = int(target_h * aspect)
+
+            # Tọa độ căn giữa
+            pos_x = (view_w - target_w) / 2
+            pos_y = (view_h - target_h) / 2
+
+            self.video_item.setSize(QSizeF(target_w, target_h))
+            self.video_item.setPos(pos_x, pos_y)
             
-            if video_ratio > view_ratio:
-                w = view_rect.width()
-                h = w / video_ratio
-                x = 0
-                y = (view_rect.height() - h) / 2
-            else:
-                h = view_rect.height()
-                w = h * video_ratio
-                x = (view_rect.width() - w) / 2
-                y = 0
-            
-            self.overlay_proxy.setGeometry(QRectF(x, y, w, h))
+            # Overlay phụ đề phải đè khớp chính xác lên khung hình video
+            self.overlay_proxy.setGeometry(QRectF(pos_x, pos_y, target_w, target_h))
         else:
-            self.overlay_proxy.setGeometry(QRectF(view_rect))
+            self.video_item.setSize(QSizeF(view_w, view_h))
+            self.video_item.setPos(0, 0)
+            self.overlay_proxy.setGeometry(QRectF(0, 0, view_w, view_h))
 
 
 class VideoPlayerWidget(QWidget):
@@ -128,7 +139,6 @@ class VideoPlayerWidget(QWidget):
         controls_layout.setContentsMargins(10, 4, 10, 8)
         controls_layout.setSpacing(12)
 
-        # [FIX] Nút Play/Pause dùng Text Unicode thay cho Icon Hệ thống để không bị đen chìm
         self.btn_play = QPushButton()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.btn_play.setFixedSize(34, 34)
@@ -222,7 +232,6 @@ class VideoPlayerWidget(QWidget):
             self.player.play()
 
     def update_play_button(self):
-        # [FIX] Chỉ cần thay đổi Icon hệ thống, không cần đổi CSS hay Text
         if self.player.isPlaying():
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
         else:
@@ -262,6 +271,12 @@ class VideoPlayerWidget(QWidget):
         self.empty_state_lbl.show()
         self.slider_seek.setValue(0)
         self.lbl_time.setText("00:00 / 00:00")
+        
+        # [FIX] Dọn dẹp "bóng ma" phụ đề kẹt trên màn hình
+        if hasattr(self, 'subtitle_overlay') and self.subtitle_overlay:
+            self.subtitle_overlay.clear_subtitle()
+        if hasattr(self, 'sub_controller') and self.sub_controller:
+            self.sub_controller.load_srt(None)
 
 
 class ClickableSlider(QSlider):

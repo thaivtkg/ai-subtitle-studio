@@ -521,10 +521,13 @@ class MainWindow(QMainWindow):
         self.queue_ui.sync_with_manager(items, self.queue_mgr.active_vid)
         count = len(items)
         self.page_dashboard.lbl_queue_overview.setText(f"Queue: {count} videos loaded | Output: {self.out_input.text() or 'Default'}")
+        
         if count == 0:
             self.video_player.cleanup()
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
+            # [FIX] Đảm bảo controller xả rỗng dữ liệu cũ
+            self.video_player.sub_controller.load_srt(None)
 
     def on_queue_item_clicked(self, vid_path):
         self.queue_mgr.set_active(vid_path)
@@ -547,31 +550,46 @@ class MainWindow(QMainWindow):
             self.video_player.cleanup()
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
+            # [FIX] Đảm bảo controller xả rỗng dữ liệu cũ
+            self.video_player.sub_controller.load_srt(None)
         elif self.queue_mgr.active_vid:
             self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
     def _load_draft_from_center(self, draft_path):
-        # Đối chiếu tìm video gốc trong Queue trước khi load Draft
-        draft_base = os.path.basename(draft_path).replace(".ai-subtitle-draft", "")
-        target_vid = next((vid for vid in self.queue_mgr.get_items().keys() if os.path.basename(vid).startswith(draft_base)), None)
-        
-        if not target_vid:
-            Toast.show_error(self, "Không tìm thấy video gốc tương ứng với Draft trong Queue.")
+        """Nạp chính xác file Draft vào Workspace và QueueManager mà không làm mất text."""
+        if not draft_path or not os.path.exists(draft_path):
+            Toast.show_error(self, "Tập tin Draft không tồn tại.")
             return
 
-        # [FIX] 1. Phải gán file Draft này vào QueueManager để hệ thống đồng bộ
-        self.queue_mgr.set_srt_for_video(target_vid, draft_path)
+        # 1. Trích xuất tên video gốc từ tên file draft (loại bỏ hậu tố _timing và đuôi mở rộng)
+        draft_filename = os.path.basename(draft_path)
+        base_key = draft_filename.replace(".ai-subtitle-draft", "").replace("_timing", "")
         
-        # [FIX] 2. Kích hoạt sự kiện click để hệ thống tự động nạp Draft vào cả Player và Editor
-        self.on_queue_item_clicked(target_vid)
-        
-        # [FIX] 3. Ép SubEditor vẽ lại giao diện bảng (phòng trường hợp hàm nạp file không tự động vẽ)
-        if hasattr(self.sub_editor, 'render_page'):
-            self.sub_editor.render_page()
+        # 2. Tìm video trong Queue khớp với key
+        target_vid = None
+        for vid in self.queue_mgr.get_items().keys():
+            vid_name = os.path.splitext(os.path.basename(vid))[0]
+            if vid_name == base_key or vid_name.startswith(base_key) or base_key.startswith(vid_name):
+                target_vid = vid
+                break
 
+        if not target_vid:
+            Toast.show_error(self, "Vui lòng nạp video gốc tương ứng vào Queue trước khi mở Draft.")
+            return
+
+        # 3. Gán file draft này làm phụ đề chính thức của video trong QueueManager
+        self.queue_mgr.set_active(target_vid)
+        self.queue_mgr.set_srt_for_video(target_vid, draft_path)
+
+        # 4. Load video vào Player và nạp TRỰC TIẾP file draft vào SubEditor
+        self.video_player.load_video(target_vid)
+        self.sub_editor.load_draft_file(draft_path)
+        self.video_player.sub_controller.load_srt(draft_path)
+
+        # 5. Chuyển sang Workspace
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
-        Toast.show_info(self, f"Đã nạp bản nháp: {os.path.basename(draft_path)}")
+        Toast.show_info(self, f"Đã nạp bản nháp: {draft_filename}")
 
     def _trigger_export_hardsub(self):
         if not self.queue_mgr.active_vid:
@@ -636,6 +654,11 @@ class MainWindow(QMainWindow):
         self.on_queue_item_clicked(self.current_vid)
 
         if not current_srt:
+            # [FIX] Thêm Log thông báo cho người dùng biết hệ thống đang làm gì
+            if self.ai_panel.mode_combo.currentData() == "timing":
+                self.append_log("[AI] Bắt đầu chế độ Timing Only (Chỉ trích xuất thời gian).")
+                self.append_log("[AI] Đang chạy thuật toán VAD (Silero) để phân tách giọng nói...")
+                self.append_log("[AI] Quá trình này chạy ngầm và rất nhanh, vui lòng đợi...")
             self.worker = WhisperWorker(
                 video_path=self.current_vid,
                 output_dir=self.output_dir,
@@ -763,6 +786,10 @@ class MainWindow(QMainWindow):
         self.page_dashboard.card_status_val.setText("Idle")
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
+        
+        # [FIX] Bổ sung reset cho thanh progress của Dashboard
+        self.page_dashboard.quick_progress.setValue(0) 
+        
         self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
         Toast.show_success(self, msg)
 
@@ -789,11 +816,11 @@ class MainWindow(QMainWindow):
             os.startfile(out_d)
 
     def start_fill_text_worker(self, start_idx, count):
+        """Khởi động luồng AI Batch Fill và reset thanh tiến độ."""
         if not self.queue_mgr.active_vid:
             Toast.show_info(self, "Vui lòng chọn video để điền chữ.")
             return
-            
-        # [FIX MEDIUM #5] Ưu tiên lấy Batch Size từ AI Panel làm Source of Truth
+
         actual_count = self.ai_panel.batch_spin.value()
         target_segs = self.sub_editor.all_segments[start_idx : start_idx + actual_count]
         segments_for_ai = []
@@ -804,10 +831,25 @@ class MainWindow(QMainWindow):
             stt = int(s['stt']) if str(s['stt']).isdigit() else 0
             segments_for_ai.append((s_ms, e_ms, raw, stt))
 
-        if not segments_for_ai: return
+        if not segments_for_ai:
+            Toast.show_info(self, "Không có đoạn nào cần điền chữ.")
+            return
+
+        self.append_log(f"\n==================================================")
+        self.append_log(f"🤖 BẮT ĐẦU ĐIỀN CHỮ AI [Câu {start_idx + 1} đến {start_idx + len(segments_for_ai)}]")
+        self.append_log(f"==================================================")
+        self.append_log(f"[AI] Đang nạp Audio và Model ({self.page_settings.model_combo.currentData()}) vào VRAM...")
+        self.append_log(f"[AI] Quá trình infer có thể mất vài giây im lặng, vui lòng không tắt ứng dụng...")
+        # Reset Progress Bars trước khi chạy tác vụ mới
+        self.progress_bar.setValue(0)
+        self.ai_panel.progress_bar.setValue(0)
+        self.lbl_speed_eta.setText("Đang khởi động AI Batch...")
+        self.ai_panel.set_state("PROCESSING", f"Đang điền câu {start_idx + 1} - {start_idx + len(segments_for_ai)}...")
+
         self.is_cancelled_flag = False
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
+
         self.worker = FillTextWorker(
             video_path=self.queue_mgr.active_vid,
             segments_data=segments_for_ai,
@@ -822,19 +864,44 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def on_fill_text_finished(self, filled_segments):
+        """Cập nhật dữ liệu vào Editor, lưu Checkpoint vào đĩa và trả trạng thái tiến độ về an toàn."""
         for start_ms, end_ms, text, stt in filled_segments:
             for seg in self.sub_editor.all_segments:
                 if str(seg['stt']) == str(stt):
                     seg['text'] = text
                     seg['status'] = 'draft'
                     break
+
         self.sub_editor.render_page()
         self.sub_editor.update_draft_progress()
-        self.sub_editor.save_draft(silent=True)
+
+        # Đảm bảo lưu đúng file draft gắn với video hiện tại
+        draft_file = self.sub_editor.save_draft(silent=True)
+        if draft_file:
+            self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_file)
+
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        self.ai_panel.set_state("COMPLETED", "Điền chữ hoàn tất!")
+        
+        # [FIX] Đưa thanh tiến độ về 0 sau 2.5 giây thay vì kẹt 100% vĩnh viễn
         self.progress_bar.setValue(100)
+        self.ai_panel.progress_bar.setValue(100)
+        QTimer.singleShot(2500, self._reset_progress_state)
+        
         Toast.show_success(self, "Đã điền chữ AI hoàn tất lượt Batch!")
+
+    def _reset_progress_state(self):
+        """Khôi phục các thanh tiến độ và nhãn trạng thái về Idle."""
+        if not hasattr(self, 'worker') or not self.worker.isRunning():
+            self.progress_bar.setValue(0)
+            self.ai_panel.progress_bar.setValue(0)
+            # [FIX] Bổ sung reset cho thanh progress của Dashboard
+            self.page_dashboard.quick_progress.setValue(0) 
+            
+            self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
+            if self.ai_panel.state == "COMPLETED":
+                self.ai_panel.set_state("READY", "Sẵn sàng cho tác vụ tiếp theo")   
 
     def closeEvent(self, event):
         save_settings({
