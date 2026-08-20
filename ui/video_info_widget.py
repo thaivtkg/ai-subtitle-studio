@@ -2,26 +2,27 @@ import os
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QGridLayout, QLabel
 from PySide6.QtCore import Qt
 
+# Nạp Design System
+from ui.theme import Theme
+
 class VideoInfoWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 6px;")
-        
-        # [FIX] Tăng min-height của cả Panel để chịu tải được các Label bên trong
+        # [S6-FIX] Giao diện Card Panel chuẩn xác
+        self.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         self.setMinimumHeight(165)
         
         layout = QVBoxLayout(self)
-        # [FIX] Tăng margin đáy lên 16px để tạo khoảng thở an toàn cho viền đáy
-        layout.setContentsMargins(15, 12, 15, 16)
+        layout.setContentsMargins(16, 14, 16, 16)
         layout.setSpacing(6)
         
-        title = QLabel("ℹ️ VIDEO INFORMATION")
-        title.setStyleSheet("color: #35C8FF; font-weight: bold; font-size: 12px; border: none;")
-        title.setMinimumHeight(20) # [FIX] Ép bằng API C++
+        title = QLabel("ℹ️ VIDEO METADATA")
+        title.setStyleSheet(f"color: {Theme.CYAN}; font-weight: bold; font-size: 12px; border: none;")
+        title.setMinimumHeight(20)
         layout.addWidget(title)
         
         self.grid = QGridLayout()
-        self.grid.setVerticalSpacing(8) # Tăng nhẹ khoảng cách dọc để chữ không bị dí sát
+        self.grid.setVerticalSpacing(8)
         self.grid.setHorizontalSpacing(15)
         
         self.labels = {}
@@ -43,14 +44,13 @@ class VideoInfoWidget(QFrame):
 
     def _add_info_cell(self, row, col, label_text):
         lbl_title = QLabel(label_text)
-        lbl_title.setStyleSheet("color: #98A2B3; border: none; font-weight: bold;")
-        # [FIX BLOCKER] Ép buộc Qt Layout Engine cấp phát đúng 22px chiều cao
+        # [S6-FIX] Tiêu đề nhạt, nội dung sáng chuẩn Typography
+        lbl_title.setStyleSheet(f"color: {Theme.TEXT_MUTED}; border: none; font-weight: bold; font-size: 12px;")
         lbl_title.setMinimumHeight(22) 
         
         lbl_value = QLabel("--")
-        lbl_value.setStyleSheet("color: #F5F7FA; border: none;")
+        lbl_value.setStyleSheet(f"color: {Theme.TEXT_PRIMARY}; border: none; font-weight: 500; font-size: 12px;")
         lbl_value.setWordWrap(True)
-        # [FIX BLOCKER] Ép buộc Qt Layout Engine cấp phát đúng 22px chiều cao
         lbl_value.setMinimumHeight(22) 
         
         self.grid.addWidget(lbl_title, row, col)
