@@ -293,7 +293,7 @@ class VideoPlayerWidget(QWidget):
                     stt = item.index
 
                 # Khớp thời gian thực, không bù trừ để Controller tự xử lý Fade In/Out trong giới hạn thời gian
-                if start_ms <= position <= end_ms:
+                if start_ms <= position < end_ms:
                     # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
                     if text and text != "[ Chưa có nội dung ]":
                         current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text}

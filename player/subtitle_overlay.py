@@ -1,7 +1,10 @@
+import re
 from dataclasses import dataclass
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLabel, QSizePolicy
+
 from ui.animations.animation_types import SubtitleAnimationState, SubtitleRenderInput
 from ui.animations.subtitle_animation_controller import SubtitleAnimationController
 
@@ -59,41 +62,45 @@ class SubtitleOverlay(QLabel):
         self.update()
 
     def _wrap_text_with_mapping(self, text: str, fm: QFontMetricsF, max_width: float) -> list[VisualLine]:
-        """Chia dòng thông minh và lưu chính xác dải vị trí ký tự toàn cục"""
+        """Chia dòng thông minh và bảo toàn 100% chỉ số ký tự gốc (Bao gồm Multi-spaces/Tabs)"""
         visual_lines: list[VisualLine] = []
         raw_lines = text.split('\n')
         global_char_offset = 0
 
         for r_idx, raw_line in enumerate(raw_lines):
-            words = raw_line.split(' ')
+            # Tách chuỗi theo cụm khoảng trắng, GIỮ LẠI các khoảng trắng trong mảng kết quả
+            tokens = re.split(r'(\s+)', raw_line)
             cur_line = ""
             cur_line_start = global_char_offset
             
-            for w_idx, word in enumerate(words):
-                test_line = f"{cur_line} {word}" if cur_line else word
+            for token in tokens:
+                if not token:
+                    continue
+                    
+                test_line = cur_line + token
                 if fm.horizontalAdvance(test_line) <= max_width:
                     cur_line = test_line
                 else:
-                    if cur_line:
+                    # Nếu dòng đã có chữ, ngắt dòng
+                    if cur_line.strip():
                         visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
-                        cur_line_start += len(cur_line) + 1
-                        cur_line = word
+                        cur_line_start += len(cur_line)
+                        cur_line = token
                     else:
-                        # Fallback cho từ siêu dài hoặc CJK
-                        while fm.horizontalAdvance(word) > max_width and word:
-                            temp = ""
-                            for ch in word:
-                                if fm.horizontalAdvance(temp + ch) > max_width:
-                                    break
-                                temp += ch
-                            visual_lines.append(VisualLine(temp, cur_line_start, cur_line_start + len(temp)))
-                            cur_line_start += len(temp)
-                            word = word[len(temp):]
-                        cur_line = word
+                        # Fallback cho CJK hoặc 1 từ đơn dài hơn cả khung hình
+                        temp = cur_line
+                        for ch in token:
+                            if fm.horizontalAdvance(temp + ch) > max_width and temp:
+                                visual_lines.append(VisualLine(temp, cur_line_start, cur_line_start + len(temp)))
+                                cur_line_start += len(temp)
+                                temp = ""
+                            temp += ch
+                        cur_line = temp
 
             if cur_line:
                 visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
 
+            # Cộng thêm 1 cho ký tự '\n' bị mất khi split ban đầu (trừ dòng cuối)
             global_char_offset += len(raw_line) + (1 if r_idx < len(raw_lines) - 1 else 0)
 
         return visual_lines
