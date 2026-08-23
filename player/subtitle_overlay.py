@@ -1,9 +1,16 @@
-from PySide6.QtCore import QPointF, Qt
+from dataclasses import dataclass
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLabel, QSizePolicy
-
-from ui.animations.animation_types import SubtitleAnimationState, SubtitleTextEffect
+from ui.animations.animation_types import SubtitleAnimationState, SubtitleRenderInput
 from ui.animations.subtitle_animation_controller import SubtitleAnimationController
+
+
+@dataclass
+class VisualLine:
+    text: str
+    start_char_idx: int
+    end_char_idx: int
 
 
 class SubtitleOverlay(QLabel):
@@ -13,159 +20,181 @@ class SubtitleOverlay(QLabel):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Trạng thái dữ liệu cho Animation
         self.anim_controller = controller
-        self.current_segment = None
+        self.render_input: SubtitleRenderInput | None = None
         self.current_time_ms = 0
-        
-        # Thiết lập cơ bản
+
         self.font_family = "Arial"
         self.font_size = 20
         self.text_color = QColor("white")
         self.outline_color = QColor("black")
         self.outline_width = 2
         self.position_mode = "Bottom"
-        self.highlight_color = QColor("#00E5FF") # Màu Cyan Highlight
+        self.highlight_color = QColor("#00E5FF")
 
         self.update_style()
 
     def update_style(self, family=None, size=None, color=None, out_color=None, out_width=None, position=None):
         if family: self.font_family = family
-        
-        # [FIX CRITICAL] Ép kiểu int() để giải quyết triệt để lỗi Shiboken (str -> C++)
         if size is not None: self.font_size = int(size)
-        
         if color: self.text_color = QColor(color)
         if out_color: self.outline_color = QColor(out_color)
-        
-        # [FIX CRITICAL] Ép kiểu int() cho độ dày viền
         if out_width is not None: self.outline_width = int(out_width)
-        
         if position: self.position_mode = position
-        
+
         self.custom_font = QFont(self.font_family)
         self.custom_font.setPixelSize(self.font_size)
         self.custom_font.setBold(True)
         self.update()
 
-    # Nhận toàn bộ đối tượng segment chứa start_ms, end_ms và thời gian thực
-    def update_subtitle(self, segment, current_time_ms):
-        self.current_segment = segment
+    def update_subtitle(self, render_input: SubtitleRenderInput, current_time_ms: int):
+        self.render_input = render_input
         self.current_time_ms = current_time_ms
         self.update()
 
     def clear_subtitle(self):
-        self.current_segment = None
+        self.render_input = None
         if self.anim_controller:
             self.anim_controller.current_state.reset()
         self.update()
 
-    def paintEvent(self, event):
-        if not self.current_segment:
-            return
+    def _wrap_text_with_mapping(self, text: str, fm: QFontMetricsF, max_width: float) -> list[VisualLine]:
+        """Chia dòng thông minh và lưu chính xác dải vị trí ký tự toàn cục"""
+        visual_lines: list[VisualLine] = []
+        raw_lines = text.split('\n')
+        global_char_offset = 0
+
+        for r_idx, raw_line in enumerate(raw_lines):
+            words = raw_line.split(' ')
+            cur_line = ""
+            cur_line_start = global_char_offset
             
-        raw_text = self.current_segment.get('text', '').strip()
-        if not raw_text:
+            for w_idx, word in enumerate(words):
+                test_line = f"{cur_line} {word}" if cur_line else word
+                if fm.horizontalAdvance(test_line) <= max_width:
+                    cur_line = test_line
+                else:
+                    if cur_line:
+                        visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
+                        cur_line_start += len(cur_line) + 1
+                        cur_line = word
+                    else:
+                        # Fallback cho từ siêu dài hoặc CJK
+                        while fm.horizontalAdvance(word) > max_width and word:
+                            temp = ""
+                            for ch in word:
+                                if fm.horizontalAdvance(temp + ch) > max_width:
+                                    break
+                                temp += ch
+                            visual_lines.append(VisualLine(temp, cur_line_start, cur_line_start + len(temp)))
+                            cur_line_start += len(temp)
+                            word = word[len(temp):]
+                        cur_line = word
+
+            if cur_line:
+                visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
+
+            global_char_offset += len(raw_line) + (1 if r_idx < len(raw_lines) - 1 else 0)
+
+        return visual_lines
+
+    def _snap_to_word_boundary(self, line: str, target_idx: int) -> int:
+        if target_idx <= 0: return 0
+        if target_idx >= len(line) or ' ' not in line: return target_idx
+        idx = target_idx
+        while idx < len(line) and line[idx] != ' ':
+            idx += 1
+        return idx
+
+    def paintEvent(self, event):
+        if not self.render_input or not self.render_input.text.strip():
             return
 
-        if self.anim_controller:
-            visual_state = self.anim_controller.calculate_state(self.current_time_ms, self.current_segment)
-        else:
-            from ui.animations.subtitle_visual_state import SubtitleVisualState
-            visual_state = SubtitleVisualState()
-            visual_state.animation_state = SubtitleAnimationState.VISIBLE
+        visual_state = (
+            self.anim_controller.calculate_state(self.current_time_ms, self.render_input)
+            if self.anim_controller
+            else None
+        )
 
-        if visual_state.animation_state == SubtitleAnimationState.HIDDEN or visual_state.opacity <= 0:
+        if visual_state and (visual_state.animation_state == SubtitleAnimationState.HIDDEN or visual_state.opacity <= 0):
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
-        
-        # font = QFont(self.font_family, self.font_size)
-        # font.setBold(True)
-        # painter.setFont(font)
-
-        # fm = QFontMetricsF(font)
         painter.setFont(self.custom_font)
+
         fm = QFontMetricsF(self.custom_font)
-        
-        # Tính toán chiều rộng tối đa cho phép (90% chiều rộng Video để có khoảng lề 2 bên an toàn)
         max_text_width = self.width() * 0.90
-        
-        # Chuyển text qua thuật toán ngắt dòng thông minh thay vì chỉ dùng split('\n')
-        lines = self._wrap_text(raw_text, fm, max_text_width)
+        lines = self._wrap_text_with_mapping(self.render_input.text, fm, max_text_width)
         
         line_height = fm.height()
         total_height = line_height * len(lines)
-        
+        y_offset = visual_state.y_offset if visual_state else 0.0
+
         margin = 40
-        if self.position_mode == "Bottom":
-            start_y = self.height() - margin - total_height + fm.ascent() + visual_state.y_offset
-        elif self.position_mode == "Top":
-            start_y = margin + fm.ascent() + visual_state.y_offset
+        if self.position_mode == "Top":
+            start_y = margin + fm.ascent() + y_offset
+        elif self.position_mode == "Middle":
+            start_y = (self.height() - total_height) / 2 + fm.ascent() + y_offset
         else:
-            start_y = (self.height() - total_height) / 2 + fm.ascent() + visual_state.y_offset
+            start_y = self.height() - margin - total_height + fm.ascent() + y_offset
 
-        is_animated = (
-            visual_state.opacity < 1.0 or 
-            visual_state.visible_chars != -1 or 
-            visual_state.highlight_chars > 0 or
-            visual_state.y_offset != 0.0
-        )
-
-        painter.setOpacity(visual_state.opacity)
-        if is_animated:
+        if visual_state:
+            painter.setOpacity(visual_state.opacity)
             self._draw_animated(painter, fm, lines, start_y, visual_state)
         else:
+            painter.setOpacity(1.0)
             self._draw_static(painter, fm, lines, start_y)
 
-    def _draw_static(self, painter, fm, lines, start_y):
+    def _draw_static(self, painter, fm, lines: list[VisualLine], start_y: float):
         current_y = start_y
-        for line in lines:
-            line_width = fm.horizontalAdvance(line)
+        for v_line in lines:
+            line_width = fm.horizontalAdvance(v_line.text)
             start_x = (self.width() - line_width) / 2
-            self._draw_text_path(painter, start_x, current_y, line, self.text_color)
+            self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
             current_y += fm.height()
 
-    def _draw_animated(self, painter, fm, lines, start_y, state):
+    def _draw_animated(self, painter, fm, lines: list[VisualLine], start_y: float, state):
         current_y = start_y
-        char_count = 0
         is_reveal = state.visible_chars != -1
         is_highlight = state.highlight_chars > 0
 
-        for line in lines:
-            line_len = len(line)
-            line_width = fm.horizontalAdvance(line)
-            start_x = (self.width() - line_width) / 2
-            
-            if is_reveal:
-                if char_count >= state.visible_chars:
-                    break
-                elif char_count + line_len > state.visible_chars:
-                    chars_to_draw = state.visible_chars - char_count
-                    self._draw_text_path(painter, start_x, current_y, line[:chars_to_draw], self.text_color)
-                else:
-                    self._draw_text_path(painter, start_x, current_y, line, self.text_color)
-            elif is_highlight:
-                if char_count >= state.highlight_chars:
-                    self._draw_text_path(painter, start_x, current_y, line, self.text_color)
-                elif char_count + line_len > state.highlight_chars:
-                    cut_idx = state.highlight_chars - char_count
-                    highlight_part = line[:cut_idx]
-                    normal_part = line[cut_idx:]
-                    self._draw_text_path(painter, start_x, current_y, highlight_part, self.highlight_color)
-                    offset_x = fm.horizontalAdvance(highlight_part)
-                    self._draw_text_path(painter, start_x + offset_x, current_y, normal_part, self.text_color)
-                else:
-                    self._draw_text_path(painter, start_x, current_y, line, self.highlight_color)
-            else:
-                self._draw_text_path(painter, start_x, current_y, line, self.text_color)
+        for v_line in lines:
+            # Layout cố định hình học theo toàn bộ dòng chữ
+            full_line_width = fm.horizontalAdvance(v_line.text)
+            start_x = (self.width() - full_line_width) / 2
 
-            char_count += line_len + 1 
+            if is_reveal:
+                if state.visible_chars <= v_line.start_char_idx:
+                    pass
+                elif state.visible_chars >= v_line.end_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+                else:
+                    raw_cut = state.visible_chars - v_line.start_char_idx
+                    cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text[:cut_idx], self.text_color)
+
+            elif is_highlight:
+                if state.highlight_chars <= v_line.start_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+                elif state.highlight_chars >= v_line.end_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.highlight_color)
+                else:
+                    raw_cut = state.highlight_chars - v_line.start_char_idx
+                    cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
+                    hl_part = v_line.text[:cut_idx]
+                    norm_part = v_line.text[cut_idx:]
+
+                    self._draw_text_path(painter, start_x, current_y, hl_part, self.highlight_color)
+                    offset_x = fm.horizontalAdvance(hl_part)
+                    self._draw_text_path(painter, start_x + offset_x, current_y, norm_part, self.text_color)
+            else:
+                self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+
             current_y += fm.height()
 
-    def _draw_text_path(self, painter, x, y, text, fill_color):
+    def _draw_text_path(self, painter, x: float, y: float, text: str, fill_color: QColor):
         if not text: return
         path = QPainterPath()
         path.addText(x, y, painter.font(), text)
@@ -175,39 +204,3 @@ class SubtitleOverlay(QLabel):
             painter.drawPath(path)
         painter.setPen(Qt.NoPen)
         painter.fillPath(path, fill_color)
-
-    def _wrap_text(self, text, fm, max_width):
-        """Thuật toán ngắt dòng thông minh hỗ trợ Latin (Việt/Anh) và CJK (Nhật/Trung)"""
-        result = []
-        for raw_line in text.split('\n'):
-            words = raw_line.split(' ')
-            current_line = ""
-            
-            for word in words:
-                # Thử ráp thêm từ mới vào dòng hiện tại
-                test_line = f"{current_line} {word}" if current_line else word
-                
-                if fm.horizontalAdvance(test_line) <= max_width:
-                    current_line = test_line
-                else:
-                    # Nếu dòng đã có chữ, đẩy dòng hiện tại vào kết quả và lấy từ mới làm dòng tiếp theo
-                    if current_line:
-                        result.append(current_line)
-                        current_line = word
-                    else:
-                        current_line = word
-                    
-                    # Cứu cánh (Fallback) cho CJK: Nếu bản thân 1 khối chữ quá dài (do không có dấu cách)
-                    while fm.horizontalAdvance(current_line) > max_width:
-                        # Buộc phải cắt từng ký tự cho đến khi vừa khung
-                        temp = ""
-                        for char in current_line:
-                            if fm.horizontalAdvance(temp + char) > max_width:
-                                break
-                            temp += char
-                        result.append(temp)
-                        current_line = current_line[len(temp):] # Phần dư đẩy xuống dòng dưới
-                        
-            if current_line:
-                result.append(current_line)
-        return result

@@ -15,10 +15,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from ui.animations.animation_config import SubtitleAnimationConfig
 
 from core.subtitle_controller import SubtitleController
 from player.subtitle_overlay import SubtitleOverlay
+from ui.animations.animation_config import SubtitleAnimationConfig
+from ui.animations.animation_types import SubtitleRenderInput
 from ui.animations.subtitle_animation_controller import SubtitleAnimationController
 
 
@@ -302,12 +303,19 @@ class VideoPlayerWidget(QWidget):
 
         # 3. Đẩy lên Overlay để Render Animation
         if current_seg:
+            # Chuẩn hóa an toàn thành SubtitleRenderInput (Ép kiểu để chống lỗi Shiboken C++)
+            render_input = SubtitleRenderInput(
+                segment_id=int(current_seg.get('stt', 0)),
+                start_ms=int(current_seg.get('start_ms', 0)),
+                end_ms=int(current_seg.get('end_ms', 0)),
+                text=str(current_seg.get('text', ''))
+            )
+            
             visual_time = position
-            if not self.player.isPlaying():
-                if visual_time - current_seg['start_ms'] < 300:
-                    visual_time = current_seg['start_ms'] + 300
-                    
-            self.subtitle_overlay.update_subtitle(current_seg, visual_time)
+            if not self.player.isPlaying() and (visual_time - render_input.start_ms < 300):
+                visual_time = render_input.start_ms + 300
+                
+            self.subtitle_overlay.update_subtitle(render_input, visual_time)
         else:
             self.subtitle_overlay.clear_subtitle()
 

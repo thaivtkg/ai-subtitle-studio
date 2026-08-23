@@ -1,11 +1,13 @@
-from ui.animations.animation_types import (
-    SubtitleAnimationState, 
-    SubtitleTextEffect, 
-    SubtitleAppearMode,
-    SubtitleDisappearMode
-)
 from ui.animations.animation_config import SubtitleAnimationConfig
+from ui.animations.animation_types import (
+    SubtitleAnimationState,
+    SubtitleAppearMode,
+    SubtitleDisappearMode,
+    SubtitleRenderInput,
+    SubtitleTextEffect,
+)
 from ui.animations.subtitle_visual_state import SubtitleVisualState
+
 
 class SubtitleAnimationController:
     def __init__(self, config: SubtitleAnimationConfig):
@@ -15,26 +17,26 @@ class SubtitleAnimationController:
     def update_config(self, new_config: SubtitleAnimationConfig):
         self.config = new_config
 
-    def calculate_state(self, current_time_ms: int, segment: dict) -> SubtitleVisualState:
-        if not self.config.enabled or self.config.reduced_motion or not segment:
+    def calculate_state(self, current_time_ms: int, render_input: SubtitleRenderInput | None) -> SubtitleVisualState:
+        if not self.config.enabled or self.config.reduced_motion or not render_input or not render_input.text.strip():
             self.current_state.reset()
-            if segment:
-                self.current_state.segment_id = segment.get('stt')
+            if render_input:
+                self.current_state.segment_id = render_input.segment_id
                 self.current_state.animation_state = SubtitleAnimationState.VISIBLE
             return self.current_state
 
-        start_ms = segment.get('start_ms', 0)
-        end_ms = segment.get('end_ms', 0)
-        text_len = len(segment.get('text', ''))
-        seg_id = segment.get('stt')
+        start_ms = render_input.start_ms
+        end_ms = render_input.end_ms
+        text_len = len(render_input.text)
+        seg_id = render_input.segment_id
 
-        # Xử lý Interruption: Nếu nhảy sang segment khác, reset state ngay lập tức
+        # Xử lý đổi phân đoạn
         if self.current_state.segment_id != seg_id:
             self.current_state.reset()
             self.current_state.segment_id = seg_id
 
-        # 1. State: HIDDEN
-        if current_time_ms < start_ms or current_time_ms > end_ms:
+        # Ranh giới thời gian: [start_ms, end_ms)
+        if current_time_ms < start_ms or current_time_ms >= end_ms:
             self.current_state.animation_state = SubtitleAnimationState.HIDDEN
             self.current_state.opacity = 0.0
             self.current_state.y_offset = 0.0
@@ -47,33 +49,27 @@ class SubtitleAnimationController:
         fade_in = self.config.fade_in_ms if self.config.appear_mode != SubtitleAppearMode.INSTANT else 0
         fade_out = self.config.fade_out_ms if self.config.disappear_mode != SubtitleDisappearMode.INSTANT else 0
 
-        # 2. State: ENTERING (Fade / Rise)
+        # State: ENTERING
         if elapsed < fade_in and fade_in > 0:
             self.current_state.animation_state = SubtitleAnimationState.ENTERING
             progress = elapsed / fade_in
             self.current_state.opacity = progress
-            if self.config.appear_mode == SubtitleAppearMode.RISE:
-                self.current_state.y_offset = 6.0 * (1.0 - progress) # +6px -> 0px
-            else:
-                self.current_state.y_offset = 0.0
+            self.current_state.y_offset = 6.0 * (1.0 - progress) if self.config.appear_mode == SubtitleAppearMode.RISE else 0.0
 
-        # 3. State: EXITING (Fade / Drop)
+        # State: EXITING
         elif remaining < fade_out and fade_out > 0:
             self.current_state.animation_state = SubtitleAnimationState.EXITING
             progress = remaining / fade_out
             self.current_state.opacity = progress
-            if self.config.disappear_mode == SubtitleDisappearMode.DROP:
-                self.current_state.y_offset = 6.0 * (1.0 - progress) # 0px -> +6px
-            else:
-                self.current_state.y_offset = 0.0
+            self.current_state.y_offset = 6.0 * (1.0 - progress) if self.config.disappear_mode == SubtitleDisappearMode.DROP else 0.0
 
-        # 4. State: VISIBLE
+        # State: VISIBLE
         else:
             self.current_state.animation_state = SubtitleAnimationState.VISIBLE
             self.current_state.opacity = 1.0
             self.current_state.y_offset = 0.0
 
-        # Xử lý Content Effects (Reveal & Highlight) trong vùng Content Interval an toàn
+        # Content Effects
         content_duration = max(1, duration - fade_in - fade_out)
         content_elapsed = max(0, elapsed - fade_in)
         content_progress = min(1.0, content_elapsed / content_duration)
@@ -88,4 +84,4 @@ class SubtitleAnimationController:
         else:
             self.current_state.highlight_chars = 0
 
-        return self.current_state   
+        return self.current_state
