@@ -22,6 +22,7 @@ from ui.toast import Toast
 
 class DraftCenterPage(QWidget):
     open_draft_requested = Signal(str)
+    continue_draft_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -132,15 +133,84 @@ class DraftCenterPage(QWidget):
         l.addLayout(info_box, stretch=1)
 
         btn_open = QPushButton("Mở Editor")
-        btn_open.setObjectName("btn_secondary")
+        btn_open.setCursor(Qt.PointingHandCursor)
+        btn_open.setMinimumHeight(28)
+        btn_open.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-weight: 600;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.SURFACE_SOFT};
+                border: 1px solid {Theme.CYAN};
+                color: {Theme.CYAN};
+            }}
+            QPushButton:pressed {{
+                background-color: {Theme.BG_APP};
+            }}
+        """)
         btn_open.clicked.connect(lambda checked=False, p=path: self.open_draft_requested.emit(p))
         l.addWidget(btn_open)
 
+        # [FIX] Thêm nút Continue (Mới)
+        btn_continue = QPushButton("▶ Continue")
+        btn_continue.setCursor(Qt.PointingHandCursor)
+        btn_continue.setMinimumHeight(28)
+        btn_continue.setStyleSheet(f"""
+            QPushButton {{
+                background: {Theme.PRIMARY_GRADIENT};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #9D74FF, stop: 1 #F472B6);
+            }}
+            QPushButton:pressed {{
+                background: {Theme.PRIMARY_PURPLE};
+            }}
+        """)
+        btn_continue.clicked.connect(lambda checked=False, p=path: self.continue_draft_requested.emit(p))
+        l.addWidget(btn_continue)
+
+        # Nút Xóa bản nháp với Hover đỏ
         btn_del = QPushButton("✕")
-        btn_del.setToolTip("Xóa bản nháp này")
-        btn_del.setStyleSheet(f"background: transparent; color: {Theme.DANGER}; font-weight: bold; border: none; font-size: 14px;")
+        btn_del.setCursor(Qt.PointingHandCursor)
+        btn_del.setFixedSize(28, 28)
+        btn_del.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Theme.DANGER};
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background: {Theme.DANGER};
+                color: #FFFFFF;
+            }}
+            QPushButton:pressed {{
+                background: #BE123C;
+            }}
+        """)
         btn_del.clicked.connect(lambda checked=False, p=path, c=card: self._delete_draft(p, c))
         l.addWidget(btn_del)
+
+        # # Đưa vào layout của Card
+        # btn_layout = QHBoxLayout()
+        # btn_layout.addStretch()
+        # btn_layout.addWidget(btn_open)
+        # btn_layout.addWidget(btn_continue) # Thêm vào layout
+        # btn_layout.addWidget(btn_del)
 
         return card
 

@@ -238,6 +238,15 @@ class MainWindow(QMainWindow):
         # Page 4 (Index 3): Draft Center
         self.page_drafts = DraftCenterPage()
         self.page_drafts.open_draft_requested.connect(self._load_draft_from_center)
+
+        # [CHÈN VỊ TRÍ 1 TẠI ĐÂY]
+        # 1. Đồng bộ 2 chiều Batch Size giữa Inline Editor và AI Panel
+        self.ai_panel.batch_spin.valueChanged.connect(self.sub_editor.spin_batch.setValue)
+        self.sub_editor.spin_batch.valueChanged.connect(self.ai_panel.batch_spin.setValue)
+
+        # 2. Nối action Continue từ Draft Center
+        self.page_drafts.continue_draft_requested.connect(self._continue_draft_from_center)
+
         self.stack.addWidget(self.page_drafts)
 
         # Page 5 (Index 4): Export Center
@@ -555,13 +564,13 @@ class MainWindow(QMainWindow):
         elif self.queue_mgr.active_vid:
             self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
-    def _load_draft_from_center(self, draft_path):
+    def _load_draft_from_center(self, draft_path, silent=False):
         """Nạp chính xác file Draft vào Workspace và QueueManager mà không làm mất text."""
         if not draft_path or not os.path.exists(draft_path):
             Toast.show_error(self, "Tập tin Draft không tồn tại.")
-            return
+            return False
 
-        # 1. Trích xuất tên video gốc từ tên file draft (loại bỏ hậu tố _timing và đuôi mở rộng)
+        # 1. Trích xuất tên video gốc từ tên file draft
         draft_filename = os.path.basename(draft_path)
         base_key = draft_filename.replace(".ai-subtitle-draft", "").replace("_timing", "")
         
@@ -575,7 +584,7 @@ class MainWindow(QMainWindow):
 
         if not target_vid:
             Toast.show_error(self, "Vui lòng nạp video gốc tương ứng vào Queue trước khi mở Draft.")
-            return
+            return False
 
         # 3. Gán file draft này làm phụ đề chính thức của video trong QueueManager
         self.queue_mgr.set_active(target_vid)
@@ -589,7 +598,11 @@ class MainWindow(QMainWindow):
         # 5. Chuyển sang Workspace
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
-        Toast.show_info(self, f"Đã nạp bản nháp: {draft_filename}")
+        
+        # [FIX] Chỉ hiện Toast khi người dùng bấm 'Mở Editor', không hiện khi chạy qua nút 'Continue'
+        if not silent:
+            Toast.show_info(self, f"Đã nạp bản nháp: {draft_filename}")
+        return True
 
     def _trigger_export_hardsub(self):
         if not self.queue_mgr.active_vid:
@@ -601,12 +614,24 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Không tìm thấy file phụ đề SRT tương ứng.")
             return
             
-        # [FIX HIGH #4] Chặn đứng hành động đưa file JSON Draft cho FFmpeg
         if srt_path.lower().endswith('.ai-subtitle-draft'):
             Toast.show_error(self, "Draft chưa phải SRT. Hãy mở Draft và chọn Lưu SRT (Softsub) trước khi Hardsub.")
             return
             
+        # Khóa UI an toàn, chống crash do click nhiều lần đè luồng đang chạy
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            Toast.show_info(self, "Hệ thống đang bận xử lý, vui lòng chờ...")
+            return
+            
         out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
+        
+        # Bật cờ hệ thống sang trạng thái Processing
+        self.start_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.page_dashboard.quick_progress.setValue(0)
+        self.page_dashboard.card_status_val.setText("Processing")
+        
         self.worker = HardsubWorker(
             video_path=self.queue_mgr.active_vid,
             srt_path=srt_path,
@@ -617,8 +642,36 @@ class MainWindow(QMainWindow):
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
-        self.worker.finished_signal.connect(lambda msg, path: Toast.show_success(self, f"Render Hardsub xong: {path}"))
-        self.worker.error_signal.connect(lambda err: Toast.show_error(self, f"Lỗi Hardsub: {err}"))
+        
+        # [FIX CRITICAL] Chuyển signal connect sang method của class để tránh bị Garbage Collector thu hồi
+        self.worker.finished_signal.connect(self._on_manual_hardsub_success)
+        self.worker.error_signal.connect(self._on_manual_hardsub_error)
+        self.worker.start()
+
+        # --- BỔ SUNG 2 HÀM XỬ LÝ MỚI ---
+    def _on_manual_hardsub_success(self, msg, path):
+        Toast.show_success(self, f"Render Hardsub xong: {path}")
+        # Đưa thanh tiến độ về 100% (màu hồng hoàn tất)
+        self.progress_bar.setValue(100)
+        self.page_dashboard.quick_progress.setValue(100)
+        # Kích hoạt bộ đếm thời gian: Đợi 2.5 giây sau đó tự động reset UI về 0 (Idle)
+        QTimer.singleShot(2500, self._cleanup_ui_after_task)
+
+    def _on_manual_hardsub_error(self, err):
+        Toast.show_error(self, f"Lỗi Hardsub: {err}")
+        self._cleanup_ui_after_task()
+        
+        # [FIX] Đảm bảo dọn dẹp sạch sẽ thanh Progress UI khi hoàn tất hoặc gặp lỗi
+        def on_success(msg, path):
+            Toast.show_success(self, f"Render Hardsub xong: {path}")
+            self._cleanup_ui_after_task()
+            
+        def on_error(err):
+            Toast.show_error(self, f"Lỗi Hardsub: {err}")
+            self._cleanup_ui_after_task()
+            
+        self.worker.finished_signal.connect(on_success)
+        self.worker.error_signal.connect(on_error)
         self.worker.start()
 
     def start_processing(self):
@@ -793,13 +846,14 @@ class MainWindow(QMainWindow):
         self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
         Toast.show_success(self, msg)
 
+        self._cleanup_ui_after_task()
+
     def process_error(self, err):
         self.append_log(f"❌ [LỖI] {err}")
         self.ai_panel.set_state("ERROR", str(err))
 
         if getattr(self, "is_cancelled_flag", False):
-            self.start_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
+            self._cleanup_ui_after_task()
             return
 
         if hasattr(self, "batch_queue") and self.batch_queue:
@@ -807,8 +861,22 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
             return
 
+        # [FIX HIGH] Dọn dẹp triệt để UI khi chết ở item cuối cùng
+        self._cleanup_ui_after_task()
+
+    def _cleanup_ui_after_task(self):
+        """Đưa toàn bộ thanh Progress và Label hệ thống về trạng thái mặc định (Idle)"""
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        
+        if hasattr(self, 'progress_anim'):
+            self.progress_anim.stop()
+            
+        self.progress_bar.setValue(0)
+        self.page_dashboard.quick_progress.setValue(0)
+        self.ai_panel.progress_bar.setValue(0)
+        self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
+        self.page_dashboard.card_status_val.setText("Idle")
 
     def open_output_folder(self):
         out_d = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
@@ -845,6 +913,8 @@ class MainWindow(QMainWindow):
         self.ai_panel.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Đang khởi động AI Batch...")
         self.ai_panel.set_state("PROCESSING", f"Đang điền câu {start_idx + 1} - {start_idx + len(segments_for_ai)}...")
+
+        self.ai_panel.lbl_batch_stat.setText(f"Batch Progress: Đang xử lý {len(segments_for_ai)} segments...")
 
         self.is_cancelled_flag = False
         self.start_btn.setEnabled(False)
@@ -883,6 +953,9 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.ai_panel.set_state("COMPLETED", "Điền chữ hoàn tất!")
+
+        # [CHÈN VỊ TRÍ 3.2 TẠI ĐÂY]
+        self.ai_panel.lbl_batch_stat.setText(f"Batch Progress: Hoàn tất {len(filled_segments)} segments")
         
         # [FIX] Đưa thanh tiến độ về 0 sau 2.5 giây thay vì kẹt 100% vĩnh viễn
         self.progress_bar.setValue(100)
@@ -999,6 +1072,33 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
         elif hasattr(self, 'queue_mgr') and self.queue_mgr.active_vid:
             self.start_processing()
+
+    def _continue_draft_from_center(self, draft_path):
+        """Nạp Draft, tự động chọn và cuộn tới dòng trống đầu tiên để người dùng chủ động chạy."""
+        # [FIX] Đặt silent=True để triệt tiêu Toast "Đã nạp bản nháp", chống đè thông báo
+        if not self._load_draft_from_center(draft_path, silent=True):
+            return
+
+        # Quét tìm vị trí câu trống đầu tiên (rỗng hoặc mang placeholder)
+        start_idx = None
+        for i, seg in enumerate(self.sub_editor.all_segments):
+            text = str(seg.get('text', '')).strip()
+            if not text or text == "[ Chưa có nội dung ]":
+                start_idx = i
+                break
+                
+        if start_idx is None:
+            Toast.show_success(self, "Bản nháp này đã hoàn tất 100% nội dung.")
+            return
+
+        # Cuộn và chọn dòng trống để người dùng dễ quan sát
+        if self.sub_editor.table.rowCount() > start_idx:
+            item = self.sub_editor.table.item(start_idx, 0)
+            if item:
+                self.sub_editor.table.scrollToItem(item)
+                self.sub_editor.table.selectRow(start_idx)
+
+        Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
 
 if __name__ == "__main__":
