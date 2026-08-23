@@ -24,6 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# Nạp Design System
+from ui.theme import Theme
+from ui.toast import Toast
+
 
 class SubtitleEditorWidget(QWidget):
     seek_requested = Signal(int)
@@ -31,17 +35,15 @@ class SubtitleEditorWidget(QWidget):
     style_changed = Signal(dict)
     preview_toggled = Signal(bool)
     live_edit_applied = Signal(list)
-    # [P2-T13] Truyền tham số: (index_bắt_đầu, số_lượng_câu)
     fill_text_requested = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.srt_path = None
         
-        # --- DATA MODEL BÊN DƯỚI GIAO DIỆN ---
         self.all_segments = []
         self.current_page = 0
-        self.group_size = 0     # 0 = Hiển thị tất cả
+        self.group_size = 0     
         self.is_rendering = False
 
         self.current_text_color = QColor("white")
@@ -51,17 +53,17 @@ class SubtitleEditorWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setStyleSheet("QSplitter::handle { background: #273247; width: 2px; }")
+        splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 1px; }}")
         
-        # ================= LỚP 1: LEFT PANEL =================
+        # ================= LỚP 1: LEFT PANEL (EDITOR) =================
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
+        left_layout.setSpacing(6)
         
         # --- THANH ĐIỀU HƯỚNG PHÂN TRANG (PAGINATION BAR) ---
         page_layout = QHBoxLayout()
-        page_layout.addWidget(QLabel("Hiển thị:", styleSheet="font-weight:bold; color:#98A2B3;"))
+        page_layout.addWidget(QLabel("Hiển thị:", styleSheet=f"font-weight:bold; color:{Theme.TEXT_MUTED};"))
         
         self.group_combo = QComboBox()
         self.group_combo.addItems(["Tất cả", "1 dòng", "5 dòng", "10 dòng", "20 dòng", "50 dòng"])
@@ -75,7 +77,7 @@ class SubtitleEditorWidget(QWidget):
         page_layout.addWidget(self.btn_prev)
         
         self.lbl_page = QLabel("1 / 1")
-        self.lbl_page.setStyleSheet("font-weight:bold; color:#35C8FF; padding: 0 10px;")
+        self.lbl_page.setStyleSheet(f"font-weight:bold; color:{Theme.CYAN}; padding: 0 10px;")
         page_layout.addWidget(self.lbl_page)
         
         self.btn_next = QPushButton("Sau ▶")
@@ -85,137 +87,120 @@ class SubtitleEditorWidget(QWidget):
         
         left_layout.addLayout(page_layout)
         
-        # --- BẢNG DỮ LIỆU ---
+        # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN) ---
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Nội dung"])
         self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 100)
-        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(1, 95)
+        self.table.setColumnWidth(2, 95)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setStyleSheet("""
-            QTableWidget { background-color: #10141F; color: #F5F7FA; gridline-color: #273247; border: 1px solid #273247; border-radius: 4px; }
-            QHeaderView::section { background-color: #161B26; color: #98A2B3; font-weight: bold; padding: 4px; border: 1px solid #273247; }
-            QTableWidget::item:selected { background-color: #35C8FF; color: #0D111A; font-weight: bold; }
+        
+        # [S6-T5] Lột xác QTableWidget
+        self.table.setShowGrid(False)  # Tắt lưới Excel
+        self.table.verticalHeader().hide() # Ẩn cột số thứ tự mặc định
+        self.table.verticalHeader().setDefaultSectionSize(40) # Mở rộng chiều cao hàng (Card feel)
+        
+        self.table.setStyleSheet(f"""
+            QTableWidget {{ 
+                background-color: {Theme.SURFACE}; 
+                color: {Theme.TEXT_PRIMARY}; 
+                border: 1px solid {Theme.BORDER}; 
+                border-radius: 6px; 
+                outline: none;
+            }}
+            QTableWidget::item {{ 
+                border-bottom: 1px solid {Theme.BG_APP}; 
+                padding: 4px; 
+            }}
+            QTableWidget::item:selected {{ 
+                background-color: {Theme.SURFACE_SOFT}; 
+                color: {Theme.CYAN}; 
+                font-weight: bold;
+                border-left: 3px solid {Theme.PRIMARY_PURPLE}; 
+            }}
+            QHeaderView::section {{ 
+                background-color: {Theme.BG_APP}; 
+                color: {Theme.TEXT_MUTED}; 
+                font-weight: bold; 
+                padding: 6px; 
+                border: none; 
+                border-bottom: 1px solid {Theme.BORDER}; 
+            }}
         """)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         left_layout.addWidget(self.table)
 
-        
-        
         # =========================================================
-        # [P2-T13, P2-T14] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE (FIX UI)
+        # [S6-T6] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE
         # =========================================================
         ai_frame = QFrame()
-        ai_frame.setStyleSheet("background-color: #1A212E; border: 1px solid #273247; border-radius: 6px;")
+        ai_frame.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 6px;")
         ai_layout = QHBoxLayout(ai_frame)
-        ai_layout.setContentsMargins(10, 6, 10, 6)
+        ai_layout.setContentsMargins(12, 8, 12, 8)
         ai_layout.setSpacing(10)
         
-        # Phần hiển thị tiến độ (Căn trái)
         self.lbl_progress = QLabel("Đã điền: 0 / 0")
-        self.lbl_progress.setStyleSheet("color: #35C8FF; font-weight: bold; font-size: 12px; border: none;")
+        self.lbl_progress.setStyleSheet(f"color: {Theme.CYAN}; font-weight: bold; font-size: 12px; border: none;")
         ai_layout.addWidget(self.lbl_progress)
         
-        # Đẩy cụm điều khiển sang bên phải để không bị chèn ép
         ai_layout.addStretch()
         
         lbl_batch = QLabel("Batch AI:")
-        lbl_batch.setStyleSheet("color: #98A2B3; font-weight: bold; border: none;")
+        lbl_batch.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
         ai_layout.addWidget(lbl_batch)
         
-        # Ô SpinBox mở rộng kích thước chuẩn
-        # Ô SpinBox mở rộng, dùng CSS Triangles để vẽ mũi tên (Không dùng SVG)
         self.spin_batch = QSpinBox()
         self.spin_batch.setRange(1, 100)
         self.spin_batch.setValue(5)
         self.spin_batch.setFixedWidth(65)
-        self.spin_batch.setStyleSheet("""
-            QSpinBox {
-                background-color: #10141F;
-                color: #F5F7FA;
-                border: 1px solid #273247;
+        self.spin_batch.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {Theme.BG_APP};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
                 border-radius: 4px;
                 padding-left: 6px;
                 padding-right: 20px;
                 min-height: 26px;
                 font-weight: bold;
-            }
-            QSpinBox:focus {
-                border: 1px solid #35C8FF;
-            }
-            QSpinBox::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 18px;
-                border-left: 1px solid #273247;
-                border-bottom: 1px solid #273247;
-                background-color: #161B26;
-                border-top-right-radius: 3px;
-            }
-            QSpinBox::up-button:hover {
-                background-color: #273247;
-            }
-            QSpinBox::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 18px;
-                border-left: 1px solid #273247;
-                background-color: #161B26;
-                border-bottom-right-radius: 3px;
-            }
-            QSpinBox::down-button:hover {
-                background-color: #273247;
-            }
-            
-            /* Kỹ thuật CSS Triangles: Dùng viền trong suốt để ép ra hình tam giác */
-            QSpinBox::up-arrow {
-                width: 0px;
-                height: 0px;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-bottom: 5px solid #98A2B3;
-                margin-top: 1px;
-            }
-            QSpinBox::up-arrow:hover {
-                border-bottom: 5px solid #FFFFFF;
-            }
-            
-            QSpinBox::down-arrow {
-                width: 0px;
-                height: 0px;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid #98A2B3;
-                margin-bottom: 1px;
-            }
-            QSpinBox::down-arrow:hover {
-                border-top: 5px solid #FFFFFF;
-            }
+            }}
+            QSpinBox:focus {{ border: 1px solid {Theme.CYAN}; }}
+            QSpinBox::up-button {{
+                subcontrol-origin: border; subcontrol-position: top right;
+                width: 18px; border-left: 1px solid {Theme.BORDER};
+                border-bottom: 1px solid {Theme.BORDER}; background-color: {Theme.SURFACE}; border-top-right-radius: 3px;
+            }}
+            QSpinBox::up-button:hover {{ background-color: {Theme.BORDER}; }}
+            QSpinBox::down-button {{
+                subcontrol-origin: border; subcontrol-position: bottom right;
+                width: 18px; border-left: 1px solid {Theme.BORDER}; background-color: {Theme.SURFACE}; border-bottom-right-radius: 3px;
+            }}
+            QSpinBox::down-button:hover {{ background-color: {Theme.BORDER}; }}
+            QSpinBox::up-arrow {{
+                width: 0px; height: 0px;
+                border-left: 4px solid transparent; border-right: 4px solid transparent;
+                border-bottom: 5px solid {Theme.TEXT_MUTED}; margin-top: 1px;
+            }}
+            QSpinBox::up-arrow:hover {{ border-bottom: 5px solid #FFFFFF; }}
+            QSpinBox::down-arrow {{
+                width: 0px; height: 0px;
+                border-left: 4px solid transparent; border-right: 4px solid transparent;
+                border-top: 5px solid {Theme.TEXT_MUTED}; margin-bottom: 1px;
+            }}
+            QSpinBox::down-arrow:hover {{ border-top: 5px solid #FFFFFF; }}
         """)
         ai_layout.addWidget(self.spin_batch)
         
-        # Nút Tiếp tục với padding rộng và trạng thái hover/disabled rõ ràng
         self.btn_continue = QPushButton("▶ Tiếp tục từ câu...")
-        self.btn_continue.setStyleSheet("""
-            QPushButton {
-                background-color: #7B61FF;
-                color: #FFFFFF;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 5px 16px;
-                min-height: 20px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #927DFF;
-            }
-            QPushButton:disabled {
-                background-color: #273247;
-                color: #667085;
-            }
+        self.btn_continue.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 5px 16px; border: none; min-height: 20px;
+            }}
+            QPushButton:hover {{ background-color: {Theme.PRIMARY_PINK}; }}
+            QPushButton:disabled {{ background-color: {Theme.SURFACE}; color: {Theme.TEXT_DISABLED}; border: 1px solid {Theme.BORDER}; }}
         """)
         self.btn_continue.clicked.connect(self.trigger_ai_fill)
         ai_layout.addWidget(self.btn_continue)
@@ -226,7 +211,7 @@ class SubtitleEditorWidget(QWidget):
         btn_layout = QHBoxLayout()
         
         self.approve_btn = QPushButton("✅ Chốt Timing")
-        self.approve_btn.setStyleSheet("background-color: #33D17A; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px;")
+        self.approve_btn.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
         self.approve_btn.clicked.connect(self.approve_timing)
         
         self.save_draft_btn = QPushButton("📦 Lưu Draft")
@@ -244,25 +229,30 @@ class SubtitleEditorWidget(QWidget):
         
         splitter.addWidget(left_panel)
         
-        # ================= LỚP 2: RIGHT PANEL (PREVIEW STYLE) =================
+        # ================= LỚP 2: RIGHT PANEL (INSPECTOR STYLE) =================
         right_panel = QFrame()
-        right_panel.setStyleSheet("background-color: #161B26; border: 1px solid #273247; border-radius: 6px;")
+        right_panel.setStyleSheet(f"background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 6px;")
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(10, 10, 10, 10)
-        right_layout.setSpacing(8) 
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(12) 
         
-        title_lbl = QLabel("🎨 Subtitle Preview")
-        title_lbl.setStyleSheet("font-weight: bold; color: #35C8FF; font-size: 13px; border: none;")
+        title_lbl = QLabel("🎨 Subtitle Inspector")
+        title_lbl.setStyleSheet(f"font-weight: bold; color: {Theme.TEXT_PRIMARY}; font-size: 14px; border: none;")
         right_layout.addWidget(title_lbl)
+
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {Theme.BORDER}; border: none;")
+        right_layout.addWidget(sep)
         
-        self.chk_preview = QCheckBox("Hiển thị Subtitle trên Video")
+        self.chk_preview = QCheckBox("Hiển thị Subtitle Overlay")
         self.chk_preview.setChecked(True)
         self.chk_preview.setStyleSheet("font-weight: bold; border: none;")
         self.chk_preview.toggled.connect(self.on_preview_toggled)
         right_layout.addWidget(self.chk_preview)
         
         font_layout = QHBoxLayout()
-        font_layout.addWidget(QLabel("Font:", styleSheet="border: none; color: #98A2B3;"))
+        font_layout.addWidget(QLabel("Font:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
         self.font_combo = QComboBox()
         for f in ["Arial", "Noto Sans JP", "Segoe UI", "Tahoma"]:
             self.font_combo.addItem(f, f)
@@ -270,33 +260,32 @@ class SubtitleEditorWidget(QWidget):
         font_layout.addWidget(self.font_combo, stretch=2)
         right_layout.addLayout(font_layout)
 
-        fix_spinbox_css = "QSpinBox { padding: 4px; min-height: 24px; }"
-        
         size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Cỡ chữ:", styleSheet="border: none; color: #98A2B3;"))
+        size_layout.addWidget(QLabel("Cỡ chữ:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
         self.size_spin = QSpinBox()
         self.size_spin.setRange(10, 100)
         self.size_spin.setValue(28)
+        self.size_spin.setStyleSheet(f"QSpinBox {{ padding: 4px; min-height: 24px; }}")
         self.size_spin.valueChanged.connect(self.emit_style)
         size_layout.addWidget(self.size_spin, stretch=2)
         right_layout.addLayout(size_layout)
         
         color_layout = QHBoxLayout()
         self.btn_text_color = QPushButton("■ Màu chữ")
-        self.btn_text_color.setStyleSheet(f"color: {self.current_text_color.name()}; font-weight: bold; background: #2B3547; border: 1px solid #4AC1FF;")
+        self.btn_text_color.setStyleSheet(f"color: {self.current_text_color.name()}; font-weight: bold; background: {Theme.BG_APP}; border: 1px solid {Theme.CYAN}; border-radius: 4px; padding: 6px;")
         self.btn_text_color.clicked.connect(self.choose_text_color)
         color_layout.addWidget(self.btn_text_color)
         
         self.btn_outline_color = QPushButton("■ Màu viền")
-        self.btn_outline_color.setStyleSheet(f"color: {self.current_outline_color.name()}; font-weight: bold; background: #FFF; border: 1px solid #273247;")
+        self.btn_outline_color.setStyleSheet(f"color: {self.current_outline_color.name()}; font-weight: bold; background: #FFFFFF; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px;")
         self.btn_outline_color.clicked.connect(self.choose_outline_color)
         color_layout.addWidget(self.btn_outline_color)
         right_layout.addLayout(color_layout)
         
         outline_layout = QHBoxLayout()
-        outline_layout.addWidget(QLabel("Độ dày viền:", styleSheet="border: none; color: #98A2B3;"))
+        outline_layout.addWidget(QLabel("Độ dày viền:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
         self.outline_spin = QSpinBox()
-        self.outline_spin.setStyleSheet(fix_spinbox_css)
+        self.outline_spin.setStyleSheet(f"QSpinBox {{ padding: 4px; min-height: 24px; }}")
         self.outline_spin.setRange(0, 10)
         self.outline_spin.setValue(2)
         self.outline_spin.valueChanged.connect(self.emit_style)
@@ -304,7 +293,7 @@ class SubtitleEditorWidget(QWidget):
         right_layout.addLayout(outline_layout)
         
         pos_layout = QHBoxLayout()
-        pos_layout.addWidget(QLabel("Vị trí:", styleSheet="border: none; color: #98A2B3;"))
+        pos_layout.addWidget(QLabel("Vị trí:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
         self.pos_combo = QComboBox()
         self.pos_combo.addItems(["Bottom", "Top", "Center"])
         self.pos_combo.currentTextChanged.connect(self.emit_style)
@@ -313,7 +302,7 @@ class SubtitleEditorWidget(QWidget):
         
         right_layout.addStretch()
         splitter.addWidget(right_panel)
-        splitter.setSizes([700, 300])
+        splitter.setSizes([750, 250])
         main_layout.addWidget(splitter)
 
     # ================= LOGIC ĐIỀU HƯỚNG PHÂN TRANG =================
@@ -375,7 +364,7 @@ class SubtitleEditorWidget(QWidget):
             text_item = QTableWidgetItem(display_text)
             
             if not seg['text'].strip():
-                text_item.setForeground(QColor("#667085"))
+                text_item.setForeground(QColor(Theme.TEXT_DISABLED))
                 font = text_item.font()
                 font.setItalic(True)
                 text_item.setFont(font)
@@ -404,7 +393,6 @@ class SubtitleEditorWidget(QWidget):
         abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
         if abs_idx >= len(self.all_segments): return
 
-        # Lấy dữ liệu cũ đề phòng user nhập sai
         old_start = self.all_segments[abs_idx]['start']
         old_end = self.all_segments[abs_idx]['end']
 
@@ -415,12 +403,11 @@ class SubtitleEditorWidget(QWidget):
 
         if it_stt and it_start and it_end and it_text:
             try:
-                # Kiểm tra Validation
                 self.time_str_to_ms(it_start.text())
                 self.time_str_to_ms(it_end.text())
             except ValueError:
-                QMessageBox.warning(self, "Lỗi định dạng", "Timestamp không hợp lệ.\nVui lòng nhập đúng chuẩn: HH:MM:SS,mmm")
-                # Block signal để revert giá trị không gây đệ quy
+                # [S6-FIX] Dùng Toast Error thay cho QMessageBox
+                Toast.show_error(self.window(), "Timestamp không hợp lệ (Chuẩn: HH:MM:SS,mmm)")
                 self.table.blockSignals(True)
                 it_start.setText(old_start)
                 it_end.setText(old_end)
@@ -523,7 +510,6 @@ class SubtitleEditorWidget(QWidget):
         from PySide6.QtWidgets import QFileDialog
         import os
         
-        # [FIX HIGH] Đảm bảo Save SRT luôn hướng tới file .srt, bảo vệ an toàn cho Draft JSON
         path = self.srt_path
         if not path or not path.endswith('.srt'):
             base = os.path.splitext(path)[0] if path else "Project"
@@ -542,13 +528,14 @@ class SubtitleEditorWidget(QWidget):
                 f.write("\n\n".join(new_blocks) + "\n")
                 
             self.srt_path = path 
-            QMessageBox.information(self, "Thành công", f"Đã xuất file SRT an toàn tại:\n{path}")
+            # [S6-FIX] Cắt ngắn đường dẫn và hiện Toast
+            file_name = os.path.basename(path)
+            Toast.show_success(self.window(), f"Đã xuất SRT: {file_name}")
             self.srt_saved.emit(self.srt_path)
         except Exception as e:
-            QMessageBox.critical(self, "Lỗi", f"Không thể lưu file SRT: {str(e)}")
+            Toast.show_error(self.window(), f"Lỗi lưu SRT: {str(e)}")
 
     def save_draft(self, silent=False):
-        """ Hợp nhất duy nhất 1 hàm save_draft. Tự động định tuyến đuôi file an toàn """
         import json
         import os
         from PySide6.QtWidgets import QFileDialog
@@ -589,12 +576,14 @@ class SubtitleEditorWidget(QWidget):
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(draft_data, f, ensure_ascii=False, indent=4)
                 
-            self.srt_path = path # Giữ Tracker bám sát file Draft cho các lượt Silent Checkpoint kế tiếp
+            self.srt_path = path
             
             if not silent:
-                QMessageBox.information(self, "Thành công", f"Đã bảo lưu Draft tại:\n{path}")
+                file_name = os.path.basename(path)
+                Toast.show_success(self.window(), f"Đã bảo lưu Draft: {file_name}")
         except Exception as e:
-            if not silent: QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")
+            if not silent: 
+                Toast.show_error(self.window(), f"Lỗi lưu Draft: {str(e)}")
 
     def load_draft_file(self, draft_path):
         import json
@@ -631,18 +620,17 @@ class SubtitleEditorWidget(QWidget):
                 ms = self.time_str_to_ms(start_item.text())
                 self.seek_requested.emit(ms)
             except ValueError:
-                # Bỏ qua thao tác Seek nếu timestamp đang bị sai định dạng
                 pass
 
     # ================= LOGIC PREVIEW STYLE =================
     def _open_color_dialog(self, initial_color, title):
         dialog = QColorDialog(initial_color, self)
         dialog.setWindowTitle(title)
-        dialog.setStyleSheet("""
-            QDialog, QColorDialog { background-color: #161B26; }
-            QLabel { color: #F5F7FA; }
-            QPushButton { background-color: #2B3547; color: #FFFFFF; border: 1px solid #273247; border-radius: 4px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #38455A; border: 1px solid #35C8FF; }
+        dialog.setStyleSheet(f"""
+            QDialog, QColorDialog {{ background-color: {Theme.SURFACE}; color: {Theme.TEXT_PRIMARY}; }}
+            QLabel {{ color: {Theme.TEXT_PRIMARY}; }}
+            QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY}; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px 12px; }}
+            QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; border: 1px solid {Theme.CYAN}; }}
         """)
         if dialog.exec(): return dialog.currentColor()
         return QColor()
@@ -651,14 +639,14 @@ class SubtitleEditorWidget(QWidget):
         color = self._open_color_dialog(self.current_text_color, "Chọn màu chữ")
         if color.isValid():
             self.current_text_color = color
-            self.btn_text_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: #2B3547; border: 1px solid #4AC1FF;")
+            self.btn_text_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: {Theme.BG_APP}; border: 1px solid {Theme.CYAN}; border-radius: 4px; padding: 6px;")
             self.emit_style()
 
     def choose_outline_color(self):
         color = self._open_color_dialog(self.current_outline_color, "Chọn màu viền")
         if color.isValid():
             self.current_outline_color = color
-            self.btn_outline_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: #FFF; border: 1px solid #273247;")
+            self.btn_outline_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: #FFFFFF; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px;")
             self.emit_style()
 
     def on_preview_toggled(self, checked):
@@ -677,20 +665,15 @@ class SubtitleEditorWidget(QWidget):
         })
 
     def approve_timing(self):
-        """ [P2-T8] Đẩy trạng thái của toàn bộ segment hiện tại sang FINAL """
         if not self.all_segments:
             return
             
         for seg in self.all_segments:
             seg['status'] = 'final'
             
-        QMessageBox.information(self, "Đã duyệt", "Đã chốt khung thời gian (Timing Approved). Trạng thái đã được chuyển sang FINAL.\nBạn có thể tiến hành chạy AI điền chữ.")
+        Toast.show_success(self.window(), "Đã chốt Timing! Sẵn sàng cho AI điền chữ.")
 
-    # =================================================================
-    # LOGIC: DRAFT RESUME / CONTINUE (P2-T14)
-    # =================================================================
     def update_draft_progress(self):
-        """ Quét trạng thái để tìm câu rỗng tiếp theo và cập nhật UI """
         if not self.all_segments:
             self.lbl_progress.setText("Trống")
             self.btn_continue.setEnabled(False)
@@ -702,7 +685,6 @@ class SubtitleEditorWidget(QWidget):
         
         self.next_empty_idx = -1
         for i, seg in enumerate(self.all_segments):
-            # Ưu tiên tìm dựa trên status hoặc text rỗng
             if not seg.get('text', '').strip() or seg.get('status') == 'timing_only':
                 self.next_empty_idx = i
                 break
@@ -716,44 +698,6 @@ class SubtitleEditorWidget(QWidget):
             self.btn_continue.setEnabled(False)
 
     def trigger_ai_fill(self):
-        """ Phát tín hiệu gọi Backend chỉ xử lý đúng Range được yêu cầu """
         if hasattr(self, 'next_empty_idx') and self.next_empty_idx != -1:
             count = self.spin_batch.value()
             self.fill_text_requested.emit(self.next_empty_idx, count)
-
-    def save_draft(self, silent=False):
-        """ Sửa lại save_draft để hỗ trợ lưu ngầm (Silent Save) sau mỗi Batch AI """
-        import json
-        from PySide6.QtWidgets import QFileDialog
-        
-        path = self.srt_path
-        if not silent or not path or not path.endswith('.ai-subtitle-draft'):
-            default_name = self.srt_path.replace('.srt', '.ai-subtitle-draft') if self.srt_path else "Project.ai-subtitle-draft"
-            path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
-            
-        if not path: return
-        
-        draft_data = {"version": 1.0, "segments": []}
-        for seg in self.all_segments:
-            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
-            current_status = seg.get('status', 'timing_only')
-            if current_status != 'final':
-                current_status = "draft" if raw_text.strip() else "timing_only"
-                
-            draft_data["segments"].append({
-                "id": seg['stt'],
-                "start_ms": self.time_str_to_ms(seg['start']),
-                "end_ms": self.time_str_to_ms(seg['end']),
-                "text": raw_text,
-                "status": current_status,
-                "metadata": seg.get('metadata', {"type": "normal"})
-            })
-            
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(draft_data, f, ensure_ascii=False, indent=4)
-            self.srt_path = path # Lưu vết đường dẫn để lần sau Silent Save
-            if not silent:
-                QMessageBox.information(self, "Thành công", f"Đã bảo lưu Draft tại:\n{path}")
-        except Exception as e:
-            if not silent: QMessageBox.critical(self, "Lỗi", f"Không thể lưu Draft: {str(e)}")
