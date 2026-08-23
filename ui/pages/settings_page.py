@@ -81,7 +81,6 @@ class SettingsCenterPage(QWidget):
         self.chk_vad = QCheckBox("Kích hoạt Silero VAD Filter")
         grid_ai.addWidget(self.chk_vad, 2, 0, 1, 2)
 
-        # Thêm vào sau chk_vad trong SettingsCenterPage
         grid_ai.addWidget(QLabel("Min Silence (ms):"), 3, 0)
         self.silence_spin = QSpinBox()
         self.silence_spin.setRange(100, 2000)
@@ -93,7 +92,7 @@ class SettingsCenterPage(QWidget):
         l_ai.addStretch()
         self.stack.addWidget(page_ai)
 
-        # Category 1: Subtitle Style
+        # Category 1: Subtitle Style & Motion
         page_sub = QWidget()
         l_sub = QVBoxLayout(page_sub)
         card_sub = QFrame()
@@ -101,6 +100,7 @@ class SettingsCenterPage(QWidget):
         grid_sub = QGridLayout(card_sub)
         grid_sub.setSpacing(10)
 
+        # Basic Style
         grid_sub.addWidget(QLabel("Font chữ mặc định:"), 0, 0)
         self.font_combo = QComboBox()
         for f in ["Arial", "Noto Sans JP", "Segoe UI", "Tahoma"]:
@@ -112,6 +112,36 @@ class SettingsCenterPage(QWidget):
         self.size_spin.setRange(12, 72)
         self.size_spin.setValue(28)
         grid_sub.addWidget(self.size_spin, 1, 1)
+
+        # Motion Controls
+        grid_sub.addWidget(QLabel("Motion Preset:"), 2, 0)
+        self.motion_preset_combo = QComboBox()
+        self.motion_preset_combo.addItem("Standard (CrossFade + Fade)", "standard")
+        self.motion_preset_combo.addItem("Minimal (Fade 120ms)", "minimal")
+        self.motion_preset_combo.addItem("Dynamic (Rise & Highlight)", "dynamic")
+        self.motion_preset_combo.addItem("Off (Tắt chuyển động)", "off")
+        grid_sub.addWidget(self.motion_preset_combo, 2, 1)
+
+        grid_sub.addWidget(QLabel("Hiệu ứng xuất hiện:"), 3, 0)
+        self.appear_combo = QComboBox()
+        self.appear_combo.addItem("Fade (Mờ dần)", "fade")
+        self.appear_combo.addItem("Rise (Trượt nhẹ lên)", "rise")
+        self.appear_combo.addItem("Instant (Tức thì)", "instant")
+        grid_sub.addWidget(self.appear_combo, 3, 1)
+
+        grid_sub.addWidget(QLabel("Hiệu ứng biến mất:"), 4, 0)
+        self.disappear_combo = QComboBox()
+        self.disappear_combo.addItem("Fade (Mờ dần)", "fade")
+        self.disappear_combo.addItem("Drop (Trượt nhẹ xuống)", "drop")
+        self.disappear_combo.addItem("Instant (Tức thì)", "instant")
+        grid_sub.addWidget(self.disappear_combo, 4, 1)
+
+        grid_sub.addWidget(QLabel("Hiệu ứng chữ:"), 5, 0)
+        self.text_effect_combo = QComboBox()
+        self.text_effect_combo.addItem("Normal (Bình thường)", "normal")
+        self.text_effect_combo.addItem("Reveal (Hiện từng chữ)", "reveal")
+        self.text_effect_combo.addItem("Highlight (Karaoke)", "highlight")
+        grid_sub.addWidget(self.text_effect_combo, 5, 1)
 
         l_sub.addWidget(card_sub)
         l_sub.addStretch()
@@ -139,8 +169,8 @@ class SettingsCenterPage(QWidget):
         card_gen = QFrame()
         card_gen.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
         l_g = QVBoxLayout(card_gen)
-        l_g.addWidget(QLabel(f"AI Subtitle Studio — Sprint 6 Architecture", styleSheet=f"color: {Theme.CYAN}; font-weight: bold;"))
-        l_g.addWidget(QLabel(f"Theme: Deep Navy Dark Mode (Standard SaaS Desktop)", styleSheet=f"color: {Theme.TEXT_MUTED};"))
+        l_g.addWidget(QLabel("AI Subtitle Studio — Sprint 6.1 Architecture", styleSheet=f"color: {Theme.CYAN}; font-weight: bold;"))
+        l_g.addWidget(QLabel("Theme: Deep Navy Dark Mode (Standard SaaS Desktop)", styleSheet=f"color: {Theme.TEXT_MUTED};"))
         l_gen.addWidget(card_gen)
         l_gen.addStretch()
         self.stack.addWidget(page_gen)
@@ -148,4 +178,4 @@ class SettingsCenterPage(QWidget):
         layout.addWidget(self.stack, stretch=1)
 
         self.nav_list.currentRowChanged.connect(self.stack.setCurrentIndex)
-        self.nav_list.setCurrentRow(0)  
+        self.nav_list.setCurrentRow(0)
