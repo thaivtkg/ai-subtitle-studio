@@ -618,14 +618,12 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Draft chưa phải SRT. Hãy mở Draft và chọn Lưu SRT (Softsub) trước khi Hardsub.")
             return
             
-        # Khóa UI an toàn, chống crash do click nhiều lần đè luồng đang chạy
         if hasattr(self, 'worker') and self.worker.isRunning():
             Toast.show_info(self, "Hệ thống đang bận xử lý, vui lòng chờ...")
             return
             
         out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
         
-        # Bật cờ hệ thống sang trạng thái Processing
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.progress_bar.setValue(0)
@@ -643,7 +641,7 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
         
-        # [FIX CRITICAL] Chuyển signal connect sang method của class để tránh bị Garbage Collector thu hồi
+        # Kết nối tín hiệu sạch, không chứa hàm lồng (nested)
         self.worker.finished_signal.connect(self._on_manual_hardsub_success)
         self.worker.error_signal.connect(self._on_manual_hardsub_error)
         self.worker.start()
@@ -651,28 +649,14 @@ class MainWindow(QMainWindow):
         # --- BỔ SUNG 2 HÀM XỬ LÝ MỚI ---
     def _on_manual_hardsub_success(self, msg, path):
         Toast.show_success(self, f"Render Hardsub xong: {path}")
-        # Đưa thanh tiến độ về 100% (màu hồng hoàn tất)
         self.progress_bar.setValue(100)
         self.page_dashboard.quick_progress.setValue(100)
-        # Kích hoạt bộ đếm thời gian: Đợi 2.5 giây sau đó tự động reset UI về 0 (Idle)
         QTimer.singleShot(2500, self._cleanup_ui_after_task)
 
     def _on_manual_hardsub_error(self, err):
+        # Chỉ hiển thị lỗi và dọn dẹp UI, TUYỆT ĐỐI không start lại worker
         Toast.show_error(self, f"Lỗi Hardsub: {err}")
         self._cleanup_ui_after_task()
-        
-        # [FIX] Đảm bảo dọn dẹp sạch sẽ thanh Progress UI khi hoàn tất hoặc gặp lỗi
-        def on_success(msg, path):
-            Toast.show_success(self, f"Render Hardsub xong: {path}")
-            self._cleanup_ui_after_task()
-            
-        def on_error(err):
-            Toast.show_error(self, f"Lỗi Hardsub: {err}")
-            self._cleanup_ui_after_task()
-            
-        self.worker.finished_signal.connect(on_success)
-        self.worker.error_signal.connect(on_error)
-        self.worker.start()
 
     def start_processing(self):
         items = self.queue_mgr.get_items()
