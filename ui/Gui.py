@@ -3,17 +3,8 @@ import re
 import subprocess
 import sys
 
-from PySide6.QtCore import (
-    QEasingCurve,
-    QObject,
-    QPoint,
-    QPropertyAnimation,
-    Qt,
-    QTimer,
-    QUrl,
-    Signal,
-)
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QObject, QPoint, QPropertyAnimation, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -32,16 +24,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.artifacts.artifact_store import ArtifactStore
 from core.Backend import is_garbage
 from core.queue_manager import QueueManager
+from core.services.project_service import ProjectService
+from core.services.workspace_service import WorkspaceService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
-from ui.animations.animation_types import (
-    SubtitleAppearMode,
-    SubtitleDisappearMode,
-    SubtitleTextEffect,
-)
-from ui.components.animated_stack import AnimatedStack
+from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.ai_panel import AIGenerationPanel
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
@@ -71,6 +61,24 @@ class StreamRedirector(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
+        self.artifact_store = ArtifactStore()
+        self.project_service = ProjectService(self.artifact_store)
+        self.workspace_service = WorkspaceService(self, self.project_service)
+
+        # Phím tắt Dự án (Gắn cờ ApplicationShortcut để chống mất Focus)
+        self.shortcut_new = QShortcut(QKeySequence("Ctrl+N"), self)
+        self.shortcut_new.setContext(Qt.ApplicationShortcut)
+        self.shortcut_new.activated.connect(self.action_new_project)
+        
+        self.shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
+        self.shortcut_open.setContext(Qt.ApplicationShortcut)
+        self.shortcut_open.activated.connect(self.action_open_project)
+
+        self.shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.shortcut_save.setContext(Qt.ApplicationShortcut)
+        self.shortcut_save.activated.connect(self.action_save_project)
+        
         self.setWindowTitle("AI Subtitle Studio")
         
         self.setMinimumSize(1280, 720)
@@ -109,9 +117,21 @@ class MainWindow(QMainWindow):
         logo_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; padding: 4px 4px 10px 4px; border: none;")
         sidebar_layout.addWidget(logo_lbl)
 
-        sidebar_layout.addWidget(QLabel("NHẬP LIỆU", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
-        sidebar_layout.addWidget(self.create_side_action_button("📂  Add Video...", self.select_videos))
-        sidebar_layout.addWidget(self.create_side_action_button("📝  Add SRT / Draft...", self.select_srt_for_video))
+        # Đổi tên nhóm và trỏ sự kiện về các hàm Project (Sprint 7)
+        sidebar_layout.addWidget(QLabel("QUẢN LÝ DỰ ÁN", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
+        
+        # Nút Tạo Dự Án 
+        btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
+        btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
+        sidebar_layout.addWidget(btn_new_project)
+        
+        # Nút Mở Dự Án 
+        sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
+        
+        # Nút Lưu Dự Án (BỔ SUNG ĐỂ DEBUG)
+        sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
+        
+        # Nút Clear Queue
         sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
 
         sidebar_layout.addWidget(QLabel("WORKFLOW SURFACES", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 8px;"))
@@ -785,6 +805,12 @@ class MainWindow(QMainWindow):
 
         # --- BỔ SUNG 2 HÀM XỬ LÝ MỚI ---
     def _on_manual_hardsub_success(self, msg, path):
+        from core.artifacts.artifact_types import ArtifactType
+        self._register_artifact(path, ArtifactType.HARDSUB, {"mode": "manual_hardsub"})
+        if getattr(self, 'project_service', None) and self.project_service.current_project:
+            self.project_service.current_project.state.export_status = "READY"
+            self.project_service.mark_dirty()
+
         Toast.show_success(self, f"Render Hardsub xong: {path}")
         self.progress_bar.setValue(100)
         self.page_dashboard.quick_progress.setValue(100)
@@ -828,18 +854,28 @@ class MainWindow(QMainWindow):
         self.on_queue_item_clicked(self.current_vid)
 
         if not current_srt:
-            # [FIX] Thêm Log thông báo cho người dùng biết hệ thống đang làm gì
             if self.ai_panel.mode_combo.currentData() == "timing":
                 self.append_log("[AI] Bắt đầu chế độ Timing Only (Chỉ trích xuất thời gian).")
                 self.append_log("[AI] Đang chạy thuật toán VAD (Silero) để phân tách giọng nói...")
                 self.append_log("[AI] Quá trình này chạy ngầm và rất nhanh, vui lòng đợi...")
+            
+            # --- [SPRINT 7] ĐIỀU HƯỚNG OUTPUT VÀO PROJECT ---
+            if getattr(self, 'project_service', None) and self.project_service.current_project:
+                # Nếu có Project, ép lưu vào thư mục artifacts của Project đó
+                worker_out_dir = os.path.join(self.project_service.project_dir, "artifacts")
+                os.makedirs(worker_out_dir, exist_ok=True)
+            else:
+                # Nếu không có Project (chế độ tự do cũ), lưu theo thanh Output bên dưới
+                worker_out_dir = self.output_dir
+            # ------------------------------------------------
+
             self.worker = WhisperWorker(
                 video_path=self.current_vid,
-                output_dir=self.output_dir,
+                output_dir=worker_out_dir, # <-- Đã thay đổi biến này
                 initial_prompt=self.ai_panel.prompt_edit.text().strip(),
                 compute_type=self.page_settings.compute_combo.currentData(),
                 use_vad=self.page_settings.chk_vad.isChecked(),
-                min_silence_ms=self.page_settings.silence_spin.value(), # [FIX MEDIUM #11]
+                min_silence_ms=self.page_settings.silence_spin.value(), 
                 model_size=self.page_settings.model_combo.currentData(),
                 generation_mode=self.ai_panel.mode_combo.currentData()
             )
@@ -878,8 +914,54 @@ class MainWindow(QMainWindow):
         self.append_log(f"[AI] {msg}")
         self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
         
+        # --- [SPRINT 7] TÍCH HỢP ARTIFACT STORE ---
+        if getattr(self, 'project_service', None) and self.project_service.current_project and srt_path and os.path.exists(srt_path):
+            import uuid
+            from datetime import datetime
+            from core.artifacts.artifact import Artifact
+            from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
+            
+            # [FIX] Phân loại Artifact ưu tiên theo Chế độ chạy (Run Mode) của AI
+            run_mode = self.ai_panel.mode_combo.currentData()
+            
+            if run_mode == "timing":
+                a_type = ArtifactType.TIMING
+            elif srt_path.endswith('.ai-subtitle-draft'):
+                a_type = ArtifactType.DRAFT
+            else:
+                a_type = ArtifactType.SUBTITLE
+                
+            # Tạo Danh thiếp (Metadata) cho file vừa sinh ra
+            artifact = Artifact(
+                artifact_id=str(uuid.uuid4()),
+                artifact_type=a_type,
+                path=srt_path,
+                created_at=datetime.now().isoformat(),
+                updated_at=datetime.now().isoformat(),
+                source_project_id=self.project_service.current_project.project_id,
+                status=ArtifactStatus.READY
+            )
+            
+            # Ghi danh vào Store và đánh dấu nó là "Hàng xịn nhất hiện tại" (Active)
+            self.artifact_store.register(artifact)
+            self.project_service.current_project.state.active_artifact_id = artifact.artifact_id
+            
+            # [FIX] Cập nhật tiến trình dự án theo tính kế thừa
+            if a_type == ArtifactType.TIMING:
+                self.project_service.current_project.state.timing_status = "READY"
+            elif a_type == ArtifactType.DRAFT:
+                self.project_service.current_project.state.timing_status = "READY" # Đã có Draft thì Timing mặc nhiên phải xong
+                self.project_service.current_project.state.text_status = "DRAFT"
+            else:
+                self.project_service.current_project.state.timing_status = "READY"
+                self.project_service.current_project.state.text_status = "READY"
+                
+            self.project_service.mark_dirty()
+            self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name} vào dữ liệu dự án.")
+        # ------------------------------------------
+        
         if self.ai_panel.mode_combo.currentData() == "timing":
-            # [FIX] Tự động nạp kết quả Timing vào Editor và Video Player
+            # Tự động nạp kết quả Timing vào Editor và Video Player
             if srt_path and os.path.exists(srt_path):
                 if srt_path.endswith('.ai-subtitle-draft'):
                     self.sub_editor.load_draft_file(srt_path)
@@ -892,7 +974,7 @@ class MainWindow(QMainWindow):
             self.process_finished("Đã tạo Timing Draft thành công!")
             return
             
-        # Kiểm tra cờ thiết lập Hardsub
+        # Kiểm tra cờ thiết lập Hardsub (Luồng cũ)
         if not self.page_settings.chk_hardsub_enable.isChecked():
             self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Chuyển sang xử lý tiếp theo...")
             self.process_next_batch_item()
@@ -902,6 +984,7 @@ class MainWindow(QMainWindow):
         dlg = HardsubConfirmDialog(self.current_vid, self)
         dlg.exec()
         if dlg.user_choice == HardsubConfirmDialog.HARDSUB:
+            # Xử lý Hardsub tự động
             out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
             self.worker = HardsubWorker(
                 video_path=self.current_vid,
@@ -920,6 +1003,12 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
 
     def on_hardsub_finished(self, msg, out_video_path):
+        from core.artifacts.artifact_types import ArtifactType
+        self._register_artifact(out_video_path, ArtifactType.HARDSUB, {"mode": "auto_queue_hardsub"})
+        if getattr(self, 'project_service', None) and self.project_service.current_project:
+            self.project_service.current_project.state.export_status = "READY"
+            self.project_service.mark_dirty()
+
         self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
         self.process_next_batch_item()
 
@@ -1138,7 +1227,6 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Vui lòng chọn thư mục lưu.")
             return
             
-        # [FIX MEDIUM #5] Bọc try-except bắt lỗi phân quyền/filesystem khi tạo thư mục
         try:
             os.makedirs(out_dir, exist_ok=True)
         except Exception as e:
@@ -1148,15 +1236,14 @@ class MainWindow(QMainWindow):
         base_name = os.path.splitext(os.path.basename(self.queue_mgr.active_vid))[0]
         exported = []
 
-        # [FIX HIGH #1] Import đúng path module của Core
         try:
             from core.subtitle_exporter import SubtitleExportService
+            from core.artifacts.artifact_types import ArtifactType
             exporter = SubtitleExportService()
         except ImportError:
             Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core. Kiểm tra lại module.")
             return
 
-        # [FIX HIGH #2] Ép kiểu từ Data Model của UI (List Dict) sang Data Model của Core (List Tuples, ms)
         subtitles_for_export = []
         for seg in self.sub_editor.all_segments:
             start_ms = self.sub_editor.time_str_to_ms(seg["start"])
@@ -1164,24 +1251,29 @@ class MainWindow(QMainWindow):
             text = seg["text"] if seg["text"] != "[ Chưa có nội dung ]" else ""
             subtitles_for_export.append((start_ms, end_ms, text))
 
-        # [FIX MEDIUM #5] Bọc try-except toàn bộ quá trình xuất file
         try:
             if self.page_export.chk_srt.isChecked():
                 path = os.path.join(out_dir, f"{base_name}.srt")
                 exporter.export_srt(subtitles_for_export, path)
+                self._register_artifact(path, ArtifactType.EXPORT, {"format": "srt"})
                 exported.append("SRT")
             
             if self.page_export.chk_vtt.isChecked():
                 path = os.path.join(out_dir, f"{base_name}.vtt")
                 exporter.export_vtt(subtitles_for_export, path)
+                self._register_artifact(path, ArtifactType.EXPORT, {"format": "vtt"})
                 exported.append("VTT")
 
             if self.page_export.chk_txt.isChecked():
                 path = os.path.join(out_dir, f"{base_name}.txt")
                 exporter.export_txt(subtitles_for_export, path)
+                self._register_artifact(path, ArtifactType.EXPORT, {"format": "txt"})
                 exported.append("TXT")
 
             if exported:
+                if getattr(self, 'project_service', None) and self.project_service.current_project:
+                    self.project_service.current_project.state.export_status = "READY"
+                    self.project_service.mark_dirty()
                 Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
             else:
                 Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
@@ -1225,6 +1317,102 @@ class MainWindow(QMainWindow):
 
         Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
+    def action_new_project(self):
+        """Mở cửa sổ tạo dự án mới"""
+        dialog = NewProjectDialog(self)
+        if dialog.exec():
+            data = dialog.get_project_data()
+            
+            # Khởi tạo thư mục gốc cho Project dựa trên tên
+            import os
+            safe_name = "".join(c if c.isalnum() else "_" for c in data["name"])
+            full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
+            
+            try:
+                # Gọi Service để tạo Project thuần dữ liệu
+                self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
+                
+                # Gọi WorkspaceService để load video và UI
+                self.workspace_service.restore_workspace()
+                
+                QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
+
+    def action_save_project(self):
+        """Lưu toàn bộ dự án hiện tại (Ctrl+S)"""
+        if not self.project_service.current_project:
+            Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
+            return
+            
+        try:
+            # 1. Chụp lại toàn bộ UI hiện tại vào RAM
+            self.workspace_service.capture_workspace()
+            
+            # 2. Xả dữ liệu nguyên tử xuống Ổ cứng
+            self.project_service.save_project()
+            
+            Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+        except Exception as e:
+            Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
+
+    def action_open_project(self):
+        """Mở một dự án đã có"""
+        project_dir = QFileDialog.getExistingDirectory(self, "Chọn Thư mục Dự án (.ai-subtitle)")
+        if not project_dir:
+            return
+            
+        try:
+            self.project_service.open_project(project_dir)
+            
+            # Khôi phục chính xác UI người dùng đã để lại lần trước
+            self.workspace_service.restore_workspace()
+            
+            # [FIX] Dùng Toast để thông báo
+            Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
+        except Exception as e:
+            Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
+
+    def _register_artifact(self, path: str, a_type, metadata: dict = None) -> None:
+        """Đăng ký tập tin vào ArtifactStore và cập nhật ProjectState (Có Log Debug)"""
+        self.append_log(f"\n[DEBUG] Đang thử đăng ký Artifact: {path}")
+        
+        if not getattr(self, 'project_service', None):
+            self.append_log("❌ [DEBUG] Lỗi: project_service chưa được khởi tạo.")
+            return
+            
+        if not self.project_service.current_project:
+            self.append_log("❌ [DEBUG] Lỗi: Không có Project nào đang mở trong RAM! (Vui lòng bấm Ctrl+O để mở Project trước khi thao tác).")
+            return
+            
+        if not path:
+            self.append_log("❌ [DEBUG] Lỗi: Đường dẫn file truyền vào bị rỗng.")
+            return
+            
+        import os
+        if not os.path.exists(path):
+            self.append_log(f"❌ [DEBUG] Lỗi: Không tìm thấy file thực tế trên ổ cứng tại: {path}")
+            return
+
+        import uuid
+        from datetime import datetime
+        from core.artifacts.artifact import Artifact
+        from core.artifacts.artifact_types import ArtifactStatus
+
+        artifact = Artifact(
+            artifact_id=str(uuid.uuid4()),
+            artifact_type=a_type,
+            path=path,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+            source_project_id=self.project_service.current_project.project_id,
+            status=ArtifactStatus.READY,
+            metadata=metadata or {}
+        )
+        self.artifact_store.register(artifact)
+        self.project_service.current_project.state.active_artifact_id = artifact.artifact_id
+        self.project_service.mark_dirty()
+        self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
 
 if __name__ == "__main__":
     # Kích hoạt chuẩn High DPI cho Windows để tránh bị mờ hoặc scale sai lệch
