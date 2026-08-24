@@ -66,32 +66,67 @@ class SubtitleController(QObject):
         except Exception as e:
             print(f"Error loading Subtitle/Draft: {e}")
 
-    def sync_position(self, ms):
-        self.last_ms = ms
-
-        if not self.subtitles or not self.start_times:
-            return
-
-        # Tìm kiếm O(log n) cực nhẹ
-        idx = bisect.bisect_right(self.start_times, ms) - 1
-
-        if idx >= 0:
-            start_ms, end_ms, text, stt = self.subtitles[idx]
-            
-            # Sửa boundary thành [start, end) để tránh overlap chính xác tại milisecond chuyển giao
-            if start_ms <= ms < end_ms:
-                if self.current_idx != idx:
-                    self.current_idx = idx
-                    display_text = text if self.is_enabled else ""
-                    self.subtitle_changed.emit(stt, start_ms, display_text)
-            else:
-                if self.current_idx != -1:
-                    self.current_idx = -1
-                    self.subtitle_cleared.emit()
+    def sync_position(self, position_ms):
+        """Đồng bộ vị trí kim thời gian và phát tín hiệu phụ đề"""
+        if not hasattr(self, 'subs') or not self.subs:
+            # Nếu dùng live_data từ Editor
+            subs_data = getattr(self, 'live_data', [])
         else:
-            if self.current_idx != -1:
-                self.current_idx = -1
-                self.subtitle_cleared.emit()
+            subs_data = self.subs
+
+        found = False
+        for item in subs_data:
+            try:
+                # 1. Trích xuất và chuẩn hóa về kiểu số nguyên int
+                if isinstance(item, dict):
+                    # Bắt an toàn cả 'start_ms' hoặc chuỗi 'start'
+                    s_ms = item.get('start_ms')
+                    if s_ms is None and 'start' in item:
+                        s_ms = self._time_to_ms(item['start'])
+                    
+                    e_ms = item.get('end_ms')
+                    if e_ms is None and 'end' in item:
+                        e_ms = self._time_to_ms(item['end'])
+                        
+                    raw_stt = item.get('stt', 0)
+                    # [FIX CRITICAL] Ép kiểu STT về int để khớp với C++ Signal
+                    stt = int(raw_stt) if str(raw_stt).isdigit() else 0
+                    text = item.get('text', '')
+                elif isinstance(item, tuple):
+                    s_ms, e_ms, text, stt = int(item[0]), int(item[1]), item[2], int(item[3])
+                else: # PySrt Object
+                    s_ms = int(item.start.ordinal)
+                    e_ms = int(item.end.ordinal)
+                    text = item.text
+                    stt = int(item.index)
+
+                # 2. Kiểm tra mốc thời gian
+                if s_ms <= position_ms <= e_ms:
+                    if self.current_stt != stt:
+                        self.current_stt = stt
+                        # Phát tín hiệu với stt và s_ms đã là int thuần túy
+                        self.subtitle_changed.emit(int(stt), int(s_ms), str(text))
+                    found = True
+                    break
+            except Exception:
+                continue
+
+        if not found and self.current_stt is not None:
+            self.current_stt = None
+            self.subtitle_cleared.emit()
+            
+    def _time_to_ms(self, time_str):
+        """Hàm phụ trợ parse chuỗi SRT sang mili-giây"""
+        try:
+            if isinstance(time_str, (int, float)):
+                return int(time_str)
+            time_str = str(time_str).replace(',', '.')
+            parts = time_str.split(':')
+            if len(parts) == 3:
+                return int(int(parts[0]) * 3600000 + int(parts[1]) * 60000 + float(parts[2]) * 1000)
+        except Exception:
+            pass
+        return 0
 
     def toggle_preview(self, state):
         self.is_enabled = state

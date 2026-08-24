@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
 
 from core.subtitle_controller import SubtitleController
 from player.subtitle_overlay import SubtitleOverlay
+from ui.animations.animation_config import SubtitleAnimationConfig
+from ui.animations.animation_types import SubtitleRenderInput
+from ui.animations.subtitle_animation_controller import SubtitleAnimationController
 
 
 class CustomGraphicsView(QGraphicsView):
@@ -89,6 +92,13 @@ class CustomGraphicsView(QGraphicsView):
 class VideoPlayerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        self.anim_config = SubtitleAnimationConfig()
+        self.anim_controller = SubtitleAnimationController(self.anim_config)
+        
+        # [FIX] Thêm biến theo dõi dòng đang được Highlight để tránh spam UI
+        self._last_highlighted_stt = None 
+        
         self.init_ui()
         self.init_player()
 
@@ -106,7 +116,7 @@ class VideoPlayerWidget(QWidget):
         self.scene.addItem(self.video_item)
 
         # 2. Subtitle Overlay (Lớp trên)
-        self.subtitle_overlay = SubtitleOverlay()
+        self.subtitle_overlay = SubtitleOverlay(controller=self.anim_controller)
         self.subtitle_overlay.setStyleSheet("background: transparent;")
 
         self.overlay_proxy = self.scene.addWidget(self.subtitle_overlay)
@@ -208,8 +218,9 @@ class VideoPlayerWidget(QWidget):
 
         self.sub_controller = SubtitleController()
         self.player.positionChanged.connect(self.sub_controller.sync_position)
-        self.sub_controller.subtitle_changed.connect(lambda stt, start, text: self.subtitle_overlay.set_subtitle(text))
-        self.sub_controller.subtitle_cleared.connect(self.subtitle_overlay.clear_subtitle)
+        
+        # [FIX CRITICAL] Đã xóa bỏ kết nối subtitle_cleared tại đây.
+        # Giao quyền quản lý hiển thị/ẩn hoàn toàn cho position_changed.
 
         self.audio_output.setVolume(0.8)
 
@@ -241,12 +252,96 @@ class VideoPlayerWidget(QWidget):
         self.slider_seek.setValue(position)
         self.update_time_label()
 
+        # [FIX BLOCKER] Đồng nhất tên cờ 'is_enabled' với SubtitleController
+        is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
+        if not is_preview_enabled:
+            self.subtitle_overlay.clear_subtitle()
+            return
+
+        # 1. LẤY DỮ LIỆU TRỰC TIẾP TỪ EDITOR BẢNG BÊN DƯỚI
+        main_window = self.window()
+        if hasattr(main_window, 'sub_editor') and hasattr(main_window.sub_editor, 'all_segments'):
+            subs = main_window.sub_editor.all_segments
+        else:
+            subs = getattr(self.sub_controller, 'subs', []) or getattr(self.sub_controller, 'live_data', [])
+
+        current_seg = None
+        
+        def parse_ms(val):
+            if isinstance(val, (int, float)): return int(val)
+            if isinstance(val, str):
+                try:
+                    val = val.replace(',', '.')
+                    parts = val.split(':')
+                    if len(parts) == 3:
+                        return int(parts[0])*3600000 + int(parts[1])*60000 + int(float(parts[2])*1000)
+                except Exception: pass
+            return 0
+
+        # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
+        for item in subs:
+            try:
+                if isinstance(item, tuple) and len(item) >= 4:
+                    start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
+                elif isinstance(item, dict):
+                    start_ms = item.get('start_ms') if 'start_ms' in item else parse_ms(item.get('start', 0))
+                    end_ms = item.get('end_ms') if 'end_ms' in item else parse_ms(item.get('end', 0))
+                    text = item.get('text', '')
+                    stt = item.get('stt', 0)
+                else: 
+                    start_ms = item.start.ordinal
+                    end_ms = item.end.ordinal
+                    text = item.text
+                    stt = item.index
+
+                # [FIX BOUNDARY] Đồng nhất ranh giới [start_ms, end_ms)
+                if start_ms <= position < end_ms:
+                    # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
+                    if text and text != "[ Chưa có nội dung ]":
+                        current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text}
+                    break
+            except Exception:
+                continue
+
+        # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
+        if current_seg:
+            stt_val = int(current_seg.get('stt', 0))
+            render_input = SubtitleRenderInput(
+                segment_id=stt_val,
+                start_ms=int(current_seg.get('start_ms', 0)),
+                end_ms=int(current_seg.get('end_ms', 0)),
+                text=str(current_seg.get('text', ''))
+            )
+            
+            visual_time = position
+            if not self.player.isPlaying() and (visual_time - render_input.start_ms < 300):
+                visual_time = render_input.start_ms + 300
+                
+            self.subtitle_overlay.update_subtitle(render_input, visual_time)
+
+            # [FIX] Kích hoạt thanh Highlight của bảng Editor
+            if self._last_highlighted_stt != stt_val:
+                self._last_highlighted_stt = stt_val
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.highlight_row_by_stt(stt_val)
+        else:
+            self.subtitle_overlay.clear_subtitle()
+            
+            # [FIX] Xóa Highlight khi kim thời gian rơi vào khoảng nghỉ (không có sub)
+            if self._last_highlighted_stt is not None:
+                self._last_highlighted_stt = None
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.clear_highlight()
+
     def duration_changed(self, duration):
         self.slider_seek.setRange(0, duration)
         self.update_time_label()
 
     def set_position(self, position):
         self.player.setPosition(position)
+        # [FIX] Ép đồng bộ giao diện phụ đề ngay lập tức nếu video đang Tạm dừng
+        if not self.player.isPlaying():
+            self.position_changed(position)
 
     def set_volume(self, volume):
         self.audio_output.setVolume(volume / 100.0)

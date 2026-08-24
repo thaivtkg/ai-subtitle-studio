@@ -3,7 +3,16 @@ import re
 import subprocess
 import sys
 
-from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer, QUrl
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +36,12 @@ from core.Backend import is_garbage
 from core.queue_manager import QueueManager
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
+from ui.animations.animation_types import (
+    SubtitleAppearMode,
+    SubtitleDisappearMode,
+    SubtitleTextEffect,
+)
+from ui.components.animated_stack import AnimatedStack
 from ui.pages.ai_panel import AIGenerationPanel
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
@@ -38,7 +53,6 @@ from ui.theme import Theme
 from ui.toast import Toast
 from utils import load_settings, save_settings
 from workers.TaskQueue import FillTextWorker, HardsubWorker, WhisperWorker
-from PySide6.QtCore import QObject, Signal
 
 
 class StreamRedirector(QObject):
@@ -115,6 +129,16 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(self.sidebar)
 
+        # --- BỔ SUNG: KHỞI TẠO SIDEBAR INDICATOR ---
+        self.sidebar_indicator = QFrame(self.sidebar)
+        self.sidebar_indicator.setFixedSize(4, 20) # Chiều cao thanh trượt
+        self.sidebar_indicator.setStyleSheet(f"background-color: {Theme.CYAN}; border-radius: 2px;")
+        
+        # Đặt Indicator trôi nổi (Float), không đưa vào Layout
+        self.indicator_anim = QPropertyAnimation(self.sidebar_indicator, b"pos")
+        self.indicator_anim.setDuration(160)
+        self.indicator_anim.setEasingCurve(QEasingCurve.OutCubic)
+
         # ========================================================
         # 2. RIGHT WORKSPACE AREA
         # ========================================================
@@ -156,7 +180,7 @@ class MainWindow(QMainWindow):
         # ========================================================
         # 3. STACKED WIDGET (Sửa lỗi chia sẻ Widget)
         # ========================================================
-        self.stack = QStackedWidget()
+        self.stack = AnimatedStack()
 
         # Page 0: Dashboard
         self.page_dashboard = DashboardPage()
@@ -261,6 +285,10 @@ class MainWindow(QMainWindow):
 
         # Page 6 (Index 5): Settings Center
         self.page_settings = SettingsCenterPage()
+        self.page_settings.motion_preset_combo.currentIndexChanged.connect(self.on_motion_preset_changed)
+        self.page_settings.appear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
+        self.page_settings.disappear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
+        self.page_settings.text_effect_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.stack.addWidget(self.page_settings)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -378,28 +406,44 @@ class MainWindow(QMainWindow):
         return btn
 
     def switch_page(self, original_index):
-        # [S6-FIX ROUTING] Vì đã xóa Page 2 (Subtitle Editor view rỗng)
-        # Nếu bấm nút số 2 -> Trả về Workspace (Index 1) và bật tab Subtitle.
-        # Các nút từ 3 trở đi sẽ bị trừ đi 1 index để match với Stack.
-        
         target_stack_idx = original_index
         if original_index == 2:
             target_stack_idx = 1
         elif original_index > 2:
             target_stack_idx = original_index - 1
 
+        # 1. Chuyển trang với hiệu ứng CrossFade của AnimatedStack
         self.stack.setCurrentIndex(target_stack_idx)
         
         if original_index == 2:
-            self.bottom_tabs.setCurrentIndex(0) # Mở Tab Editor
+            self.bottom_tabs.setCurrentIndex(0)
             
+        # 2. Xử lý hoạt ảnh trượt của Sidebar Indicator
+        target_btn = self.nav_btns.get(original_index)
+        if target_btn:
+            # Tính toán vị trí Y để Indicator nằm giữa nút bấm
+            target_y = target_btn.y() + (target_btn.height() - self.sidebar_indicator.height()) // 2
+            target_x = 4 # Cách lề trái 4px
+            target_pos = QPoint(target_x, target_y)
+            
+            # Nếu chưa hiện thì dịch chuyển tức thì, nếu hiện rồi thì trượt mượt mà
+            if not self.sidebar_indicator.isVisible() or self.sidebar_indicator.pos() == QPoint(0,0):
+                self.sidebar_indicator.move(target_pos)
+                self.sidebar_indicator.show()
+            else:
+                self.indicator_anim.stop()
+                self.indicator_anim.setStartValue(self.sidebar_indicator.pos())
+                self.indicator_anim.setEndValue(target_pos)
+                self.indicator_anim.start()
+
+        # 3. Cập nhật CSS cho các nút (Bỏ viền border rườm rà, nhường chỗ cho Indicator)
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
-                btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.PRIMARY_PURPLE}; text-align: left; padding-left: 10px; border-radius: 6px; font-weight: bold; font-size: 12px; border: 1px solid {Theme.BORDER}; }}")
+                btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: bold; font-size: 12px; border: none; }}")
                 clean_title = re.sub(r"[^\w\s]", "", btn.text()).strip()
                 self.lbl_page_title.setText(clean_title)
             else:
-                btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 10px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+                btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
 
         if original_index == 4:
             self.page_drafts.set_directory(self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else ""))
@@ -441,6 +485,21 @@ class MainWindow(QMainWindow):
     def apply_saved_settings(self):
         s = load_settings()
         if not s: return
+        if "motion_preset" in s:
+            idx = self.page_settings.motion_preset_combo.findData(s["motion_preset"])
+            if idx >= 0: self.page_settings.motion_preset_combo.setCurrentIndex(idx)
+        if "sub_appear" in s:
+            idx = self.page_settings.appear_combo.findData(s["sub_appear"])
+            if idx >= 0: self.page_settings.appear_combo.setCurrentIndex(idx)
+        if "sub_disappear" in s:
+            idx = self.page_settings.disappear_combo.findData(s["sub_disappear"])
+            if idx >= 0: self.page_settings.disappear_combo.setCurrentIndex(idx)
+        if "text_effect" in s:
+            idx = self.page_settings.text_effect_combo.findData(s["text_effect"])
+            if idx >= 0: self.page_settings.text_effect_combo.setCurrentIndex(idx)
+
+        self.apply_motion_config_to_player()
+        
         if "output_dir" in s:
             self.out_input.setText(s["output_dir"])
             self.page_export.out_edit.setText(s["output_dir"])
@@ -465,6 +524,84 @@ class MainWindow(QMainWindow):
             if idx >= 0: self.ai_panel.mode_combo.setCurrentIndex(idx)
         if "prompt" in s:
             self.ai_panel.prompt_edit.setText(s["prompt"])
+
+    def on_motion_preset_changed(self):
+        """Tự động điều chỉnh các combo con khi người dùng chọn Preset"""
+        preset = self.page_settings.motion_preset_combo.currentData()
+        
+        # Ngắt tạm thời tín hiệu để tránh trigger lặp
+        self.page_settings.appear_combo.blockSignals(True)
+        self.page_settings.disappear_combo.blockSignals(True)
+        self.page_settings.text_effect_combo.blockSignals(True)
+
+        if preset == "minimal":
+            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("fade"))
+            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("fade"))
+            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
+        elif preset == "standard":
+            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("fade"))
+            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("fade"))
+            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
+        elif preset == "dynamic":
+            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("rise"))
+            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("drop"))
+            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("highlight"))
+        elif preset == "off":
+            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("instant"))
+            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("instant"))
+            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
+
+        self.page_settings.appear_combo.blockSignals(False)
+        self.page_settings.disappear_combo.blockSignals(False)
+        self.page_settings.text_effect_combo.blockSignals(False)
+
+        self.apply_motion_config_to_player()
+
+    def apply_motion_config_to_player(self):
+        """Cập nhật dữ liệu từ UI Settings vào SubtitleAnimationController"""
+        if not hasattr(self.video_player, 'anim_config') or not hasattr(self.video_player, 'anim_controller'):
+            return
+
+        preset = self.page_settings.motion_preset_combo.currentData()
+        appear = self.page_settings.appear_combo.currentData()
+        disappear = self.page_settings.disappear_combo.currentData()
+        effect = self.page_settings.text_effect_combo.currentData()
+
+        # Cấu hình enabled & timing theo preset
+        if preset == "off":
+            self.video_player.anim_config.enabled = False
+        else:
+            self.video_player.anim_config.enabled = True
+            self.video_player.anim_config.fade_in_ms = 120 if preset == "minimal" else (200 if preset == "dynamic" else 160)
+            self.video_player.anim_config.fade_out_ms = 120 if preset == "minimal" else (200 if preset == "dynamic" else 160)
+
+        # Ánh xạ Appear Mode
+        appear_map = {
+            "fade": SubtitleAppearMode.FADE,
+            "rise": SubtitleAppearMode.RISE,
+            "instant": SubtitleAppearMode.INSTANT,
+            "reveal": SubtitleAppearMode.REVEAL
+        }
+        self.video_player.anim_config.appear_mode = appear_map.get(appear, SubtitleAppearMode.FADE)
+
+        # Ánh xạ Disappear Mode
+        disappear_map = {
+            "fade": SubtitleDisappearMode.FADE,
+            "drop": SubtitleDisappearMode.DROP,
+            "instant": SubtitleDisappearMode.INSTANT
+        }
+        self.video_player.anim_config.disappear_mode = disappear_map.get(disappear, SubtitleDisappearMode.FADE)
+
+        # Ánh xạ Text Effect
+        effect_map = {
+            "normal": SubtitleTextEffect.NORMAL,
+            "reveal": SubtitleTextEffect.REVEAL,
+            "highlight": SubtitleTextEffect.HIGHLIGHT
+        }
+        self.video_player.anim_config.text_effect = effect_map.get(effect, SubtitleTextEffect.NORMAL)
+
+        # Đẩy config mới vào Controller
+        self.video_player.anim_controller.update_config(self.video_player.anim_config)
 
     def update_hardware_info(self):
         try:
@@ -971,7 +1108,11 @@ class MainWindow(QMainWindow):
             "font_name": self.page_settings.font_combo.currentText(),
             "font_size": self.page_settings.size_spin.value(),
             "ai_mode": self.ai_panel.mode_combo.currentData(),
-            "prompt": self.ai_panel.prompt_edit.text().strip()
+            "prompt": self.ai_panel.prompt_edit.text().strip(),
+            "motion_preset": self.page_settings.motion_preset_combo.currentData(),
+            "sub_appear": self.page_settings.appear_combo.currentData(),
+            "sub_disappear": self.page_settings.disappear_combo.currentData(),
+            "text_effect": self.page_settings.text_effect_combo.currentData()
         })
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
