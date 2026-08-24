@@ -18,14 +18,33 @@ class ProjectService:
         self.project_dir: str | None = None
 
     def _generate_fingerprint(self, video_path: str) -> SourceInfo:
-        """Tạo định danh và vân tay cho file video gốc"""
+        """Tạo định danh và vân tay cho file video gốc bằng Fast Hash (SHA-256)"""
+        import hashlib
+        
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Không tìm thấy file video nguồn: {video_path}")
         
         stat = os.stat(video_path)
         size = stat.st_size
         mtime = stat.st_mtime
-        fingerprint = f"{size}_{mtime}" # Thuật toán vân tay siêu nhẹ: Kích thước + Thời gian sửa đổi
+        
+        # [S7-FIX-04] Fast Hashing: Băm size + 1MB đầu + 1MB cuối
+        chunk_size = 1024 * 1024  # 1MB
+        hasher = hashlib.sha256()
+        hasher.update(str(size).encode('utf-8'))
+        
+        try:
+            with open(video_path, 'rb') as f:
+                # Đọc 1MB đầu tiên
+                hasher.update(f.read(chunk_size))
+                # Đọc 1MB cuối cùng (nếu file lớn hơn 1MB)
+                if size > chunk_size:
+                    f.seek(-chunk_size, os.SEEK_END)
+                    hasher.update(f.read(chunk_size))
+        except Exception as e:
+            print(f"Lỗi khi đọc file để tạo hash: {e}")
+            
+        fingerprint = hasher.hexdigest()
         
         return SourceInfo(
             path=video_path,
@@ -90,6 +109,13 @@ class ProjectService:
         # 3. Lưu workspace.json (Trạng thái UI/UX của người dùng)
         workspace_data = asdict(self.current_project.state.workspace)
         atomic_save_json(os.path.join(self.project_dir, "workspace.json"), workspace_data)
+
+        # --- [S7-FIX-01] XẢ ARTIFACT STORE XUỐNG MANIFEST.JSON ---
+        manifest_path = os.path.join(self.project_dir, "artifacts", "manifest.json")
+        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+        # Sửa self._atomic_save_json thành atomic_save_json
+        atomic_save_json(manifest_path, self.artifact_store.to_dict(self.project_dir)) 
+        # ---------------------------------------------------------
         
         self.current_project.state.dirty = False
 
@@ -107,6 +133,22 @@ class ProjectService:
             p_data = json.load(f)
             
         source_info = SourceInfo(**p_data["source"])
+
+        # --- [S7-FIX-04] KIỂM TRA TÍNH TOÀN VẸN CỦA VIDEO GỐC ---
+        video_path = source_info.path
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Không tìm thấy file video gốc tại:\n{video_path}\nVui lòng kiểm tra lại thư mục hoặc trả lại tên file cũ.")
+
+        # Băm lại file hiện tại trên đĩa và so sánh với lịch sử trong Project
+        current_source_info = self._generate_fingerprint(video_path)
+        if current_source_info.fingerprint != source_info.fingerprint:
+            raise ValueError(
+                f"File video gốc đã bị thay đổi hoặc ghi đè (Sai lệch mã Hash)!\n"
+                f"Hash gốc: {source_info.fingerprint[:8]}...\n"
+                f"Hash hiện tại: {current_source_info.fingerprint[:8]}...\n"
+                f"Không thể mở dự án để bảo vệ an toàn cho dữ liệu Timing."
+            )
+        # -------------------------------------------------------
         
         # 2. Đọc State (Nếu có)
         project_state = ProjectState()
@@ -137,7 +179,16 @@ class ProjectService:
         )
         self.project_dir = project_dir
         self.artifact_store.clear()
-        
+
+        # --- [S7-FIX-02] NẠP ARTIFACT STORE TỪ MANIFEST.JSON ---
+        manifest_path = os.path.join(self.project_dir, "artifacts", "manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                manifest_data = json.load(f)
+            self.artifact_store.from_dict(manifest_data, self.project_dir)
+        else:
+            self.artifact_store.clear()
+        # -------------------------------------------------------
         # NOTE: Sẽ load các Artifacts từ đĩa cứng vào ArtifactStore ở các Phase sau
         
         return self.current_project

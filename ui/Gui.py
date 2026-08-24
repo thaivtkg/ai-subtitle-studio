@@ -258,6 +258,9 @@ class MainWindow(QMainWindow):
             )
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
+        # --- [BỔ SUNG] Đánh dấu Project bị thay đổi (dirty) khi người dùng gõ sửa chữ ---
+        self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
+        # -------------------------------------------------------------------------------
         self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
         
         self.bottom_tabs.addTab(self.sub_editor, "📝 Inline Editor")
@@ -1199,6 +1202,31 @@ class MainWindow(QMainWindow):
                 self.ai_panel.set_state("READY", "Sẵn sàng cho tác vụ tiếp theo")   
 
     def closeEvent(self, event):
+        # --- [S7-FIX-05] BẢO VỆ VÒNG ĐỜI DỰ ÁN TRƯỚC KHI ĐÓNG ---
+        if getattr(self, 'project_service', None) and self.project_service.current_project:
+            # 1. Bắt buộc chụp lại trạng thái UI mới nhất
+            self.workspace_service.capture_workspace()
+            
+            # 2. Kiểm tra cờ dirty
+            if self.project_service.current_project.state.dirty:
+                from PySide6.QtWidgets import QMessageBox
+                reply = QMessageBox.question(
+                    self, 
+                    "Lưu thay đổi?", 
+                    f"Dự án '{self.project_service.current_project.name}' có thay đổi chưa được lưu.\nBạn có muốn lưu lại trước khi thoát không?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                    QMessageBox.Save
+                )
+                
+                if reply == QMessageBox.Save:
+                    self.action_save_project()
+                elif reply == QMessageBox.Cancel:
+                    event.ignore()  # Hủy lệnh đóng cửa sổ
+                    return
+                # Nếu chọn Discard (Không lưu), tiếp tục tiến trình đóng
+        # --------------------------------------------------------
+
+        # Lưu cài đặt ứng dụng (Settings)
         save_settings({
             "output_dir": self.out_input.text().strip(),
             "model_size": self.page_settings.model_combo.currentData(),
@@ -1209,20 +1237,21 @@ class MainWindow(QMainWindow):
             "font_name": self.page_settings.font_combo.currentText(),
             "font_size": self.page_settings.size_spin.value(),
             "ai_mode": self.ai_panel.mode_combo.currentData(),
-            "prompt": self.ai_panel.prompt_edit.text().strip(),
-            "motion_preset": self.page_settings.motion_preset_combo.currentData(),
-            "sub_appear": self.page_settings.appear_combo.currentData(),
-            "sub_disappear": self.page_settings.disappear_combo.currentData(),
-            "text_effect": self.page_settings.text_effect_combo.currentData()
+            "prompt": self.ai_panel.prompt_edit.text().strip()
         })
+        
+        # Dọn dẹp Worker đang chạy ngầm
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
+            
         try:
+            import os, subprocess
             if os.name == 'nt':
                 subprocess.Popen(["taskkill", "/f", "/im", "ffmpeg.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception:
             pass
+            
         event.accept()
         
     def _trigger_export_softsub(self):

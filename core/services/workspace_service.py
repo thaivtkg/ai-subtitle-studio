@@ -84,52 +84,43 @@ class WorkspaceService:
         except Exception as e:
             print(f"Lỗi khi khôi phục Preview Subtitle: {e}")
 
-        # 4. Phục hồi Video và vị trí thời gian (Tích hợp thông qua QueueManager)
+        # 4. Phục hồi Video và nạp Artifact qua ID (Tích hợp thông qua QueueManager)
         try:
             import os
-            # [CRITICAL FIX] Chuẩn hóa đường dẫn để tránh lỗi khác biệt gạch chéo (\ và /) trên Windows
             video_path = os.path.normpath(project.source.path)
             
             if os.path.exists(video_path):
                 if video_path not in self.ui.queue_mgr.get_items():
                     self.ui.queue_mgr.add_video(video_path)
                 
-                # --- [FIX SPRINT 7] QUÉT TÌM ARTIFACT TRONG TẤT CẢ THƯ MỤC CON ---
-                artifacts_dir = os.path.join(self.project_service.project_dir, "artifacts")
-                latest_artifact_path = None
+                # --- [S7-FIX-03] TRUY VẤN ARTIFACT TỪ KHO BẰNG ID, KHÔNG QUÉT ĐĨA ---
+                active_art_id = project.state.active_artifact_id
+                target_artifact_path = None
                 
-                if os.path.exists(artifacts_dir):
-                    valid_files = []
-                    # Dùng os.walk để quét sâu vào TẤT CẢ các thư mục con (như subtitles/, ...)
-                    for root, dirs, files in os.walk(artifacts_dir):
-                        for f in files:
-                            if f.endswith(('.srt', '.ai-subtitle-draft', '.vtt')):
-                                valid_files.append(os.path.join(root, f))
-                                
-                    if valid_files:
-                        # Lấy file mới nhất được tạo ra
-                        valid_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                        latest_artifact_path = os.path.normpath(valid_files[0])
-                        
-                        # Bơm đường dẫn file vào Queue
-                        self.ui.queue_mgr.set_srt_for_video(video_path, latest_artifact_path)
-                        print(f"[DEBUG] Đã nạp Artifact vào Queue: {latest_artifact_path}")
+                if active_art_id:
+                    artifact = self.project_service.artifact_store.get(active_art_id)
+                    if artifact and os.path.exists(artifact.path):
+                        target_artifact_path = os.path.normpath(artifact.path)
+                        self.ui.queue_mgr.set_srt_for_video(video_path, target_artifact_path)
+                        print(f"[DEBUG] Đã resolve Artifact ID {active_art_id} -> {target_artifact_path}")
+                    else:
+                        print(f"[WARN] Artifact ID '{active_art_id}' không tìm thấy trên ổ đĩa!")
                 # ------------------------------------------------------------------
 
                 # Kích hoạt UI qua Queue Manager
                 self.ui.on_queue_item_clicked(video_path)
                 
-                # [CRITICAL FIX] Ép nạp thẳng vào Editor để đề phòng QueueManager lỡ nhịp (Mất Focus)
-                if latest_artifact_path and os.path.exists(latest_artifact_path):
-                    if latest_artifact_path.endswith('.ai-subtitle-draft'):
-                        self.ui.sub_editor.load_draft_file(latest_artifact_path)
+                # Ép nạp thẳng vào Editor
+                if target_artifact_path:
+                    if target_artifact_path.endswith('.ai-subtitle-draft'):
+                        self.ui.sub_editor.load_draft_file(target_artifact_path)
                     else:
-                        self.ui.sub_editor.load_srt_file(latest_artifact_path)
+                        self.ui.sub_editor.load_srt_file(target_artifact_path)
                     
-                    self.ui.video_player.sub_controller.load_srt(latest_artifact_path)
+                    self.ui.video_player.sub_controller.load_srt(target_artifact_path)
                     print("[DEBUG] Đã ÉP nạp Artifact trực tiếp vào Inline Editor thành công!")
                 
-                # Đợi 500ms để Video nạp xong metadata, sau đó Seek đến đúng thời gian
+                # Seek video mượt mà
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(500, lambda: self._apply_video_position(workspace.playback_position_ms))
             else:
