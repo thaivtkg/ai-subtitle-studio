@@ -3,7 +3,16 @@ import re
 import subprocess
 import sys
 
-from PySide6.QtCore import QObject, QPoint, QPropertyAnimation, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -31,6 +40,9 @@ from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
+from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
+from ui.animations.subtitle_animation_controller import SubtitleTextEffect
+from ui.components.animated_stack import AnimatedStack
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.ai_panel import AIGenerationPanel
 from ui.pages.dashboard_page import DashboardPage
