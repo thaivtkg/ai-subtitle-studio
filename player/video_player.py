@@ -93,9 +93,11 @@ class VideoPlayerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # Phải khởi tạo Controller TRƯỚC KHI gọi init_ui để truyền vào Overlay
         self.anim_config = SubtitleAnimationConfig()
         self.anim_controller = SubtitleAnimationController(self.anim_config)
+        
+        # [FIX] Thêm biến theo dõi dòng đang được Highlight để tránh spam UI
+        self._last_highlighted_stt = None 
         
         self.init_ui()
         self.init_player()
@@ -250,13 +252,13 @@ class VideoPlayerWidget(QWidget):
         self.slider_seek.setValue(position)
         self.update_time_label()
 
-        is_preview_enabled = getattr(self.sub_controller, 'preview_enabled', True)
+        # [FIX BLOCKER] Đồng nhất tên cờ 'is_enabled' với SubtitleController
+        is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
         if not is_preview_enabled:
             self.subtitle_overlay.clear_subtitle()
             return
 
         # 1. LẤY DỮ LIỆU TRỰC TIẾP TỪ EDITOR BẢNG BÊN DƯỚI
-        # Tránh hoàn toàn lỗi Controller không đọc được file Draft JSON
         main_window = self.window()
         if hasattr(main_window, 'sub_editor') and hasattr(main_window.sub_editor, 'all_segments'):
             subs = main_window.sub_editor.all_segments
@@ -276,7 +278,7 @@ class VideoPlayerWidget(QWidget):
                 except Exception: pass
             return 0
 
-        # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI (Xóa bỏ +/- 1000ms gây kẹt subtitle)
+        # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
         for item in subs:
             try:
                 if isinstance(item, tuple) and len(item) >= 4:
@@ -292,7 +294,7 @@ class VideoPlayerWidget(QWidget):
                     text = item.text
                     stt = item.index
 
-                # Khớp thời gian thực, không bù trừ để Controller tự xử lý Fade In/Out trong giới hạn thời gian
+                # [FIX BOUNDARY] Đồng nhất ranh giới [start_ms, end_ms)
                 if start_ms <= position < end_ms:
                     # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
                     if text and text != "[ Chưa có nội dung ]":
@@ -301,11 +303,11 @@ class VideoPlayerWidget(QWidget):
             except Exception:
                 continue
 
-        # 3. Đẩy lên Overlay để Render Animation
+        # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
         if current_seg:
-            # Chuẩn hóa an toàn thành SubtitleRenderInput (Ép kiểu để chống lỗi Shiboken C++)
+            stt_val = int(current_seg.get('stt', 0))
             render_input = SubtitleRenderInput(
-                segment_id=int(current_seg.get('stt', 0)),
+                segment_id=stt_val,
                 start_ms=int(current_seg.get('start_ms', 0)),
                 end_ms=int(current_seg.get('end_ms', 0)),
                 text=str(current_seg.get('text', ''))
@@ -316,8 +318,20 @@ class VideoPlayerWidget(QWidget):
                 visual_time = render_input.start_ms + 300
                 
             self.subtitle_overlay.update_subtitle(render_input, visual_time)
+
+            # [FIX] Kích hoạt thanh Highlight của bảng Editor
+            if self._last_highlighted_stt != stt_val:
+                self._last_highlighted_stt = stt_val
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.highlight_row_by_stt(stt_val)
         else:
             self.subtitle_overlay.clear_subtitle()
+            
+            # [FIX] Xóa Highlight khi kim thời gian rơi vào khoảng nghỉ (không có sub)
+            if self._last_highlighted_stt is not None:
+                self._last_highlighted_stt = None
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.clear_highlight()
 
     def duration_changed(self, duration):
         self.slider_seek.setRange(0, duration)
