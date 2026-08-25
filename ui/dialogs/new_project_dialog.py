@@ -9,9 +9,10 @@ class NewProjectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tạo Dự Án Mới")
-        self.setFixedSize(500, 250)
+        self.setFixedSize(500, 260)
         self.setStyleSheet(f"background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY};")
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
         
         # 1. Tên dự án
         layout.addWidget(QLabel("Tên dự án:"))
@@ -24,8 +25,13 @@ class NewProjectDialog(QDialog):
         video_layout = QHBoxLayout()
         self.video_input = QLineEdit()
         self.video_input.setReadOnly(True)
+        
+        # [VỊ TRÍ 1] Ép độ rộng 110px cho nút Chọn File
         btn_browse_video = QPushButton("Chọn File...")
+        btn_browse_video.setFixedWidth(110)
+        btn_browse_video.setObjectName("btn_secondary")
         btn_browse_video.clicked.connect(self._browse_video)
+        
         video_layout.addWidget(self.video_input)
         video_layout.addWidget(btn_browse_video)
         layout.addLayout(video_layout)
@@ -35,19 +41,42 @@ class NewProjectDialog(QDialog):
         dir_layout = QHBoxLayout()
         self.dir_input = QLineEdit()
         self.dir_input.setReadOnly(True)
+        
+        # [VỊ TRÍ 2] Ép độ rộng 110px cho nút Chọn Thư mục
         btn_browse_dir = QPushButton("Chọn Thư mục...")
+        btn_browse_dir.setFixedWidth(110)
+        btn_browse_dir.setObjectName("btn_secondary")
         btn_browse_dir.clicked.connect(self._browse_dir)
+        
         dir_layout.addWidget(self.dir_input)
         dir_layout.addWidget(btn_browse_dir)
         layout.addLayout(dir_layout)
         
         # Nút Tạo / Hủy
         btn_layout = QHBoxLayout()
+        
+        # [VỊ TRÍ 3] CSS Hover & hiệu ứng cho nút Khởi tạo
         btn_create = QPushButton("🚀 Khởi tạo Dự án")
-        btn_create.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; padding: 8px; font-weight: bold;")
+        btn_create.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.PRIMARY_PURPLE};
+                color: #FFFFFF;
+                border-radius: 6px;
+                font-weight: bold;
+                padding: 8px 16px;
+                border: 1px solid transparent;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.SURFACE_SOFT};
+                border: 1px solid {Theme.CYAN};
+                color: {Theme.CYAN};
+            }}
+        """)
         btn_create.clicked.connect(self._validate_and_accept)
         
         btn_cancel = QPushButton("Hủy")
+        btn_cancel.setObjectName("btn_secondary")
+        btn_cancel.setFixedWidth(80)
         btn_cancel.clicked.connect(self.reject)
         
         btn_layout.addStretch()

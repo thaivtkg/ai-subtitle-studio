@@ -78,6 +78,17 @@ class MainWindow(QMainWindow):
         self.project_service = ProjectService(self.artifact_store)
         self.workspace_service = WorkspaceService(self, self.project_service)
 
+        # --- [SPRINT 7.1] TIMING BATCH SERVICE ---
+        from core.timing.timing_batch_service import TimingBatchService
+        self.timing_service = TimingBatchService(self.project_service)
+        self.timing_service.progress_signal.connect(self.update_progress)
+        self.timing_service.log_signal.connect(self.append_log)
+        self.timing_service.batch_completed_signal.connect(self._on_timing_batch_completed)
+        self.timing_service.timing_finished_signal.connect(self._on_timing_finished)
+        self.timing_service.state_changed_signal.connect(self._on_timing_state_changed)
+        self.timing_service.error_signal.connect(self._on_timing_error)
+        # -----------------------------------------
+
         # Phím tắt Dự án (Gắn cờ ApplicationShortcut để chống mất Focus)
         self.shortcut_new = QShortcut(QKeySequence("Ctrl+N"), self)
         self.shortcut_new.setContext(Qt.ApplicationShortcut)
@@ -266,8 +277,11 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.addTab(self.sub_editor, "📝 Inline Editor")
 
         self.ai_panel = AIGenerationPanel()
-        self.ai_panel.start_requested.connect(self.start_processing)
-        self.ai_panel.cancel_requested.connect(self.cancel_processing)
+        # [S7.1] Định tuyến lại tín hiệu Nút bấm
+        self.ai_panel.start_requested.connect(self._on_ai_start_clicked)
+        self.ai_panel.continue_requested.connect(self._on_ai_continue_clicked)
+        self.ai_panel.cancel_requested.connect(self._on_ai_cancel_clicked)
+        self.ai_panel.retry_requested.connect(self._on_ai_retry_clicked)
         self.bottom_tabs.addTab(self.ai_panel, "🤖 AI Generation")
 
         self.log_box = QTextEdit()
@@ -441,6 +455,9 @@ class MainWindow(QMainWindow):
         return btn
 
     def switch_page(self, original_index):
+        # --- [FIX UX] Lưu lại vết trang hiện tại để Service dễ dàng lấy ---
+        self._active_nav_index = original_index
+        # -----------------------------------------------------------------
         target_stack_idx = original_index
         if original_index == 2:
             target_stack_idx = 1
@@ -1321,6 +1338,129 @@ class MainWindow(QMainWindow):
         except Exception as e:
             Toast.show_error(self, f"Lỗi trong quá trình ghi file: {str(e)}")
 
+    # ==========================================================
+    # [SPRINT 7.1] ĐIỀU PHỐI AI & TIMING BATCH UI
+    # ==========================================================
+    def _get_current_ai_settings(self):
+        return {
+            "model_size": self.page_settings.model_combo.currentData(),
+            "compute_type": self.page_settings.compute_combo.currentData(),
+            "use_vad": self.page_settings.chk_vad.isChecked(),
+            "min_silence_ms": self.page_settings.silence_spin.value()
+        }
+
+    def _on_ai_start_clicked(self):
+        self.setFocus() # [FIX UX] Giành lại con trỏ chuột, không cho nhảy vào ô Output
+        if self.ai_panel.mode_combo.currentData() == "timing":
+            try:
+                batch_size = int(self.ai_panel.batch_combo.currentText())
+                self.timing_service.start_timing(batch_size, self._get_current_ai_settings())
+            except Exception as e:
+                Toast.show_error(self, str(e))
+        else:
+            self.start_processing()
+
+    def _on_ai_continue_clicked(self):
+        self.setFocus()
+        try:
+            self.timing_service.continue_timing(self._get_current_ai_settings())
+        except Exception as e:
+            Toast.show_error(self, str(e))
+
+    def _on_ai_cancel_clicked(self):
+        if self.ai_panel.mode_combo.currentData() == "timing":
+            self.timing_service.cancel_timing()
+        else:
+            self.cancel_processing()
+
+    def _on_ai_retry_clicked(self):
+        if self.ai_panel.mode_combo.currentData() == "timing":
+            try:
+                self.timing_service.retry_timing(self._get_current_ai_settings())
+            except Exception as e:
+                Toast.show_error(self, str(e))
+        else:
+            self._retry_current_task()
+
+    def _on_timing_state_changed(self, status, msg):
+        self.ai_panel.set_state("PROCESSING" if status == "RUNNING" else status, msg)
+        self.page_dashboard.card_status_val.setText(status)
+        
+        # Reset Global Bottom Bar Progress
+        if status in ["READY", "IDLE", "COMPLETED", "FAILED"]:
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            self.progress_bar.setValue(0)
+            self.page_dashboard.quick_progress.setValue(0)
+        else:
+            self.start_btn.setEnabled(False)
+            self.cancel_btn.setEnabled(True)
+            
+        self.update_timing_ui_info()
+
+    def _on_timing_batch_completed(self, added_count, batch_size):
+        # Tự động nạp lại SRT vào Editor
+        project = self.project_service.current_project
+        if project and project.state.active_artifact_id:
+            art = self.project_service.artifact_store.get(project.state.active_artifact_id)
+            if art and os.path.exists(art.path):
+                if art.path.endswith('.ai-subtitle-draft'):
+                    self.sub_editor.load_draft_file(art.path)
+                else:
+                    self.sub_editor.load_srt_file(art.path)
+                self.video_player.sub_controller.load_srt(art.path)
+                
+                # Tự động cuộn đến câu cuối cùng của batch vừa sinh ra
+                last_idx = self.sub_editor.table.rowCount() - 1
+                if last_idx >= 0:
+                    item = self.sub_editor.table.item(last_idx, 0)
+                    if item:
+                        self.sub_editor.table.scrollToItem(item)
+                        self.sub_editor.table.selectRow(last_idx)
+
+        Toast.show_success(self, f"Đã hoàn thành Batch ({added_count} câu)!")
+        self.update_timing_ui_info()
+        
+        # [FIX UX] Ép thanh tiến trình đầy 100% rồi tự động reset về 0 sau 2.5 giây
+        self.progress_bar.setValue(100)
+        self.ai_panel.progress_bar.setValue(100)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2500, self._reset_progress_state_timing)
+
+    def _reset_progress_state_timing(self):
+        """Hàm phụ trợ để đưa Progress Bar về 0 sau khi ngâm 2.5 giây"""
+        project = self.project_service.current_project
+        if project and project.state.timing.status in ["IDLE", "READY", "COMPLETED"]:
+            self.progress_bar.setValue(0)
+            self.ai_panel.progress_bar.setValue(0)
+            self.page_dashboard.quick_progress.setValue(0)
+
+    def _on_timing_finished(self):
+        Toast.show_success(self, "Đã hoàn thành toàn bộ Video!")
+        self.update_timing_ui_info()
+
+    def _on_timing_error(self, err):
+        Toast.show_error(self, f"Lỗi Timing: {err}")
+        self.append_log(f"❌ [LỖI TIMING] {err}")
+        self.update_timing_ui_info()
+
+    def update_timing_ui_info(self):
+        """Cập nhật dữ liệu hiển thị (Progress, Checkpoint) lên màn hình"""
+        project = self.project_service.current_project
+        if project:
+            t_state = project.state.timing
+            chk = self.project_service.load_timing_checkpoint()
+            last_ms = chk.last_completed_end_ms if chk else 0
+            time_str = self.timing_service._ms_to_time_str(last_ms)
+            
+            info = f"Đã xong: {t_state.completed_until} câu | Tiếp theo: {t_state.next_segment_index} | Trục T: {time_str}"
+            self.ai_panel.lbl_checkpoint_info.setText(info)
+            
+            # Đồng bộ lại Dropdown 5/10/20 theo state
+            idx = self.ai_panel.batch_combo.findText(str(t_state.batch_size))
+            if idx >= 0:
+                self.ai_panel.batch_combo.setCurrentIndex(idx)
+
     def _retry_current_task(self):
         # [FIX MEDIUM #4] Khôi phục lại trạng thái và chạy lại Item vừa bị lỗi
         self.ai_panel.set_state("READY", "Đang thử lại...")
@@ -1405,9 +1545,11 @@ class MainWindow(QMainWindow):
             
         try:
             self.project_service.open_project(project_dir)
-            
-            # Khôi phục chính xác UI người dùng đã để lại lần trước
             self.workspace_service.restore_workspace()
+            
+            # --- [BỔ SUNG] Cập nhật UI Checkpoint khi load ---
+            self.update_timing_ui_info()
+            # ------------------------------------------------
             
             # [FIX] Dùng Toast để thông báo
             Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
