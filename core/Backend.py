@@ -40,10 +40,10 @@ def is_garbage(text: str) -> bool:
 
 def get_whisper_model(model_size, compute_type):
     global _cached_model, _cached_model_size
-    import torch
-    from faster_whisper import WhisperModel
-
+    import torch  
+    from faster_whisper import WhisperModel  
     from core.runtime.runtime_paths import RuntimePaths
+    from core.services.model_manager import ModelManager # <--- THÊM DÒNG NÀY
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu" and "float16" in compute_type:
@@ -51,9 +51,12 @@ def get_whisper_model(model_size, compute_type):
 
     if _cached_model is None or _cached_model_size != model_size:
         print(f"[AI] Đang nạp model {model_size} vào {device.upper()}...")
-        # <-- CHỈNH SỬA TẠI ĐÂY
+        
+        # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
+        safe_model_path = ModelManager.get_model_path_for_inference(model_size)
+        
         _cached_model = WhisperModel(
-            model_size, 
+            safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
             device=device, 
             compute_type=compute_type,
             download_root=str(RuntimePaths.get_models_dir())

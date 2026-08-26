@@ -169,6 +169,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;"))
         sidebar_layout.addWidget(self.create_nav_button("⚙  Settings Center", 6))
+        # Thêm nút Model Manager
+        sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
 
         root_layout.addWidget(self.sidebar)
 
@@ -1571,6 +1573,11 @@ class MainWindow(QMainWindow):
             Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
+
+    def action_open_model_manager(self):
+        from ui.dialogs.model_manager_dialog import ModelManagerDialog
+        dialog = ModelManagerDialog(self)
+        dialog.exec()
 
     def _register_artifact(self, path: str, a_type, metadata: dict = None) -> None:
         """Đăng ký tập tin vào ArtifactStore và cập nhật ProjectState (Có Log Debug)"""

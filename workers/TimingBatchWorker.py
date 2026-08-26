@@ -23,6 +23,7 @@ class TimingBatchWorker(QThread):
             from faster_whisper import WhisperModel
             import torch
             from core.runtime.runtime_paths import RuntimePaths
+            from core.services.model_manager import ModelManager # <--- THÊM DOAN NÀY ĐỂ SỬ DỤNG ModelManager
 
             # [TỐI ƯU HÓA HIỆU NĂNG]
             # Chỉ nạp Whisper Model vào RAM/VRAM đúng 1 lần duy nhất cho toàn bộ Batch
@@ -30,8 +31,10 @@ class TimingBatchWorker(QThread):
             compute_type = self.request.compute_type if device == "cuda" else "int8"
             
             self.log_signal.emit(f"[Batch Worker] Đang tải Model Whisper ({self.request.model_size})...")
+            # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
+            safe_model_path = ModelManager.get_model_path_for_inference(self.request.model_size)
             model = WhisperModel(
-                self.request.model_size, 
+                safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
                 device=device, 
                 compute_type=compute_type,
                 download_root=str(RuntimePaths.get_models_dir())
