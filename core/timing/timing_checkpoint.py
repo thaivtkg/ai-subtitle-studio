@@ -1,16 +1,18 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
-
+from typing import List, Optional, Dict, Any
+from core.timing.timing_batch import TimingBatch, BatchStatus
 
 @dataclass
 class TimingCheckpoint:
-    """Lưu trữ lịch sử an toàn của toàn bộ quá trình chia Batch (Lưu xuống đĩa)"""
     project_id: str
     source_fingerprint: str
     timing_artifact_id: str
     timing_revision: int
     batch_size: int
-    active_batch_id: Optional[str] = None
+    
+    # [FIX-02] Lưu trữ object active_batch thay vì chỉ là ID chuỗi
+    active_batch: Optional[Dict[str, Any]] = None 
+    
     next_segment_index: int = 1
     last_completed_end_ms: int = 0
     completed_batches: List[str] = field(default_factory=list)

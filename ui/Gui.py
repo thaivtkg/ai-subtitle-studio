@@ -1363,7 +1363,9 @@ class MainWindow(QMainWindow):
     def _on_ai_continue_clicked(self):
         self.setFocus()
         try:
-            self.timing_service.continue_timing(self._get_current_ai_settings())
+            # Lấy giá trị mới từ ô chọn
+            batch_size = int(self.ai_panel.batch_combo.currentText())
+            self.timing_service.continue_timing(batch_size, self._get_current_ai_settings())
         except Exception as e:
             Toast.show_error(self, str(e))
 
@@ -1376,7 +1378,9 @@ class MainWindow(QMainWindow):
     def _on_ai_retry_clicked(self):
         if self.ai_panel.mode_combo.currentData() == "timing":
             try:
-                self.timing_service.retry_timing(self._get_current_ai_settings())
+                # Lấy giá trị mới từ ô chọn
+                batch_size = int(self.ai_panel.batch_combo.currentText())
+                self.timing_service.retry_timing(batch_size, self._get_current_ai_settings())
             except Exception as e:
                 Toast.show_error(self, str(e))
         else:
@@ -1428,12 +1432,24 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2500, self._reset_progress_state_timing)
 
     def _reset_progress_state_timing(self):
-        """Hàm phụ trợ để đưa Progress Bar về 0 sau khi ngâm 2.5 giây"""
+        """Hàm phụ trợ để đưa Progress Bar về 0 mượt mà (hiệu ứng chạy ngược)"""
         project = self.project_service.current_project
         if project and project.state.timing.status in ["IDLE", "READY", "COMPLETED"]:
-            self.progress_bar.setValue(0)
-            self.ai_panel.progress_bar.setValue(0)
-            self.page_dashboard.quick_progress.setValue(0)
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
+            
+            # Khởi tạo nhóm hoạt ảnh để ép 3 thanh Progress chạy lùi cùng lúc
+            self._progress_anim_group = QParallelAnimationGroup(self)
+            
+            bars = [self.progress_bar, self.ai_panel.progress_bar, self.page_dashboard.quick_progress]
+            for bar in bars:
+                anim = QPropertyAnimation(bar, b"value")
+                anim.setDuration(800) # Thời gian trôi lùi: 0.8 giây
+                anim.setStartValue(100)
+                anim.setEndValue(0)
+                anim.setEasingCurve(QEasingCurve.InOutQuad) # Hiệu ứng lùi mềm mại
+                self._progress_anim_group.addAnimation(anim)
+                
+            self._progress_anim_group.start()
 
     def _on_timing_finished(self):
         Toast.show_success(self, "Đã hoàn thành toàn bộ Video!")
