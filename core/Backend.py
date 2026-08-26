@@ -4,7 +4,6 @@ import subprocess
 import torch
 from datetime import timedelta
 # from faster_whisper import WhisperModel
-from utils import resource_path
 
 _cached_model = None
 _cached_model_size = None

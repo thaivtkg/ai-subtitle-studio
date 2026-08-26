@@ -9,26 +9,36 @@ class RuntimePaths:
 
     @staticmethod
     def get_app_dir() -> Path:
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            return Path(sys._MEIPASS)
+        """Thư mục chứa file thực thi (.exe) hoặc thư mục gốc mã nguồn (Dev)"""
+        if getattr(sys, 'frozen', False):
+            # Chạy file EXE đã đóng gói
+            return Path(sys.executable).parent
+        # Chạy từ mã nguồn (Dev)
         return Path(__file__).resolve().parent.parent.parent
 
-    # --- HỆ THỐNG BINARY GÓI KÈM (TỰ ĐỘNG DÒ TÌM & FALLBACK) ---
+    @staticmethod
+    def get_internal_dir() -> Path:
+        """Thư mục chứa tài nguyên nội bộ (_internal khi build onedir, root khi dev)"""
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            return Path(sys._MEIPASS)
+        return RuntimePaths.get_app_dir()
+
+    # --- HỆ THỐNG BINARY GÓI KÈM (READ-ONLY) ---
     @staticmethod
     def get_ffmpeg_dir() -> Path:
-        return RuntimePaths.get_app_dir() / "ffmpeg"
+        # Trong PyInstaller, FFmpeg sẽ nằm ở _internal/ffmpeg/
+        return RuntimePaths.get_internal_dir() / "ffmpeg"
 
     @staticmethod
     def get_ffmpeg_exe() -> str:
         candidates = [
             RuntimePaths.get_ffmpeg_dir() / "ffmpeg.exe",
             RuntimePaths.get_ffmpeg_dir() / "bin" / "ffmpeg.exe",
-            RuntimePaths.get_app_dir() / "bin" / "ffmpeg.exe",
         ]
         for path in candidates:
             if path.exists():
                 return str(path)
-        
+                
         # Fallback tìm trong biến môi trường PATH của hệ điều hành
         system_ffmpeg = shutil.which("ffmpeg")
         if system_ffmpeg:
@@ -41,7 +51,6 @@ class RuntimePaths:
         candidates = [
             RuntimePaths.get_ffmpeg_dir() / "ffprobe.exe",
             RuntimePaths.get_ffmpeg_dir() / "bin" / "ffprobe.exe",
-            RuntimePaths.get_app_dir() / "bin" / "ffprobe.exe",
         ]
         for path in candidates:
             if path.exists():
@@ -55,30 +64,32 @@ class RuntimePaths:
 
     @staticmethod
     def get_resources_dir() -> Path:
-        return RuntimePaths.get_app_dir() / "resources"
+        return RuntimePaths.get_internal_dir() / "resources"
 
     # --- DỮ LIỆU NGƯỜI DÙNG (READ/WRITE LOCALAPPDATA) ---
     @staticmethod
     def get_user_data_dir() -> Path:
+        """Hàm Getter thuần túy, không chứa side-effect (không gọi mkdir)"""
         local_app_data = os.environ.get('LOCALAPPDATA')
         if not local_app_data:
             local_app_data = os.path.expanduser('~')
-        data_dir = Path(local_app_data) / RuntimePaths.APP_NAME
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return data_dir
+        return Path(local_app_data) / RuntimePaths.APP_NAME
 
     @staticmethod
     def get_models_dir() -> Path:
-        path = RuntimePaths.get_user_data_dir() / "models"
-        path.mkdir(exist_ok=True)
-        return path
+        return RuntimePaths.get_user_data_dir() / "models"
 
     @staticmethod
     def get_logs_dir() -> Path:
-        path = RuntimePaths.get_user_data_dir() / "logs"
-        path.mkdir(exist_ok=True)
-        return path
+        return RuntimePaths.get_user_data_dir() / "logs"
 
     @staticmethod
     def get_settings_file() -> Path:
         return RuntimePaths.get_user_data_dir() / "settings.json"
+
+    @classmethod
+    def ensure_user_data_dirs(cls):
+        """[S7.2-T18] Khởi tạo các thư mục dữ liệu cần thiết lúc khởi động ứng dụng"""
+        cls.get_user_data_dir().mkdir(parents=True, exist_ok=True)
+        cls.get_models_dir().mkdir(exist_ok=True)
+        cls.get_logs_dir().mkdir(exist_ok=True)

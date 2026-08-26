@@ -13,9 +13,10 @@ from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from core.runtime.runtime_paths import RuntimePaths
 # Import MainWindow từ thư mục ui
 from ui.Gui import MainWindow
-#from utils import resource_path
+#from utils import resource_path    
 
 
 def main():
@@ -25,12 +26,19 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     # -----------------------------------------------------------
     # Khởi tạo ứng dụng
+
+    # 0. Khởi tạo toàn bộ cấu trúc thư mục Dữ liệu Người dùng ngay khi app mở
+    RuntimePaths.ensure_user_data_dirs()
+
+    if os.name == 'nt':
+        myappid = 'aisubtitlestudio.v0.1.alpha' 
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
 
     # --- CHỈNH SỬA TẠI ĐÂY: Sử dụng RuntimePaths load icon ---
-    from core.runtime.runtime_paths import RuntimePaths
     icon_path = str(RuntimePaths.get_resources_dir() / "app_icon.ico")
-    app.setWindowIcon(QIcon(icon_path))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     # ----------------------------------------------------
 
     
