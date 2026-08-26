@@ -1,5 +1,5 @@
 #define MyAppName "AI Subtitle Studio"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.7.2"
 #define MyAppPublisher "Nguyễn Minh Thái"
 #define MyAppExeName "AI Subtitle Studio.exe"
 #define OutputDir "..\release"
