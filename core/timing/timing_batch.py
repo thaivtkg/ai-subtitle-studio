@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-
-class BatchStatus(Enum):
+class BatchStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
