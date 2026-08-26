@@ -10,7 +10,7 @@ except ImportError:
     GPUtil = None
 
 from PySide6.QtCore import QThread, Signal
-from utils import resource_path
+
 from core.output_path_service import OutputPathService
 
 # ==========================================
@@ -36,8 +36,9 @@ def get_hardware_stats():
     return f"CPU: {cpu:.0f}% | GPU: {gpu:.0f}%"
 
 def get_video_duration(video_path):
-    ffprobe_path = resource_path(os.path.join("bin", "ffprobe.exe"))
-    ffmpeg_path = resource_path(os.path.join("bin", "ffmpeg.exe"))
+    from core.runtime.runtime_paths import RuntimePaths
+    ffprobe_path = RuntimePaths.get_ffprobe_exe()
+    ffmpeg_path = RuntimePaths.get_ffmpeg_exe()
     try:
         cmd = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -57,7 +58,8 @@ def get_video_duration(video_path):
     return 0.0 
 
 def has_audio_stream(video_path):
-    ffprobe_path = resource_path(os.path.join("bin", "ffprobe.exe"))
+    from core.runtime.runtime_paths import RuntimePaths
+    ffprobe_path = RuntimePaths.get_ffprobe_exe()
     try:
         cmd = [ffprobe_path, "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", video_path]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)

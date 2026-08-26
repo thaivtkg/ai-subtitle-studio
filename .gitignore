@@ -8,3 +8,7 @@ bin/
 Backup/
 .idea/
 Output/
+ffmpeg/
+*.spec.bak
+*.py[cod]
+*.log

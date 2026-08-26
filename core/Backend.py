@@ -41,22 +41,25 @@ def is_garbage(text: str) -> bool:
 
 def get_whisper_model(model_size, compute_type):
     global _cached_model, _cached_model_size
-    import torch  
-    from faster_whisper import WhisperModel  
+    import torch
+    from faster_whisper import WhisperModel
+
+    from core.runtime.runtime_paths import RuntimePaths
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     if device == "cpu" and "float16" in compute_type:
         compute_type = "int8"
-        print("[HỆ THỐNG] Không tìm thấy CUDA, tự động chuyển về CPU (int8)")
 
     if _cached_model is None or _cached_model_size != model_size:
         print(f"[AI] Đang nạp model {model_size} vào {device.upper()}...")
-        _cached_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        # <-- CHỈNH SỬA TẠI ĐÂY
+        _cached_model = WhisperModel(
+            model_size, 
+            device=device, 
+            compute_type=compute_type,
+            download_root=str(RuntimePaths.get_models_dir())
+        )
         _cached_model_size = model_size
-    else:
-        print("[AI] Sử dụng model đã cache trong bộ nhớ.")
-
     return _cached_model
 
 # =================================================================================
@@ -282,7 +285,8 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    ffmpeg_path = resource_path(os.path.join("bin", "ffmpeg.exe"))
+    from core.runtime.runtime_paths import RuntimePaths
+    ffmpeg_path = RuntimePaths.get_ffmpeg_exe()
     
     formatted_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
     formatted_srt_path = formatted_srt_path.replace("'", r"\'")

@@ -1,9 +1,10 @@
 
 import os
 
-# Thêm 2 dòng này để chặn cảnh báo từ Hugging Face
+# Tắt cảnh báo và telemetry từ Hugging Face Hub
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["HF_HUB_VERBOSITY"] = "error"  # Chỉ in khi có lỗi thực sự
 
 import ctypes
 import sys
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 # Import MainWindow từ thư mục ui
 from ui.Gui import MainWindow
-from utils import resource_path
+#from utils import resource_path
 
 
 def main():
@@ -26,8 +27,9 @@ def main():
     # Khởi tạo ứng dụng
     app = QApplication(sys.argv)
 
-    # --- THÊM ĐOẠN CODE SET ICON CHO TOÀN BỘ APP CHẠY ---
-    icon_path = resource_path("app_icon.ico")
+    # --- CHỈNH SỬA TẠI ĐÂY: Sử dụng RuntimePaths load icon ---
+    from core.runtime.runtime_paths import RuntimePaths
+    icon_path = str(RuntimePaths.get_resources_dir() / "app_icon.ico")
     app.setWindowIcon(QIcon(icon_path))
     # ----------------------------------------------------
 

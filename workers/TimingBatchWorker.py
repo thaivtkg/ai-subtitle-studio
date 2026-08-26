@@ -41,8 +41,10 @@ class TimingBatchWorker(QThread):
             chunk_wav = os.path.join(temp_dir, f"timing_chunk_{id(self)}.wav")
             
             # Lệnh FFmpeg chỉ trích xuất đúng khung thời gian mong muốn, tiết kiệm RAM tuyệt đối
+            from core.runtime.runtime_paths import RuntimePaths
+
             cmd = [
-                "ffmpeg", "-y",
+                RuntimePaths.get_ffmpeg_exe(), "-y",
                 "-ss", str(start_sec),
                 "-t", str(duration_sec),
                 "-i", self.request.video_path,
@@ -69,7 +71,12 @@ class TimingBatchWorker(QThread):
             compute_type = self.request.compute_type if device == "cuda" else "int8"
             
             self.log_signal.emit(f"[Batch Worker] Đang tải Model Whisper ({self.request.model_size})...")
-            model = WhisperModel(self.request.model_size, device=device, compute_type=compute_type)
+            model = WhisperModel(
+                self.request.model_size, 
+                device=device, 
+                compute_type=compute_type,
+                download_root=str(RuntimePaths.get_models_dir()) 
+            )
             
             self.log_signal.emit("[Batch Worker] Đang nhận diện (Infer) âm thanh...")
             
