@@ -3,23 +3,36 @@ from typing import List, Optional
 
 @dataclass
 class WorkspaceState:
-    """Lưu trữ chính xác những gì người dùng đang làm việc (Session)"""
     active_page: str = "dashboard"
-    active_tab: str = "ai_generation"
-    selected_segment_id: Optional[int] = None
+    active_tab: str = "inline_editor"
+    selected_segment_id: Optional[str] = None
     playback_position_ms: int = 0
-    splitter_sizes: List[int] = field(default_factory=lambda: [520, 300])
     subtitle_preview_enabled: bool = True
+    splitter_sizes: list[int] = field(default_factory=lambda: [400, 200])
+
+# --- [SPRINT 7.1] TIMING STATE ---
+@dataclass
+class TimingState:
+    """Trạng thái Runtime của tiến trình Timing trong dự án"""
+    status: str = "IDLE"  # IDLE, RUNNING, COMPLETED, FAILED
+    batch_size: int = 10
+    next_segment_index: int = 1
+    completed_until: int = 0
+    timing_artifact_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+# ---------------------------------
 
 @dataclass
 class ProjectState:
-    """Lưu trữ tiến độ của dự án"""
-    timing_status: str = "EMPTY"  # EMPTY, TIMING, DRAFT, READY, FAILED
-    text_status: str = "EMPTY"
-    export_status: str = "EMPTY"
+    timing_status: str = "EMPTY"  
+    text_status: str = "EMPTY"    
+    export_status: str = "EMPTY"  
     
     active_artifact_id: Optional[str] = None
-    selected_segment_id: Optional[int] = None
+    selected_segment_id: Optional[str] = None
+    dirty: bool = False
     
     workspace: WorkspaceState = field(default_factory=WorkspaceState)
-    dirty: bool = False  # Bật thành True khi có thay đổi chưa lưu
+    
+    # [SPRINT 7.1] Nhúng TimingState
+    timing: TimingState = field(default_factory=TimingState)

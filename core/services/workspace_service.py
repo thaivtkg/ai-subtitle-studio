@@ -18,10 +18,9 @@ class WorkspaceService:
 
         # 1. Chụp trang hiện tại trên Sidebar (Dashboard, Workspace, Export...)
         try:
-            current_idx = self.ui.stack.currentIndex()
-            # Ánh xạ ngược từ Stack Index về Original Index của Sidebar
-            original_idx = current_idx + 1 if current_idx > 1 else current_idx
-            page_map = {0: "dashboard", 1: "workspace", 2: "editor", 3: "queue", 4: "draft", 5: "export"}
+            # [FIX SPRINT 7.1] Tránh dùng .currentIndex() của AnimatedStack 
+            original_idx = getattr(self.ui, '_active_nav_index', 0)
+            page_map = {0: "dashboard", 1: "workspace", 2: "editor", 3: "queue", 4: "draft", 5: "export", 6: "settings"}
             workspace.active_page = page_map.get(original_idx, "dashboard")
         except Exception as e:
             print(f"Lỗi capture trang: {e}")
