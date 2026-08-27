@@ -1,34 +1,21 @@
-import sys
-import os
 import json
-
-def resource_path(relative_path):
-    """ Lấy đường dẫn tuyệt đối tới tài nguyên, tương thích với PyInstaller """
-    try:
-        # PyInstaller tạo ra một thư mục tạm và lưu đường dẫn trong _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        # Nếu đang chạy code Python bình thường, dùng thư mục hiện tại
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'AISubtitleStudio')
-os.makedirs(app_data_dir, exist_ok=True)
-SETTINGS_FILE = os.path.join(app_data_dir, "settings.json")
+import os
+from core.runtime.runtime_paths import RuntimePaths
 
 def load_settings():
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {} # Trả về dictionary rỗng nếu chưa có file hoặc lỗi
+    settings_file = RuntimePaths.get_settings_file()
+    if not os.path.exists(settings_file):
+        return {}
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def save_settings(data):
+    settings_file = RuntimePaths.get_settings_file()
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        print(f"Lỗi khi lưu settings: {e}")
+        print(f"Lỗi lưu settings: {e}")

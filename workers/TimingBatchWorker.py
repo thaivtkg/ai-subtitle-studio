@@ -7,14 +7,8 @@ from PySide6.QtCore import QThread, Signal
 from core.timing.timing_run_request import TimingRunRequest
 
 class TimingBatchWorker(QThread):
-    """
-    [S7.1-T09] TimingBatchWorker: Cỗ máy thực thi AI theo khối (Batch)
-    Cô lập hoàn toàn khỏi UI và Project State. Chỉ nhận Request và trả về Segments.
-    """
     progress_signal = Signal(int, str)
     log_signal = Signal(str)
-    
-    # finished_signal(list_of_segments, is_end_of_source)
     finished_signal = Signal(list, bool) 
     error_signal = Signal(str)
 
@@ -26,112 +20,134 @@ class TimingBatchWorker(QThread):
     def run(self):
         chunk_wav = None
         try:
-            # 1. [S7.1-T11] Tính toán Boundary Overlap
-            # Lùi lại `overlap_ms` để bắt trọn câu nói lỡ bị cắt ngang giữa 2 batch
-            overlap = self.request.overlap_ms if self.request.start_ms > 0 else 0
-            actual_start_ms = max(0, self.request.start_ms - overlap)
-            
-            start_sec = actual_start_ms / 1000.0
-            duration_sec = self.request.max_window_ms / 1000.0
-
-            self.log_signal.emit(f"[Batch Worker] Trích xuất audio từ {start_sec:.2f}s, window tối đa {duration_sec}s...")
-
-            # 2. [S7.1-T10] Time-Range Execution (Cắt Audio siêu tốc)
-            temp_dir = tempfile.gettempdir()
-            chunk_wav = os.path.join(temp_dir, f"timing_chunk_{id(self)}.wav")
-            
-            # Lệnh FFmpeg chỉ trích xuất đúng khung thời gian mong muốn, tiết kiệm RAM tuyệt đối
-            cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(start_sec),
-                "-t", str(duration_sec),
-                "-i", self.request.video_path,
-                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                chunk_wav
-            ]
-            
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            process.communicate()
-
-            if self.is_cancelled:
-                return
-
-            if not os.path.exists(chunk_wav) or os.path.getsize(chunk_wav) < 1024:
-                self.log_signal.emit("[Batch Worker] Trích xuất trả về rỗng (Đã đến cuối video).")
-                self.finished_signal.emit([], True)
-                return
-
-            # 3. Chạy Faster-Whisper trên phân đoạn Audio
             from faster_whisper import WhisperModel
             import torch
-            
+            from core.runtime.runtime_paths import RuntimePaths
+            from core.services.model_manager import ModelManager # <--- THÊM DOAN NÀY ĐỂ SỬ DỤNG ModelManager
+
+            # [TỐI ƯU HÓA HIỆU NĂNG]
+            # Chỉ nạp Whisper Model vào RAM/VRAM đúng 1 lần duy nhất cho toàn bộ Batch
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = self.request.compute_type if device == "cuda" else "int8"
             
             self.log_signal.emit(f"[Batch Worker] Đang tải Model Whisper ({self.request.model_size})...")
-            model = WhisperModel(self.request.model_size, device=device, compute_type=compute_type)
-            
-            self.log_signal.emit("[Batch Worker] Đang nhận diện (Infer) âm thanh...")
-            
-            vad_filter = self.request.use_vad
-            vad_parameters = dict(min_silence_duration_ms=self.request.min_silence_ms) if vad_filter else None
-            
-            segments_generator, info = model.transcribe(
-                chunk_wav,
-                vad_filter=vad_filter,
-                vad_parameters=vad_parameters,
-                word_timestamps=False
+            # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
+            safe_model_path = ModelManager.get_model_path_for_inference(self.request.model_size)
+            model = WhisperModel(
+                safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
+                device=device, 
+                compute_type=compute_type,
+                download_root=str(RuntimePaths.get_models_dir())
             )
 
-            # Đánh giá xem window này đã chạm tới cuối file video gốc chưa
-            is_end_of_source = info.duration < (duration_sec - 1.0)
+            vad_filter = self.request.use_vad
+            vad_parameters = dict(min_silence_duration_ms=self.request.min_silence_ms) if vad_filter else None
 
-            raw_segments = []
-            for seg in segments_generator:
+            all_final_segments = []
+            current_start_ms = self.request.start_ms
+            is_end_of_source = False
+            
+            temp_dir = tempfile.gettempdir()
+            chunk_wav = os.path.join(temp_dir, f"timing_chunk_{id(self)}.wav")
+
+            # [S7.1-FIX-11] VÒNG LẶP TRƯỢT THỜI GIAN THÔNG MINH
+            # Liên tục trượt cửa sổ thời gian cắt audio cho đến khi lấy đủ target_count
+            while len(all_final_segments) < self.request.target_segment_count:
                 if self.is_cancelled:
                     return
-                raw_segments.append(seg)
-                self.progress_signal.emit(50, f"Đang nhận diện: {seg.end:.1f}s / {info.duration:.1f}s")
+
+                overlap = self.request.overlap_ms if current_start_ms > 0 else 0
+                actual_start_ms = max(0, current_start_ms - overlap)
                 
-                # Tối ưu: Nếu số lượng đoạn lấy được vượt quá 1.5 lần số yêu cầu -> Dừng sớm
-                if len(raw_segments) > self.request.target_segment_count * 1.5:
+                start_sec = actual_start_ms / 1000.0
+                duration_sec = self.request.max_window_ms / 1000.0
+
+                self.log_signal.emit(f"[Batch Worker] Trích xuất audio từ {start_sec:.2f}s, window {duration_sec}s...")
+
+                cmd = [
+                    RuntimePaths.get_ffmpeg_exe(), "-y",
+                    "-ss", str(start_sec),
+                    "-t", str(duration_sec),
+                    "-i", self.request.video_path,
+                    "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                    chunk_wav
+                ]
+                
+                process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                process.communicate()
+
+                if not os.path.exists(chunk_wav) or os.path.getsize(chunk_wav) < 1024:
+                    self.log_signal.emit("[Batch Worker] Trích xuất trả về rỗng (Đã đến cuối video).")
+                    is_end_of_source = True
                     break
 
-            # 4. [S7.1-T12] Dedupe & Tính toán hệ quy chiếu thời gian gốc
-            final_segments = []
-            for seg in raw_segments:
-                abs_start_ms = int(seg.start * 1000) + actual_start_ms
-                abs_end_ms = int(seg.end * 1000) + actual_start_ms
+                self.log_signal.emit("[Batch Worker] Đang nhận diện (Infer) âm thanh...")
                 
-                # [S7.1-FIX] Deduplication dựa trên Điểm kết thúc (End-Boundary)
-                # Nếu câu này kết thúc trước hoặc loanh quanh điểm nối (sai số 250ms), 
-                # nó chắc chắn là câu của Batch trước lọt vào vùng Overlap nên ta bỏ qua.
-                # Ngược lại, nếu nó lấn sâu sang vùng thời gian mới, đó là câu mới.
-                if abs_end_ms <= self.request.start_ms + 250 and self.request.start_ms > 0:
-                    continue
-                    
-                # Do đây là luồng "Timing Draft", AI không cần điền Text vào phụ đề. 
-                final_segments.append({
-                    "start_ms": abs_start_ms,
-                    "end_ms": abs_end_ms,
-                    "text": ""
-                })  
+                segments_generator, info = model.transcribe(
+                    chunk_wav,
+                    vad_filter=vad_filter,
+                    vad_parameters=vad_parameters,
+                    word_timestamps=False
+                )
 
-            # 5. [S7.1-T13] Giới hạn số lượng (Partial Result Isolation)
-            if len(final_segments) > self.request.target_segment_count:
-                final_segments = final_segments[:self.request.target_segment_count]
-                # Nếu cắt bớt segment, chắc chắn chưa phải là cuối source
+                chunk_end_of_source = info.duration < (duration_sec - 1.0)
+                raw_segments = []
+                
+                for seg in segments_generator:
+                    if self.is_cancelled:
+                        return
+                    raw_segments.append(seg)
+                    
+                    prog = int((len(all_final_segments) + len(raw_segments)) / self.request.target_segment_count * 100)
+                    self.progress_signal.emit(min(99, prog), f"Đã tìm thấy {len(all_final_segments) + len(raw_segments)}/{self.request.target_segment_count} câu...")
+                    
+                    if len(all_final_segments) + len(raw_segments) >= self.request.target_segment_count:
+                        break 
+
+                added_in_chunk = 0
+                last_end_ms_in_chunk = current_start_ms
+                
+                for seg in raw_segments:
+                    abs_start_ms = int(seg.start * 1000) + actual_start_ms
+                    abs_end_ms = int(seg.end * 1000) + actual_start_ms
+                    
+                    if abs_end_ms <= current_start_ms + 250 and current_start_ms > 0:
+                        continue
+                        
+                    all_final_segments.append({
+                        "start_ms": abs_start_ms,
+                        "end_ms": abs_end_ms,
+                        "text": ""
+                    })
+                    added_in_chunk += 1
+                    last_end_ms_in_chunk = abs_end_ms
+
+                    if len(all_final_segments) >= self.request.target_segment_count:
+                        break
+
+                if chunk_end_of_source and len(all_final_segments) < self.request.target_segment_count:
+                    is_end_of_source = True
+                    break
+                    
+                # Chống kẹt vòng lặp vô hạn ở những vùng video tĩnh lặng hoàn toàn
+                if added_in_chunk == 0:
+                    current_start_ms += int(info.duration * 1000) - self.request.overlap_ms
+                else:
+                    # Trượt cửa sổ tiến đến cuối câu phân tích vừa rồi
+                    current_start_ms = last_end_ms_in_chunk
+
+            if len(all_final_segments) > self.request.target_segment_count:
+                all_final_segments = all_final_segments[:self.request.target_segment_count]
                 is_end_of_source = False 
 
-            self.progress_signal.emit(100, "Hoàn tất Chunk.")
-            self.finished_signal.emit(final_segments, is_end_of_source)
+            self.progress_signal.emit(100, "Hoàn tất Batch.")
+            self.finished_signal.emit(all_final_segments, is_end_of_source)
 
         except Exception as e:
             self.error_signal.emit(str(e))
             print(traceback.format_exc())
             
         finally:
-            # Dọn dẹp chunk audio tạm
             if chunk_wav and os.path.exists(chunk_wav):
                 try:
                     os.remove(chunk_wav)

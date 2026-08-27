@@ -1,5 +1,5 @@
 venv/
-build/
+build/ai_subtitle_studio/
 dist/
 __pycache__/
 *.pyc
@@ -8,3 +8,8 @@ bin/
 Backup/
 .idea/
 Output/
+ffmpeg/
+*.spec.bak
+*.py[cod]
+*.log
+release/

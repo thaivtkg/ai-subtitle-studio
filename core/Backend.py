@@ -4,7 +4,6 @@ import subprocess
 import torch
 from datetime import timedelta
 # from faster_whisper import WhisperModel
-from utils import resource_path
 
 _cached_model = None
 _cached_model_size = None
@@ -43,20 +42,26 @@ def get_whisper_model(model_size, compute_type):
     global _cached_model, _cached_model_size
     import torch  
     from faster_whisper import WhisperModel  
+    from core.runtime.runtime_paths import RuntimePaths
+    from core.services.model_manager import ModelManager # <--- THÊM DÒNG NÀY
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     if device == "cpu" and "float16" in compute_type:
         compute_type = "int8"
-        print("[HỆ THỐNG] Không tìm thấy CUDA, tự động chuyển về CPU (int8)")
 
     if _cached_model is None or _cached_model_size != model_size:
         print(f"[AI] Đang nạp model {model_size} vào {device.upper()}...")
-        _cached_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        
+        # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
+        safe_model_path = ModelManager.get_model_path_for_inference(model_size)
+        
+        _cached_model = WhisperModel(
+            safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
+            device=device, 
+            compute_type=compute_type,
+            download_root=str(RuntimePaths.get_models_dir())
+        )
         _cached_model_size = model_size
-    else:
-        print("[AI] Sử dụng model đã cache trong bộ nhớ.")
-
     return _cached_model
 
 # =================================================================================
@@ -282,7 +287,8 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    ffmpeg_path = resource_path(os.path.join("bin", "ffmpeg.exe"))
+    from core.runtime.runtime_paths import RuntimePaths
+    ffmpeg_path = RuntimePaths.get_ffmpeg_exe()
     
     formatted_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
     formatted_srt_path = formatted_srt_path.replace("'", r"\'")
