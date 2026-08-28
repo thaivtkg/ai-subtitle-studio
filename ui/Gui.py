@@ -245,6 +245,29 @@ class MainWindow(QMainWindow):
         self.video_player.setMinimumHeight(200)
         self.work_splitter.addWidget(self.video_player)
 
+        # ========================================================
+        # [SPRINT 8] CHÈN TIMELINE & WAVEFORM VÀO KHU VỰC LÀM VIỆC
+        # ========================================================
+        from ui.timeline.timeline_widget import TimelineWidget
+        from core.timeline.timeline_controller import TimelineController
+        from core.timeline.timeline_integration import TimelineVideoSync
+
+        # 1. Khởi tạo và đưa Timeline vào thanh chia ngang (Nằm giữa Video và Tab Editor)
+        self.timeline_widget = TimelineWidget()
+        self.timeline_widget.setMinimumHeight(180) 
+        self.work_splitter.addWidget(self.timeline_widget)
+
+        # 2. Khởi tạo Controller điều phối Data
+        self.timeline_controller = TimelineController(self.project_service, self.timeline_widget)
+
+        # 3. Khởi tạo Cầu nối đồng bộ Video (Truyền VideoPlayerWidget vào)
+        self.video_sync = TimelineVideoSync(
+            self.video_player, 
+            self.timeline_widget, 
+            self.timeline_controller.state_manager
+        )
+        # ========================================================
+
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; border-radius: 4px; background: {Theme.SURFACE}; }}
@@ -292,7 +315,8 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.addTab(self.log_box, "📜 Live Log")
 
         self.work_splitter.addWidget(self.bottom_tabs)
-        self.work_splitter.setSizes([380, 240])
+        # Cấp không gian cho 3 thành phần: Video (~350px), Timeline (~150px), Editor (~300px)
+        self.work_splitter.setSizes([350, 150, 300])
         ws_layout.addWidget(self.work_splitter)
         
         # Đăng ký Page 1 vào Stack (Index 1)
@@ -724,15 +748,43 @@ class MainWindow(QMainWindow):
         
         if count == 0:
             self.video_player.cleanup()
+            self.timeline_widget.clear()  # <--- BỔ SUNG DÒNG NÀY
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
-            # [FIX] Đảm bảo controller xả rỗng dữ liệu cũ
             self.video_player.sub_controller.load_srt(None)
 
     def on_queue_item_clicked(self, vid_path):
         self.queue_mgr.set_active(vid_path)
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
+
+        # --- [SPRINT 8] NẠP SÓNG ÂM VÀ DỮ LIỆU TIMELINE ---
+        from core.waveform.waveform_service import WaveformService
+        import threading
+
+        def _load_waveform():
+            try:
+                # Trích xuất Sóng âm (Có thể dùng try-except để bỏ qua nếu lỗi Audio)
+                peaks = WaveformService.generate_waveform_peaks(vid_path)
+                
+                # Lấy độ dài video từ player (đợi player load xong hoặc dùng ffprobe)
+                # Tạm gán 1 khoảng an toàn (ms) để UI render, ở bản chuẩn bạn cần lấy metadata.duration_ms
+                duration_ms = self.queue_mgr.get_items()[vid_path].get('duration', 0) * 1000
+                
+                # Cập nhật lên UI qua luồng chính
+                from PySide6.QtCore import QMetaObject, Qt
+                QMetaObject.invokeMethod(self.timeline_widget, "load_project_data",
+                                         Qt.QueuedConnection,
+                                         duration_ms, 
+                                         self.sub_editor.all_segments, 
+                                         peaks)
+            except Exception as e:
+                print(f"Lỗi load Waveform: {e}")
+
+        # Chạy ngầm việc nén sóng âm để không freeze UI
+        threading.Thread(target=_load_waveform, daemon=True).start()
+        # ---------------------------------------------------
+
         if srt_path and os.path.exists(srt_path):
             if srt_path.endswith('.ai-subtitle-draft'):
                 self.sub_editor.load_draft_file(srt_path)
@@ -748,9 +800,9 @@ class MainWindow(QMainWindow):
         items = self.queue_mgr.get_items()
         if not items:
             self.video_player.cleanup()
+            self.timeline_widget.clear()  # <--- BỔ SUNG DÒNG NÀY
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
-            # [FIX] Đảm bảo controller xả rỗng dữ liệu cũ
             self.video_player.sub_controller.load_srt(None)
         elif self.queue_mgr.active_vid:
             self.on_queue_item_clicked(self.queue_mgr.active_vid)

@@ -1,4 +1,5 @@
 import os
+from PySide6.QtCore import Signal
 
 from PySide6.QtCore import QRectF, QSizeF, Qt, QUrl
 from PySide6.QtGui import QPainter
@@ -90,6 +91,7 @@ class CustomGraphicsView(QGraphicsView):
 
 
 class VideoPlayerWidget(QWidget):
+    timeline_position_changed = Signal(int)
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -332,6 +334,7 @@ class VideoPlayerWidget(QWidget):
                 self._last_highlighted_stt = None
                 if hasattr(main_window, 'sub_editor'):
                     main_window.sub_editor.clear_highlight()
+        self.timeline_position_changed.emit(position)
 
     def duration_changed(self, duration):
         self.slider_seek.setRange(0, duration)
