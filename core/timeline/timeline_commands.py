@@ -34,11 +34,18 @@ class TimelineEditCommand(ABC):
         pass
 
     def _increment_revision(self):
+        """[Fix Blocker 5] Trỏ chính xác vào Timing Artifact thay vì Active chung chung"""
         project = self.project_service.current_project
-        if project and project.state.active_artifact_id:
-            artifact = self.project_service.artifact_store.get(project.state.active_artifact_id)
-            if artifact:
-                artifact.revision += 1
+        if project:
+            try:
+                # Cố gắng lấy ID cụ thể của phiên bản Timing
+                art_id = project.state.timing.timing_artifact_id if hasattr(project.state, 'timing') else project.state.active_artifact_id
+                if art_id:
+                    artifact = self.project_service.artifact_store.get(art_id)
+                    if artifact:
+                        artifact.revision += 1
+            except Exception:
+                pass
 
     def undo(self) -> None:
         if self.snapshot and self.snapshot.before_states:

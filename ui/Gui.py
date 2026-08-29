@@ -70,9 +70,17 @@ class StreamRedirector(QObject):
 
     def flush(self):
         pass
+
 class MainWindow(QMainWindow):
+    # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
+    waveform_ready_signal = Signal(int, object) 
+
     def __init__(self):
         super().__init__()
+        
+        # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
+        self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
+
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
         self.project_service = ProjectService(self.artifact_store)
@@ -151,7 +159,7 @@ class MainWindow(QMainWindow):
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
         
-        # Nút Lưu Dự Án (BỔ SUNG ĐỂ DEBUG)
+        # Nút Lưu Dự Án
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
         
         # Nút Clear Queue
@@ -176,10 +184,9 @@ class MainWindow(QMainWindow):
 
         # --- BỔ SUNG: KHỞI TẠO SIDEBAR INDICATOR ---
         self.sidebar_indicator = QFrame(self.sidebar)
-        self.sidebar_indicator.setFixedSize(4, 20) # Chiều cao thanh trượt
+        self.sidebar_indicator.setFixedSize(4, 20) 
         self.sidebar_indicator.setStyleSheet(f"background-color: {Theme.CYAN}; border-radius: 2px;")
         
-        # Đặt Indicator trôi nổi (Float), không đưa vào Layout
         self.indicator_anim = QPropertyAnimation(self.sidebar_indicator, b"pos")
         self.indicator_anim.setDuration(160)
         self.indicator_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -253,7 +260,7 @@ class MainWindow(QMainWindow):
         from core.timeline.timeline_integration import TimelineVideoSync
         from core.timeline.timeline_data_provider import TimelineDataProvider
 
-        # 1. Khởi tạo và đưa Timeline vào thanh chia ngang (Nằm giữa Video và Tab Editor)
+        # 1. Khởi tạo và đưa Timeline vào thanh chia ngang
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.setMinimumHeight(120) 
         self.work_splitter.addWidget(self.timeline_widget)
@@ -277,7 +284,7 @@ class MainWindow(QMainWindow):
         # ========================================================
 
         self.bottom_tabs = QTabWidget()
-        self.bottom_tabs.setMinimumHeight(280)
+        self.bottom_tabs.setMinimumHeight(280) # Bảo vệ Tab không bị dẹp
         self.bottom_tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; border-radius: 4px; background: {Theme.SURFACE}; }}
             QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }}
@@ -303,15 +310,12 @@ class MainWindow(QMainWindow):
             )
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
-        # --- [BỔ SUNG] Đánh dấu Project bị thay đổi (dirty) khi người dùng gõ sửa chữ ---
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
-        # -------------------------------------------------------------------------------
         self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
         
         self.bottom_tabs.addTab(self.sub_editor, "📝 Inline Editor")
 
         self.ai_panel = AIGenerationPanel()
-        # [S7.1] Định tuyến lại tín hiệu Nút bấm
         self.ai_panel.start_requested.connect(self._on_ai_start_clicked)
         self.ai_panel.continue_requested.connect(self._on_ai_continue_clicked)
         self.ai_panel.cancel_requested.connect(self._on_ai_cancel_clicked)
@@ -324,14 +328,10 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.addTab(self.log_box, "📜 Live Log")
 
         self.work_splitter.addWidget(self.bottom_tabs)
-        # Cấp không gian cho 3 thành phần: Video (~350px), Timeline (~150px), Editor (~300px)
         self.work_splitter.setSizes([350, 120, 350])
         ws_layout.addWidget(self.work_splitter)
         
-        # Đăng ký Page 1 vào Stack (Index 1)
         self.stack.addWidget(self.page_workspace)
-
-        # [S6-FIX] Bỏ hoàn toàn Page 2 (Standalone Subtitle Editor) để tránh lỗi duplicate Widget
 
         # Page 3 (Index 2): Queue & Output
         self.page_queue = QWidget()
@@ -347,22 +347,16 @@ class MainWindow(QMainWindow):
         self.page_drafts = DraftCenterPage()
         self.page_drafts.open_draft_requested.connect(self._load_draft_from_center)
 
-        # [CHÈN VỊ TRÍ 1 TẠI ĐÂY]
-        # 1. Đồng bộ 2 chiều Batch Size giữa Inline Editor và AI Panel
         self.ai_panel.batch_spin.valueChanged.connect(self.sub_editor.spin_batch.setValue)
         self.sub_editor.spin_batch.valueChanged.connect(self.ai_panel.batch_spin.setValue)
 
-        # 2. Nối action Continue từ Draft Center
         self.page_drafts.continue_draft_requested.connect(self._continue_draft_from_center)
 
         self.stack.addWidget(self.page_drafts)
 
         # Page 5 (Index 4): Export Center
         self.page_export = ExportCenterPage()
-        # [FIX] Nối nút xuất file tới hàm xử lý đa định dạng thay vì chỉ lưu SRT của Editor
         self.page_export.export_srt_requested.connect(self._trigger_export_softsub)
-        
-        # [FIX MEDIUM #4] Kích hoạt nút Retry
         self.ai_panel.retry_requested.connect(self._retry_current_task)
         self.page_export.burn_hardsub_requested.connect(self._trigger_export_hardsub)
         self.stack.addWidget(self.page_export)
@@ -378,11 +372,10 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.stack, stretch=1)
 
         # ========================================================
-        # 4. COMPACT GLOBAL BOTTOM BAR (Chống ép dẹp - High DPI Safe)
+        # 4. COMPACT GLOBAL BOTTOM BAR 
         # ========================================================
         bottom_frame = QFrame()
         bottom_frame.setObjectName("BottomFrame")
-        # [S6-FIX] Dùng min-height để tự nở rộng nếu màn hình DPI lớn
         bottom_frame.setMinimumHeight(96)
         bottom_frame.setStyleSheet(f"#BottomFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; }}")
         bottom_layout = QVBoxLayout(bottom_frame)
@@ -453,7 +446,7 @@ class MainWindow(QMainWindow):
 
         self.stderr_redirector = StreamRedirector(sys.stderr)
         self.stderr_redirector.text_written.connect(self.append_log)
-        #sys.stderr = self.stderr_redirector
+        sys.stderr = self.stderr_redirector
 
         # 5. Initialization
         self.switch_page(0)
@@ -467,6 +460,21 @@ class MainWindow(QMainWindow):
         self.stats_timer.timeout.connect(self.update_cpu_usage)
         self.stats_timer.start(1000)
         self.sub_editor.emit_style()
+
+    # --- HÀM THỰC THI SIGNAL AN TOÀN TRÊN MAIN THREAD ---
+    def _on_waveform_ready_slot(self, duration_ms, peaks):
+        try:
+            # 3. [FIX REVIEW 1] Nạp Data Provider SAU KHI cả SRT và Sóng âm đã sẵn sàng trên Main Thread
+            self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
+            
+            self.timeline_widget.load_project_data(
+                duration_ms, 
+                self.timeline_data_provider.get_all_segments(), 
+                peaks
+            )
+            print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
+        except Exception as e:
+            print(f"[DEBUG-WAVEFORM] ❌ LỖI KHI VẼ UI: {e}")
 
     def center_on_screen(self):
         screen_geo = QApplication.primaryScreen().availableGeometry()
@@ -490,30 +498,24 @@ class MainWindow(QMainWindow):
         return btn
 
     def switch_page(self, original_index):
-        # --- [FIX UX] Lưu lại vết trang hiện tại để Service dễ dàng lấy ---
         self._active_nav_index = original_index
-        # -----------------------------------------------------------------
         target_stack_idx = original_index
         if original_index == 2:
             target_stack_idx = 1
         elif original_index > 2:
             target_stack_idx = original_index - 1
 
-        # 1. Chuyển trang với hiệu ứng CrossFade của AnimatedStack
         self.stack.setCurrentIndex(target_stack_idx)
         
         if original_index == 2:
             self.bottom_tabs.setCurrentIndex(0)
             
-        # 2. Xử lý hoạt ảnh trượt của Sidebar Indicator
         target_btn = self.nav_btns.get(original_index)
         if target_btn:
-            # Tính toán vị trí Y để Indicator nằm giữa nút bấm
             target_y = target_btn.y() + (target_btn.height() - self.sidebar_indicator.height()) // 2
-            target_x = 4 # Cách lề trái 4px
+            target_x = 4 
             target_pos = QPoint(target_x, target_y)
             
-            # Nếu chưa hiện thì dịch chuyển tức thì, nếu hiện rồi thì trượt mượt mà
             if not self.sidebar_indicator.isVisible() or self.sidebar_indicator.pos() == QPoint(0,0):
                 self.sidebar_indicator.move(target_pos)
                 self.sidebar_indicator.show()
@@ -523,7 +525,6 @@ class MainWindow(QMainWindow):
                 self.indicator_anim.setEndValue(target_pos)
                 self.indicator_anim.start()
 
-        # 3. Cập nhật CSS cho các nút (Bỏ viền border rườm rà, nhường chỗ cho Indicator)
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
                 btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: bold; font-size: 12px; border: none; }}")
@@ -613,10 +614,8 @@ class MainWindow(QMainWindow):
             self.ai_panel.prompt_edit.setText(s["prompt"])
 
     def on_motion_preset_changed(self):
-        """Tự động điều chỉnh các combo con khi người dùng chọn Preset"""
         preset = self.page_settings.motion_preset_combo.currentData()
         
-        # Ngắt tạm thời tín hiệu để tránh trigger lặp
         self.page_settings.appear_combo.blockSignals(True)
         self.page_settings.disappear_combo.blockSignals(True)
         self.page_settings.text_effect_combo.blockSignals(True)
@@ -645,7 +644,6 @@ class MainWindow(QMainWindow):
         self.apply_motion_config_to_player()
 
     def apply_motion_config_to_player(self):
-        """Cập nhật dữ liệu từ UI Settings vào SubtitleAnimationController"""
         if not hasattr(self.video_player, 'anim_config') or not hasattr(self.video_player, 'anim_controller'):
             return
 
@@ -654,7 +652,6 @@ class MainWindow(QMainWindow):
         disappear = self.page_settings.disappear_combo.currentData()
         effect = self.page_settings.text_effect_combo.currentData()
 
-        # Cấu hình enabled & timing theo preset
         if preset == "off":
             self.video_player.anim_config.enabled = False
         else:
@@ -662,7 +659,6 @@ class MainWindow(QMainWindow):
             self.video_player.anim_config.fade_in_ms = 120 if preset == "minimal" else (200 if preset == "dynamic" else 160)
             self.video_player.anim_config.fade_out_ms = 120 if preset == "minimal" else (200 if preset == "dynamic" else 160)
 
-        # Ánh xạ Appear Mode
         appear_map = {
             "fade": SubtitleAppearMode.FADE,
             "rise": SubtitleAppearMode.RISE,
@@ -671,7 +667,6 @@ class MainWindow(QMainWindow):
         }
         self.video_player.anim_config.appear_mode = appear_map.get(appear, SubtitleAppearMode.FADE)
 
-        # Ánh xạ Disappear Mode
         disappear_map = {
             "fade": SubtitleDisappearMode.FADE,
             "drop": SubtitleDisappearMode.DROP,
@@ -679,7 +674,6 @@ class MainWindow(QMainWindow):
         }
         self.video_player.anim_config.disappear_mode = disappear_map.get(disappear, SubtitleDisappearMode.FADE)
 
-        # Ánh xạ Text Effect
         effect_map = {
             "normal": SubtitleTextEffect.NORMAL,
             "reveal": SubtitleTextEffect.REVEAL,
@@ -687,7 +681,6 @@ class MainWindow(QMainWindow):
         }
         self.video_player.anim_config.text_effect = effect_map.get(effect, SubtitleTextEffect.NORMAL)
 
-        # Đẩy config mới vào Controller
         self.video_player.anim_controller.update_config(self.video_player.anim_config)
 
     def update_hardware_info(self):
@@ -757,7 +750,7 @@ class MainWindow(QMainWindow):
         
         if count == 0:
             self.video_player.cleanup()
-            self.timeline_widget.clear()  # <--- BỔ SUNG DÒNG NÀY
+            self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
@@ -767,50 +760,48 @@ class MainWindow(QMainWindow):
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
 
-        # --- [SPRINT 8] NẠP SÓNG ÂM VÀ DỮ LIỆU TIMELINE ---
+        # 1. [FIX REVIEW 1] LUÔN LOAD SRT VÀO GIAO DIỆN TRƯỚC ĐỂ TRÁNH LỖI TRỐNG DỮ LIỆU
+        if srt_path and os.path.exists(srt_path):
+            if srt_path.endswith('.ai-subtitle-draft'):
+                self.sub_editor.load_draft_file(srt_path)
+            else:
+                self.sub_editor.load_srt_file(srt_path)
+            self.video_player.sub_controller.load_srt(srt_path)
+        else:
+            self.sub_editor.all_segments.clear()
+            self.sub_editor.render_page()
+            self.video_player.sub_controller.load_srt(None)
+
+        # 2. KHỞI CHẠY LUỒNG SÓNG ÂM (Background Worker)
         from core.waveform.waveform_service import WaveformService
         import threading
 
         def _load_waveform():
+            # [FIX REVIEW 1] Luồng này giờ chỉ thuần túy xử lý audio, tuyệt đối không chạm vào UI State
+            print(f"[DEBUG-WAVEFORM] Bắt đầu nạp sóng âm cho: {vid_path}")
             try:
-                # 1. Lấy độ dài video từ QueueManager TRƯỚC (Bảo đảm an toàn)
-                duration_sec = self.queue_mgr.get_items()[vid_path].get('duration', 0)
+                video_data = self.queue_mgr.get_items().get(vid_path, {})
+                duration_sec = video_data.get('duration', 0)
                 duration_ms = int(duration_sec * 1000)
 
-                # 2. Trích xuất sóng âm trong khối try-except TÁCH BIỆT
-                # Nếu video bị lỗi FFmpeg (Packet corrupt), nó sẽ không làm sập luồng vẽ UI
                 peaks = None
                 try:
                     peaks = WaveformService.generate_waveform_peaks(vid_path)
                 except Exception as e:
-                    print(f"Cảnh báo: Không thể trích xuất sóng âm do video bị lỗi cấu trúc ({e})")
+                    print(f"[DEBUG-WAVEFORM] ❌ LỖI Trích xuất sóng âm: {e}")
 
-                # 3. Fallback thời lượng (nếu Metadata ở trên chưa quét kịp)
                 if duration_ms <= 0 and peaks is not None and len(peaks) > 0:
                     duration_ms = int((len(peaks) / 100.0) * 1000)
                 
-                # 4. Cứu cánh cuối cùng: Nếu video hỏng nặng mất cả duration, 
-                # cấp tạm một khoảng thời lượng lớn để Timeline vẫn mở ra được
                 if duration_ms <= 0:
-                    duration_ms = 3600000 # Mặc định cho 1 tiếng
+                    duration_ms = 3600000 
 
-                # 5. Bơm dữ liệu vào Data Provider trung gian
-                self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
-                
-                # 6. Đẩy dữ liệu lên Main Thread an toàn bằng QTimer
-                from PySide6.QtCore import QTimer
-                def update_ui():
-                    self.timeline_widget.load_project_data(
-                        duration_ms, 
-                        self.timeline_data_provider.get_all_segments(), 
-                        peaks
-                    )
-                QTimer.singleShot(0, update_ui)
+                # Báo cáo kết quả về Main Thread
+                self.waveform_ready_signal.emit(duration_ms, peaks)
                 
             except Exception as e:
-                print(f"Lỗi load Waveform tổng quát: {e}")
+                print(f"[DEBUG-WAVEFORM] ❌ LỖI TỔNG QUÁT LUỒNG SÓNG ÂM: {e}")
 
-        # Chạy ngầm việc nén sóng âm để không freeze UI
         threading.Thread(target=_load_waveform, daemon=True).start()
         # ---------------------------------------------------
 
@@ -825,13 +816,11 @@ class MainWindow(QMainWindow):
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
 
-        
-
     def on_queue_item_removed_handler(self, vid_path):
         items = self.queue_mgr.get_items()
         if not items:
             self.video_player.cleanup()
-            self.timeline_widget.clear()  # <--- BỔ SUNG DÒNG NÀY
+            self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
@@ -839,16 +828,13 @@ class MainWindow(QMainWindow):
             self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
     def _load_draft_from_center(self, draft_path, silent=False):
-        """Nạp chính xác file Draft vào Workspace và QueueManager mà không làm mất text."""
         if not draft_path or not os.path.exists(draft_path):
             Toast.show_error(self, "Tập tin Draft không tồn tại.")
             return False
 
-        # 1. Trích xuất tên video gốc từ tên file draft
         draft_filename = os.path.basename(draft_path)
         base_key = draft_filename.replace(".ai-subtitle-draft", "").replace("_timing", "")
         
-        # 2. Tìm video trong Queue khớp với key
         target_vid = None
         for vid in self.queue_mgr.get_items().keys():
             vid_name = os.path.splitext(os.path.basename(vid))[0]
@@ -860,20 +846,16 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, "Vui lòng nạp video gốc tương ứng vào Queue trước khi mở Draft.")
             return False
 
-        # 3. Gán file draft này làm phụ đề chính thức của video trong QueueManager
         self.queue_mgr.set_active(target_vid)
         self.queue_mgr.set_srt_for_video(target_vid, draft_path)
 
-        # 4. Load video vào Player và nạp TRỰC TIẾP file draft vào SubEditor
         self.video_player.load_video(target_vid)
         self.sub_editor.load_draft_file(draft_path)
         self.video_player.sub_controller.load_srt(draft_path)
 
-        # 5. Chuyển sang Workspace
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
         
-        # [FIX] Chỉ hiện Toast khi người dùng bấm 'Mở Editor', không hiện khi chạy qua nút 'Continue'
         if not silent:
             Toast.show_info(self, f"Đã nạp bản nháp: {draft_filename}")
         return True
@@ -915,12 +897,10 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
         
-        # Kết nối tín hiệu sạch, không chứa hàm lồng (nested)
         self.worker.finished_signal.connect(self._on_manual_hardsub_success)
         self.worker.error_signal.connect(self._on_manual_hardsub_error)
         self.worker.start()
 
-        # --- BỔ SUNG 2 HÀM XỬ LÝ MỚI ---
     def _on_manual_hardsub_success(self, msg, path):
         from core.artifacts.artifact_types import ArtifactType
         self._register_artifact(path, ArtifactType.HARDSUB, {"mode": "manual_hardsub"})
@@ -934,7 +914,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2500, self._cleanup_ui_after_task)
 
     def _on_manual_hardsub_error(self, err):
-        # Chỉ hiển thị lỗi và dọn dẹp UI, TUYỆT ĐỐI không start lại worker
         Toast.show_error(self, f"Lỗi Hardsub: {err}")
         self._cleanup_ui_after_task()
 
@@ -976,19 +955,15 @@ class MainWindow(QMainWindow):
                 self.append_log("[AI] Đang chạy thuật toán VAD (Silero) để phân tách giọng nói...")
                 self.append_log("[AI] Quá trình này chạy ngầm và rất nhanh, vui lòng đợi...")
             
-            # --- [SPRINT 7] ĐIỀU HƯỚNG OUTPUT VÀO PROJECT ---
             if getattr(self, 'project_service', None) and self.project_service.current_project:
-                # Nếu có Project, ép lưu vào thư mục artifacts của Project đó
                 worker_out_dir = os.path.join(self.project_service.project_dir, "artifacts")
                 os.makedirs(worker_out_dir, exist_ok=True)
             else:
-                # Nếu không có Project (chế độ tự do cũ), lưu theo thanh Output bên dưới
                 worker_out_dir = self.output_dir
-            # ------------------------------------------------
 
             self.worker = WhisperWorker(
                 video_path=self.current_vid,
-                output_dir=worker_out_dir, # <-- Đã thay đổi biến này
+                output_dir=worker_out_dir, 
                 initial_prompt=self.ai_panel.prompt_edit.text().strip(),
                 compute_type=self.page_settings.compute_combo.currentData(),
                 use_vad=self.page_settings.chk_vad.isChecked(),
@@ -1007,7 +982,6 @@ class MainWindow(QMainWindow):
                 self.process_next_batch_item()
                 return
 
-            # [FIX HIGH #3] Áp dụng Guard Hardsub cho cả nhánh Existing SRT
             if not self.page_settings.chk_hardsub_enable.isChecked():
                 self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Bỏ qua Hardsub cho video hiện tại.")
                 self.process_next_batch_item()
@@ -1031,14 +1005,12 @@ class MainWindow(QMainWindow):
         self.append_log(f"[AI] {msg}")
         self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
         
-        # --- [SPRINT 7] TÍCH HỢP ARTIFACT STORE ---
         if getattr(self, 'project_service', None) and self.project_service.current_project and srt_path and os.path.exists(srt_path):
             import uuid
             from datetime import datetime
             from core.artifacts.artifact import Artifact
             from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
             
-            # [FIX] Phân loại Artifact ưu tiên theo Chế độ chạy (Run Mode) của AI
             run_mode = self.ai_panel.mode_combo.currentData()
             
             if run_mode == "timing":
@@ -1048,7 +1020,6 @@ class MainWindow(QMainWindow):
             else:
                 a_type = ArtifactType.SUBTITLE
                 
-            # Tạo Danh thiếp (Metadata) cho file vừa sinh ra
             artifact = Artifact(
                 artifact_id=str(uuid.uuid4()),
                 artifact_type=a_type,
@@ -1059,15 +1030,13 @@ class MainWindow(QMainWindow):
                 status=ArtifactStatus.READY
             )
             
-            # Ghi danh vào Store và đánh dấu nó là "Hàng xịn nhất hiện tại" (Active)
             self.artifact_store.register(artifact)
             self.project_service.current_project.state.active_artifact_id = artifact.artifact_id
             
-            # [FIX] Cập nhật tiến trình dự án theo tính kế thừa
             if a_type == ArtifactType.TIMING:
                 self.project_service.current_project.state.timing_status = "READY"
             elif a_type == ArtifactType.DRAFT:
-                self.project_service.current_project.state.timing_status = "READY" # Đã có Draft thì Timing mặc nhiên phải xong
+                self.project_service.current_project.state.timing_status = "READY" 
                 self.project_service.current_project.state.text_status = "DRAFT"
             else:
                 self.project_service.current_project.state.timing_status = "READY"
@@ -1075,10 +1044,8 @@ class MainWindow(QMainWindow):
                 
             self.project_service.mark_dirty()
             self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name} vào dữ liệu dự án.")
-        # ------------------------------------------
         
         if self.ai_panel.mode_combo.currentData() == "timing":
-            # Tự động nạp kết quả Timing vào Editor và Video Player
             if srt_path and os.path.exists(srt_path):
                 if srt_path.endswith('.ai-subtitle-draft'):
                     self.sub_editor.load_draft_file(srt_path)
@@ -1091,7 +1058,6 @@ class MainWindow(QMainWindow):
             self.process_finished("Đã tạo Timing Draft thành công!")
             return
             
-        # Kiểm tra cờ thiết lập Hardsub (Luồng cũ)
         if not self.page_settings.chk_hardsub_enable.isChecked():
             self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Chuyển sang xử lý tiếp theo...")
             self.process_next_batch_item()
@@ -1101,7 +1067,6 @@ class MainWindow(QMainWindow):
         dlg = HardsubConfirmDialog(self.current_vid, self)
         dlg.exec()
         if dlg.user_choice == HardsubConfirmDialog.HARDSUB:
-            # Xử lý Hardsub tự động
             out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
             self.worker = HardsubWorker(
                 video_path=self.current_vid,
@@ -1167,7 +1132,6 @@ class MainWindow(QMainWindow):
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
         
-        # [FIX] Bổ sung reset cho thanh progress của Dashboard
         self.page_dashboard.quick_progress.setValue(0) 
         
         self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
@@ -1188,11 +1152,9 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
             return
 
-        # [FIX HIGH] Dọn dẹp triệt để UI khi chết ở item cuối cùng
         self._cleanup_ui_after_task()
 
     def _cleanup_ui_after_task(self):
-        """Đưa toàn bộ thanh Progress và Label hệ thống về trạng thái mặc định (Idle)"""
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         
@@ -1211,7 +1173,6 @@ class MainWindow(QMainWindow):
             os.startfile(out_d)
 
     def start_fill_text_worker(self, start_idx, count):
-        """Khởi động luồng AI Batch Fill và reset thanh tiến độ."""
         if not self.queue_mgr.active_vid:
             Toast.show_info(self, "Vui lòng chọn video để điền chữ.")
             return
@@ -1235,7 +1196,6 @@ class MainWindow(QMainWindow):
         self.append_log(f"==================================================")
         self.append_log(f"[AI] Đang nạp Audio và Model ({self.page_settings.model_combo.currentData()}) vào VRAM...")
         self.append_log(f"[AI] Quá trình infer có thể mất vài giây im lặng, vui lòng không tắt ứng dụng...")
-        # Reset Progress Bars trước khi chạy tác vụ mới
         self.progress_bar.setValue(0)
         self.ai_panel.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Đang khởi động AI Batch...")
@@ -1261,7 +1221,6 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def on_fill_text_finished(self, filled_segments):
-        """Cập nhật dữ liệu vào Editor, lưu Checkpoint vào đĩa và trả trạng thái tiến độ về an toàn."""
         for start_ms, end_ms, text, stt in filled_segments:
             for seg in self.sub_editor.all_segments:
                 if str(seg['stt']) == str(stt):
@@ -1272,7 +1231,6 @@ class MainWindow(QMainWindow):
         self.sub_editor.render_page()
         self.sub_editor.update_draft_progress()
 
-        # Đảm bảo lưu đúng file draft gắn với video hiện tại
         draft_file = self.sub_editor.save_draft(silent=True)
         if draft_file:
             self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_file)
@@ -1281,10 +1239,8 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(False)
         self.ai_panel.set_state("COMPLETED", "Điền chữ hoàn tất!")
 
-        # [CHÈN VỊ TRÍ 3.2 TẠI ĐÂY]
         self.ai_panel.lbl_batch_stat.setText(f"Batch Progress: Hoàn tất {len(filled_segments)} segments")
         
-        # [FIX] Đưa thanh tiến độ về 0 sau 2.5 giây thay vì kẹt 100% vĩnh viễn
         self.progress_bar.setValue(100)
         self.ai_panel.progress_bar.setValue(100)
         QTimer.singleShot(2500, self._reset_progress_state)
@@ -1292,11 +1248,9 @@ class MainWindow(QMainWindow):
         Toast.show_success(self, "Đã điền chữ AI hoàn tất lượt Batch!")
 
     def _reset_progress_state(self):
-        """Khôi phục các thanh tiến độ và nhãn trạng thái về Idle."""
         if not hasattr(self, 'worker') or not self.worker.isRunning():
             self.progress_bar.setValue(0)
             self.ai_panel.progress_bar.setValue(0)
-            # [FIX] Bổ sung reset cho thanh progress của Dashboard
             self.page_dashboard.quick_progress.setValue(0) 
             
             self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
@@ -1304,12 +1258,9 @@ class MainWindow(QMainWindow):
                 self.ai_panel.set_state("READY", "Sẵn sàng cho tác vụ tiếp theo")   
 
     def closeEvent(self, event):
-        # --- [S7-FIX-05] BẢO VỆ VÒNG ĐỜI DỰ ÁN TRƯỚC KHI ĐÓNG ---
         if getattr(self, 'project_service', None) and self.project_service.current_project:
-            # 1. Bắt buộc chụp lại trạng thái UI mới nhất
             self.workspace_service.capture_workspace()
             
-            # 2. Kiểm tra cờ dirty
             if self.project_service.current_project.state.dirty:
                 from PySide6.QtWidgets import QMessageBox
                 reply = QMessageBox.question(
@@ -1323,12 +1274,9 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.Save:
                     self.action_save_project()
                 elif reply == QMessageBox.Cancel:
-                    event.ignore()  # Hủy lệnh đóng cửa sổ
+                    event.ignore()  
                     return
-                # Nếu chọn Discard (Không lưu), tiếp tục tiến trình đóng
-        # --------------------------------------------------------
 
-        # Lưu cài đặt ứng dụng (Settings)
         save_settings({
             "output_dir": self.out_input.text().strip(),
             "model_size": self.page_settings.model_combo.currentData(),
@@ -1342,7 +1290,6 @@ class MainWindow(QMainWindow):
             "prompt": self.ai_panel.prompt_edit.text().strip()
         })
         
-        # Dọn dẹp Worker đang chạy ngầm
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
@@ -1435,7 +1382,7 @@ class MainWindow(QMainWindow):
         }
 
     def _on_ai_start_clicked(self):
-        self.setFocus() # [FIX UX] Giành lại con trỏ chuột, không cho nhảy vào ô Output
+        self.setFocus() 
         if self.ai_panel.mode_combo.currentData() == "timing":
             try:
                 batch_size = int(self.ai_panel.batch_combo.currentText())
@@ -1448,7 +1395,6 @@ class MainWindow(QMainWindow):
     def _on_ai_continue_clicked(self):
         self.setFocus()
         try:
-            # Lấy giá trị mới từ ô chọn
             batch_size = int(self.ai_panel.batch_combo.currentText())
             self.timing_service.continue_timing(batch_size, self._get_current_ai_settings())
         except Exception as e:
@@ -1463,7 +1409,6 @@ class MainWindow(QMainWindow):
     def _on_ai_retry_clicked(self):
         if self.ai_panel.mode_combo.currentData() == "timing":
             try:
-                # Lấy giá trị mới từ ô chọn
                 batch_size = int(self.ai_panel.batch_combo.currentText())
                 self.timing_service.retry_timing(batch_size, self._get_current_ai_settings())
             except Exception as e:
@@ -1475,7 +1420,6 @@ class MainWindow(QMainWindow):
         self.ai_panel.set_state("PROCESSING" if status == "RUNNING" else status, msg)
         self.page_dashboard.card_status_val.setText(status)
         
-        # Reset Global Bottom Bar Progress
         if status in ["READY", "IDLE", "COMPLETED", "FAILED"]:
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
@@ -1488,7 +1432,6 @@ class MainWindow(QMainWindow):
         self.update_timing_ui_info()
 
     def _on_timing_batch_completed(self, added_count, batch_size):
-        # Tự động nạp lại SRT vào Editor
         project = self.project_service.current_project
         if project and project.state.active_artifact_id:
             art = self.project_service.artifact_store.get(project.state.active_artifact_id)
@@ -1499,7 +1442,6 @@ class MainWindow(QMainWindow):
                     self.sub_editor.load_srt_file(art.path)
                 self.video_player.sub_controller.load_srt(art.path)
                 
-                # Tự động cuộn đến câu cuối cùng của batch vừa sinh ra
                 last_idx = self.sub_editor.table.rowCount() - 1
                 if last_idx >= 0:
                     item = self.sub_editor.table.item(last_idx, 0)
@@ -1510,28 +1452,25 @@ class MainWindow(QMainWindow):
         Toast.show_success(self, f"Đã hoàn thành Batch ({added_count} câu)!")
         self.update_timing_ui_info()
         
-        # [FIX UX] Ép thanh tiến trình đầy 100% rồi tự động reset về 0 sau 2.5 giây
         self.progress_bar.setValue(100)
         self.ai_panel.progress_bar.setValue(100)
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2500, self._reset_progress_state_timing)
 
     def _reset_progress_state_timing(self):
-        """Hàm phụ trợ để đưa Progress Bar về 0 mượt mà (hiệu ứng chạy ngược)"""
         project = self.project_service.current_project
         if project and project.state.timing.status in ["IDLE", "READY", "COMPLETED"]:
             from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
             
-            # Khởi tạo nhóm hoạt ảnh để ép 3 thanh Progress chạy lùi cùng lúc
             self._progress_anim_group = QParallelAnimationGroup(self)
             
             bars = [self.progress_bar, self.ai_panel.progress_bar, self.page_dashboard.quick_progress]
             for bar in bars:
                 anim = QPropertyAnimation(bar, b"value")
-                anim.setDuration(800) # Thời gian trôi lùi: 0.8 giây
+                anim.setDuration(800) 
                 anim.setStartValue(100)
                 anim.setEndValue(0)
-                anim.setEasingCurve(QEasingCurve.InOutQuad) # Hiệu ứng lùi mềm mại
+                anim.setEasingCurve(QEasingCurve.InOutQuad) 
                 self._progress_anim_group.addAnimation(anim)
                 
             self._progress_anim_group.start()
@@ -1546,7 +1485,6 @@ class MainWindow(QMainWindow):
         self.update_timing_ui_info()
 
     def update_timing_ui_info(self):
-        """Cập nhật dữ liệu hiển thị (Progress, Checkpoint) lên màn hình"""
         project = self.project_service.current_project
         if project:
             t_state = project.state.timing
@@ -1557,13 +1495,11 @@ class MainWindow(QMainWindow):
             info = f"Đã xong: {t_state.completed_until} câu | Tiếp theo: {t_state.next_segment_index} | Trục T: {time_str}"
             self.ai_panel.lbl_checkpoint_info.setText(info)
             
-            # Đồng bộ lại Dropdown 5/10/20 theo state
             idx = self.ai_panel.batch_combo.findText(str(t_state.batch_size))
             if idx >= 0:
                 self.ai_panel.batch_combo.setCurrentIndex(idx)
 
     def _retry_current_task(self):
-        # [FIX MEDIUM #4] Khôi phục lại trạng thái và chạy lại Item vừa bị lỗi
         self.ai_panel.set_state("READY", "Đang thử lại...")
         if hasattr(self, 'current_batch_index') and self.current_batch_index > 0:
             self.current_batch_index -= 1
@@ -1573,12 +1509,9 @@ class MainWindow(QMainWindow):
             self.start_processing()
 
     def _continue_draft_from_center(self, draft_path):
-        """Nạp Draft, tự động chọn và cuộn tới dòng trống đầu tiên để người dùng chủ động chạy."""
-        # [FIX] Đặt silent=True để triệt tiêu Toast "Đã nạp bản nháp", chống đè thông báo
         if not self._load_draft_from_center(draft_path, silent=True):
             return
 
-        # Quét tìm vị trí câu trống đầu tiên (rỗng hoặc mang placeholder)
         start_idx = None
         for i, seg in enumerate(self.sub_editor.all_segments):
             text = str(seg.get('text', '')).strip()
@@ -1590,7 +1523,6 @@ class MainWindow(QMainWindow):
             Toast.show_success(self, "Bản nháp này đã hoàn tất 100% nội dung.")
             return
 
-        # Cuộn và chọn dòng trống để người dùng dễ quan sát
         if self.sub_editor.table.rowCount() > start_idx:
             item = self.sub_editor.table.item(start_idx, 0)
             if item:
@@ -1600,21 +1532,17 @@ class MainWindow(QMainWindow):
         Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
     def action_new_project(self):
-        """Mở cửa sổ tạo dự án mới"""
         dialog = NewProjectDialog(self)
         if dialog.exec():
             data = dialog.get_project_data()
             
-            # Khởi tạo thư mục gốc cho Project dựa trên tên
             import os
             safe_name = "".join(c if c.isalnum() else "_" for c in data["name"])
             full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
             
             try:
-                # Gọi Service để tạo Project thuần dữ liệu
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 
-                # Gọi WorkspaceService để load video và UI
                 self.workspace_service.restore_workspace()
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
@@ -1622,16 +1550,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
 
     def action_save_project(self):
-        """Lưu toàn bộ dự án hiện tại (Ctrl+S)"""
         if not self.project_service.current_project:
             Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
             return
             
         try:
-            # 1. Chụp lại toàn bộ UI hiện tại vào RAM
             self.workspace_service.capture_workspace()
             
-            # 2. Xả dữ liệu nguyên tử xuống Ổ cứng
             self.project_service.save_project()
             
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
@@ -1639,7 +1564,6 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
 
     def action_open_project(self):
-        """Mở một dự án đã có"""
         project_dir = QFileDialog.getExistingDirectory(self, "Chọn Thư mục Dự án (.ai-subtitle)")
         if not project_dir:
             return
@@ -1648,11 +1572,8 @@ class MainWindow(QMainWindow):
             self.project_service.open_project(project_dir)
             self.workspace_service.restore_workspace()
             
-            # --- [BỔ SUNG] Cập nhật UI Checkpoint khi load ---
             self.update_timing_ui_info()
-            # ------------------------------------------------
             
-            # [FIX] Dùng Toast để thông báo
             Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
@@ -1663,7 +1584,6 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _register_artifact(self, path: str, a_type, metadata: dict = None) -> None:
-        """Đăng ký tập tin vào ArtifactStore và cập nhật ProjectState (Có Log Debug)"""
         self.append_log(f"\n[DEBUG] Đang thử đăng ký Artifact: {path}")
         
         if not getattr(self, 'project_service', None):
@@ -1704,7 +1624,6 @@ class MainWindow(QMainWindow):
         self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
 
 if __name__ == "__main__":
-    # Kích hoạt chuẩn High DPI cho Windows để tránh bị mờ hoặc scale sai lệch
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     
     app = QApplication(sys.argv)

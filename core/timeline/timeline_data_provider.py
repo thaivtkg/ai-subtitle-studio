@@ -1,68 +1,77 @@
 import uuid
-from dataclasses import dataclass
 
-# Định nghĩa Object chuẩn thay thế để tránh lỗi import chéo từ các module cũ
-@dataclass
-class SubtitleSegment:
-    segment_id: str
-    start_ms: int
-    end_ms: int
-    text: str
+class TimelineSegmentWrapper:
+    """[Fix Blocker 3 & 4] Lớp bọc an toàn, vừa cung cấp API Object cho Timeline, vừa bảo toàn Dictionary gốc (Metadata, Status)"""
+    def __init__(self, raw_dict, provider):
+        self._raw = raw_dict
+        self.provider = provider
+        
+        # Bổ sung ID duy nhất nếu chưa có
+        if 'id' not in self._raw:
+            self._raw['id'] = str(uuid.uuid4())
+
+    @property
+    def segment_id(self): return self._raw.get('id')
+    
+    @property
+    def start_ms(self): return self.provider._time_str_to_ms(self._raw.get('start', '00:00:00,000'))
+    @start_ms.setter
+    def start_ms(self, val): self._raw['start'] = self.provider._ms_to_time_str(val)
+
+    @property
+    def end_ms(self): return self.provider._time_str_to_ms(self._raw.get('end', '00:00:00,000'))
+    @end_ms.setter
+    def end_ms(self, val): self._raw['end'] = self.provider._ms_to_time_str(val)
+
+    @property
+    def text(self): return self._raw.get('text', '')
+    @text.setter
+    def text(self, val): self._raw['text'] = val
+
+    @property
+    def status(self): return self._raw.get('status', 'draft')
+    @status.setter
+    def status(self, val): self._raw['status'] = val
+
+    def get_raw_dict(self):
+        return self._raw
+
 
 class TimelineDataProvider:
-    """[Fix 8.5] Bộ chuyển đổi hai chiều (Two-way Adapter) giữa RAM Timeline và RAM Editor"""
-    
     def __init__(self):
         self._segments = []
         self._duration_ms = 0
-        self._editor_dict_ref = None # Lưu tham chiếu danh sách gốc của SubEditor
+        self._editor_dict_ref = None
 
     def load_runtime_data(self, editor_segments: list, duration_ms: int):
         self._editor_dict_ref = editor_segments
         self._segments = []
         
+        # Bọc trực tiếp list gốc, không copy sang object mới
         for seg_dict in editor_segments:
-            # 1. Chuyển đổi định dạng giờ của Editor (HH:MM:SS,MMM) sang Mili-giây (int)
-            start_ms = self._time_str_to_ms(seg_dict.get('start', '00:00:00,000'))
-            end_ms = self._time_str_to_ms(seg_dict.get('end', '00:00:00,000'))
-            
-            # 2. Tạo hoặc ánh xạ UUID
-            seg_id = str(seg_dict.get('id', uuid.uuid4()))
-            seg_dict['id'] = seg_id # Gắn ngược ID lại vào dict để tiện tra cứu
-            
-            text = seg_dict.get('text', '')
-            
-            # 3. Nạp vào bộ nhớ của Timeline
-            self._segments.append(SubtitleSegment(
-                segment_id=seg_id, 
-                start_ms=start_ms, 
-                end_ms=end_ms, 
-                text=text
-            ))
+            wrapper = TimelineSegmentWrapper(seg_dict, self)
+            self._segments.append(wrapper)
             
         self._duration_ms = duration_ms
 
     def sync_back_to_editor(self):
-        """[Fix 8.6] Bơm dữ liệu ngược từ Timeline về Table Editor để lưu File (Persistence)"""
+        """[Fix Blocker 4] Chỉ cần sắp xếp lại mảng gốc, KHÔNG ghi đè làm mất Metadata hay Status"""
         if self._editor_dict_ref is None: 
             return
             
+        # Sắp xếp lại _segments theo thời gian
+        self._segments.sort(key=lambda s: s.start_ms)
+        
+        # Cập nhật số thứ tự (STT) cho đúng
         self._editor_dict_ref.clear()
-        
-        # Sort lại timeline segments theo thứ tự thời gian trước khi nhồi ngược về Editor
-        sorted_segs = sorted(self._segments, key=lambda s: s.start_ms)
-        
-        for i, seg in enumerate(sorted_segs):
-            self._editor_dict_ref.append({
-                'stt': str(i + 1),
-                'id': seg.segment_id,
-                'start': self._ms_to_time_str(seg.start_ms),
-                'end': self._ms_to_time_str(seg.end_ms),
-                'text': seg.text,
-                'status': 'draft' # Đánh dấu là draft để hệ thống biết đã qua chỉnh sửa
-            })
+        for i, wrapper in enumerate(self._segments):
+            raw = wrapper.get_raw_dict()
+            raw['stt'] = str(i + 1)
+            # Khởi tạo mặc định nếu trạng thái bị trống
+            if 'status' not in raw:
+                raw['status'] = 'draft'
+            self._editor_dict_ref.append(raw)
 
-    # --- Các hàm cung cấp Data cho View ---
     def get_all_segments(self) -> list:
         return self._segments
 
@@ -82,7 +91,6 @@ class TimelineDataProvider:
         if segment in self._segments:
             self._segments.remove(segment)
 
-    # --- Utility: Chuyển đổi qua lại giữa Chuỗi (SRT) và Mili-giây ---
     def _time_str_to_ms(self, time_str: str) -> int:
         try:
             h_m_s, ms = time_str.split(',')
