@@ -251,16 +251,24 @@ class MainWindow(QMainWindow):
         from ui.timeline.timeline_widget import TimelineWidget
         from core.timeline.timeline_controller import TimelineController
         from core.timeline.timeline_integration import TimelineVideoSync
+        from core.timeline.timeline_data_provider import TimelineDataProvider
 
         # 1. Khởi tạo và đưa Timeline vào thanh chia ngang (Nằm giữa Video và Tab Editor)
         self.timeline_widget = TimelineWidget()
-        self.timeline_widget.setMinimumHeight(180) 
+        self.timeline_widget.setMinimumHeight(120) 
         self.work_splitter.addWidget(self.timeline_widget)
 
-        # 2. Khởi tạo Controller điều phối Data
-        self.timeline_controller = TimelineController(self.project_service, self.timeline_widget)
+        # 2. Khởi tạo Nguồn Dữ Liệu Trung Gian (Data Provider)
+        self.timeline_data_provider = TimelineDataProvider()
 
-        # 3. Khởi tạo Cầu nối đồng bộ Video (Truyền VideoPlayerWidget vào)
+        # 3. Khởi tạo Controller điều phối (Truyền Data Provider vào)
+        self.timeline_controller = TimelineController(
+            self.project_service, 
+            self.timeline_widget,
+            self.timeline_data_provider
+        )
+
+        # 4. Khởi tạo Cầu nối đồng bộ Video
         self.video_sync = TimelineVideoSync(
             self.video_player, 
             self.timeline_widget, 
@@ -269,6 +277,7 @@ class MainWindow(QMainWindow):
         # ========================================================
 
         self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.setMinimumHeight(280)
         self.bottom_tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; border-radius: 4px; background: {Theme.SURFACE}; }}
             QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }}
@@ -316,7 +325,7 @@ class MainWindow(QMainWindow):
 
         self.work_splitter.addWidget(self.bottom_tabs)
         # Cấp không gian cho 3 thành phần: Video (~350px), Timeline (~150px), Editor (~300px)
-        self.work_splitter.setSizes([350, 150, 300])
+        self.work_splitter.setSizes([350, 120, 350])
         ws_layout.addWidget(self.work_splitter)
         
         # Đăng ký Page 1 vào Stack (Index 1)
@@ -444,7 +453,7 @@ class MainWindow(QMainWindow):
 
         self.stderr_redirector = StreamRedirector(sys.stderr)
         self.stderr_redirector.text_written.connect(self.append_log)
-        sys.stderr = self.stderr_redirector
+        #sys.stderr = self.stderr_redirector
 
         # 5. Initialization
         self.switch_page(0)
@@ -764,22 +773,42 @@ class MainWindow(QMainWindow):
 
         def _load_waveform():
             try:
-                # Trích xuất Sóng âm (Có thể dùng try-except để bỏ qua nếu lỗi Audio)
-                peaks = WaveformService.generate_waveform_peaks(vid_path)
+                # 1. Lấy độ dài video từ QueueManager TRƯỚC (Bảo đảm an toàn)
+                duration_sec = self.queue_mgr.get_items()[vid_path].get('duration', 0)
+                duration_ms = int(duration_sec * 1000)
+
+                # 2. Trích xuất sóng âm trong khối try-except TÁCH BIỆT
+                # Nếu video bị lỗi FFmpeg (Packet corrupt), nó sẽ không làm sập luồng vẽ UI
+                peaks = None
+                try:
+                    peaks = WaveformService.generate_waveform_peaks(vid_path)
+                except Exception as e:
+                    print(f"Cảnh báo: Không thể trích xuất sóng âm do video bị lỗi cấu trúc ({e})")
+
+                # 3. Fallback thời lượng (nếu Metadata ở trên chưa quét kịp)
+                if duration_ms <= 0 and peaks is not None and len(peaks) > 0:
+                    duration_ms = int((len(peaks) / 100.0) * 1000)
                 
-                # Lấy độ dài video từ player (đợi player load xong hoặc dùng ffprobe)
-                # Tạm gán 1 khoảng an toàn (ms) để UI render, ở bản chuẩn bạn cần lấy metadata.duration_ms
-                duration_ms = self.queue_mgr.get_items()[vid_path].get('duration', 0) * 1000
+                # 4. Cứu cánh cuối cùng: Nếu video hỏng nặng mất cả duration, 
+                # cấp tạm một khoảng thời lượng lớn để Timeline vẫn mở ra được
+                if duration_ms <= 0:
+                    duration_ms = 3600000 # Mặc định cho 1 tiếng
+
+                # 5. Bơm dữ liệu vào Data Provider trung gian
+                self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
                 
-                # Cập nhật lên UI qua luồng chính
-                from PySide6.QtCore import QMetaObject, Qt
-                QMetaObject.invokeMethod(self.timeline_widget, "load_project_data",
-                                         Qt.QueuedConnection,
-                                         duration_ms, 
-                                         self.sub_editor.all_segments, 
-                                         peaks)
+                # 6. Đẩy dữ liệu lên Main Thread an toàn bằng QTimer
+                from PySide6.QtCore import QTimer
+                def update_ui():
+                    self.timeline_widget.load_project_data(
+                        duration_ms, 
+                        self.timeline_data_provider.get_all_segments(), 
+                        peaks
+                    )
+                QTimer.singleShot(0, update_ui)
+                
             except Exception as e:
-                print(f"Lỗi load Waveform: {e}")
+                print(f"Lỗi load Waveform tổng quát: {e}")
 
         # Chạy ngầm việc nén sóng âm để không freeze UI
         threading.Thread(target=_load_waveform, daemon=True).start()
@@ -795,6 +824,8 @@ class MainWindow(QMainWindow):
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
+
+        
 
     def on_queue_item_removed_handler(self, vid_path):
         items = self.queue_mgr.get_items()
