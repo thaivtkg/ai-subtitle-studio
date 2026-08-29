@@ -33,22 +33,18 @@ class TimelineEditCommand(ABC):
     def execute(self, context: Any) -> StateChangeSnapshot:
         pass
 
-    def _increment_revision(self):
-        """[Fix Blocker 3] Cảnh báo rõ ràng nếu việc tăng Revision thất bại"""
+    def _increment_revision(self) -> bool:
         project = self.project_service.current_project
-        if project:
-            try:
-                art_id = project.state.timing.timing_artifact_id if hasattr(project.state, 'timing') else project.state.active_artifact_id
-                if art_id:
-                    artifact = self.project_service.artifact_store.get(art_id)
-                    if artifact:
-                        artifact.revision += 1
-                    else:
-                        print(f"[CẢNH BÁO MỨC CAO] Không tìm thấy Artifact ID {art_id} trong Store. Revision không được tăng!")
-                else:
-                    print("[CẢNH BÁO] Project không có active_artifact_id hoặc timing_artifact_id hợp lệ")
-            except Exception as e:
-                print(f"[LỖI NGHIÊM TRỌNG] Đứt gãy tính toàn vẹn dữ liệu khi cập nhật Artifact Revision: {e}")
+        if not project: return False
+        
+        art_id = project.state.timing.timing_artifact_id if hasattr(project.state, 'timing') else project.state.active_artifact_id
+        if not art_id: return False
+            
+        artifact = self.project_service.artifact_store.get(art_id)
+        if not artifact: return False
+            
+        artifact.revision += 1
+        return True
 
     def undo(self) -> None:
         if self.snapshot and self.snapshot.before_states:
@@ -61,15 +57,14 @@ class TimelineEditCommand(ABC):
         self._increment_revision()
         self.project_service.mark_dirty()
 
-    def redo(self) -> None:
-        if self.snapshot and self.snapshot.after_states:
-            for snap in self.snapshot.after_states:
-                seg = self.data_provider.get_segment(snap.segment_id)
-                if seg:
-                    seg.start_ms = snap.start_ms
-                    seg.end_ms = snap.end_ms
-                    seg.text = snap.text
-        self._increment_revision()
+    def redo(self):
+        # Trực tiếp xóa các segment cũ và add segment mới từ snapshot, không chạy logic lại
+        for seg in self.deleted_segments:
+            self.data_provider.remove_segment(seg)
+        self.data_provider.add_segment(self.target_segment)
+        
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity.")
         self.project_service.mark_dirty()   
 
 class MoveSegmentCommand(TimelineEditCommand):
@@ -94,7 +89,8 @@ class MoveSegmentCommand(TimelineEditCommand):
         after_snap = SegmentSnapshot(seg.segment_id, seg.start_ms, seg.end_ms, seg.text)
         self.snapshot = StateChangeSnapshot(before_states=[before_snap], after_states=[after_snap])
         
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return self.snapshot
 
@@ -122,7 +118,8 @@ class ResizeStartCommand(TimelineEditCommand):
         after_snap = SegmentSnapshot(seg.segment_id, seg.start_ms, seg.end_ms, seg.text)
         self.snapshot = StateChangeSnapshot(before_states=[before_snap], after_states=[after_snap])
         
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return self.snapshot
 
@@ -150,7 +147,8 @@ class ResizeEndCommand(TimelineEditCommand):
         after_snap = SegmentSnapshot(seg.segment_id, seg.start_ms, seg.end_ms, seg.text)
         self.snapshot = StateChangeSnapshot(before_states=[before_snap], after_states=[after_snap])
         
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return self.snapshot
 
@@ -180,7 +178,8 @@ class SplitSegmentCommand(TimelineEditCommand):
 
         seg.end_ms = self.split_ms
         self.data_provider.add_segment(self.new_segment)
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return None
 
@@ -191,11 +190,14 @@ class SplitSegmentCommand(TimelineEditCommand):
         self._increment_revision()
         self.project_service.mark_dirty()
 
-    def redo(self) -> None:
-        seg = self.data_provider.get_segment(self.segment_id)
-        seg.end_ms = self.split_ms
-        self.data_provider.add_segment(self.new_segment)
-        self._increment_revision()
+    def redo(self):
+        # Trực tiếp xóa các segment cũ và add segment mới từ snapshot, không chạy logic lại
+        for seg in self.deleted_segments:
+            self.data_provider.remove_segment(seg)
+        self.data_provider.add_segment(self.target_segment)
+        
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity.")
         self.project_service.mark_dirty()
 
 class MergeSegmentsCommand(TimelineEditCommand):
@@ -243,7 +245,8 @@ class MergeSegmentsCommand(TimelineEditCommand):
         for s in self.deleted_segments:
             self.data_provider.remove_segment(s)
             
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return None
 
@@ -255,8 +258,15 @@ class MergeSegmentsCommand(TimelineEditCommand):
         self._increment_revision()
         self.project_service.mark_dirty()
 
-    def redo(self) -> None:
-        self.execute()
+    def redo(self):
+        # Trực tiếp xóa các segment cũ và add segment mới từ snapshot, không chạy logic lại
+        for seg in self.deleted_segments:
+            self.data_provider.remove_segment(seg)
+        self.data_provider.add_segment(self.target_segment)
+        
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity.")
+        self.project_service.mark_dirty()
 
 class DeleteSegmentCommand(TimelineEditCommand):
     def __init__(self, project_service, data_provider, segment_ids: set):
@@ -274,7 +284,8 @@ class DeleteSegmentCommand(TimelineEditCommand):
         for s in self.deleted_segments:
             self.data_provider.remove_segment(s)
             
-        self._increment_revision()
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self.project_service.mark_dirty()
         return None
 
@@ -284,5 +295,12 @@ class DeleteSegmentCommand(TimelineEditCommand):
         self._increment_revision()
         self.project_service.mark_dirty()
 
-    def redo(self) -> None:
-        self.execute()
+    def redo(self):
+        # Trực tiếp xóa các segment cũ và add segment mới từ snapshot, không chạy logic lại
+        for seg in self.deleted_segments:
+            self.data_provider.remove_segment(seg)
+        self.data_provider.add_segment(self.target_segment)
+        
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity.")
+        self.project_service.mark_dirty()

@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
 
         self.editor_horizontal_splitter.addWidget(self.side_panel_tabs)
         # Đặt tỷ lệ: Editor chiếm 70% không gian ngang, AI Panel ép sang mép 30%
-        self.editor_horizontal_splitter.setSizes([700, 300]) 
+        self.editor_horizontal_splitter.setSizes([850, 150]) 
         
         self.work_splitter.addWidget(self.editor_horizontal_splitter)
 
@@ -499,25 +499,26 @@ class MainWindow(QMainWindow):
 
     def switch_page(self, original_index):
         self._active_nav_index = original_index
-        target_stack_idx = original_index
-        if original_index == 2:
-            target_stack_idx = 1
-        elif original_index > 2:
-            target_stack_idx = original_index - 1
-
-        self.stack.setCurrentIndex(target_stack_idx)
+        is_editor_workspace = original_index in (1, 2)
         
-        if original_index == 2:
-            self.bottom_tabs.setCurrentIndex(0)
+        # Hướng trang 1 & 2 vào chung Workspace (Index 1)
+        target_stack_idx = 1 if is_editor_workspace else (original_index - 1 if original_index > 2 else original_index)
+        self.stack.setCurrentIndex(target_stack_idx)
 
+        # Quản lý Ẩn/Hiện Global Output Bar
+        if hasattr(self, 'bottom_frame'):
+            self.bottom_frame.setVisible(not is_editor_workspace)
+
+        # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 4:
-            self.page_drafts.set_directory(self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else ""))
-            
+            default_dir = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
+            self.page_drafts.set_directory(default_dir)
+
+        # Cập nhật UI Sidebar
         target_btn = self.nav_btns.get(original_index)
         if target_btn:
             target_y = target_btn.y() + (target_btn.height() - self.sidebar_indicator.height()) // 2
-            target_x = 4 
-            target_pos = QPoint(target_x, target_y)
+            target_pos = QPoint(4, target_y)
             
             if not self.sidebar_indicator.isVisible() or self.sidebar_indicator.pos() == QPoint(0,0):
                 self.sidebar_indicator.move(target_pos)
@@ -527,14 +528,6 @@ class MainWindow(QMainWindow):
                 self.indicator_anim.setStartValue(self.sidebar_indicator.pos())
                 self.indicator_anim.setEndValue(target_pos)
                 self.indicator_anim.start()
-        # --- BỔ SUNG ĐOẠN NÀY ĐỂ TỰ ĐỘNG ẨN OUTPUT BAR ---
-        if hasattr(self, 'bottom_frame'):
-            if original_index == 1 or original_index == 2: 
-                # Đang ở trong Video Workspace hoặc Subtitle Editor (Đã gộp)
-                self.bottom_frame.hide()
-            else:
-                # Trở ra Dashboard hoặc Export Center thì hiện lại
-                self.bottom_frame.show()
 
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
@@ -543,15 +536,6 @@ class MainWindow(QMainWindow):
                 self.lbl_page_title.setText(clean_title)
             else:
                 btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
-
-        if original_index == 4:
-            self.page_drafts.set_directory(self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else ""))
-
-        if hasattr(self, 'bottom_frame'):
-            if target_stack_idx == 1: # Đang ở Video Workspace
-                self.bottom_frame.hide()
-            else:
-                self.bottom_frame.show()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1610,18 +1594,62 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
 
     def action_save_project(self):
-        if not self.project_service.current_project:
+        if not getattr(self, 'project_service', None) or not self.project_service.current_project:
             Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
             return
             
         try:
+            # 1. Chụp lại trạng thái giao diện
             self.workspace_service.capture_workspace()
             
-            self.project_service.save_project()
+            # 2. ÉP GHI DỮ LIỆU TIMELINE XUỐNG ĐÚNG FILE ĐANG MỞ (PERSISTENCE)
+            if hasattr(self, 'sub_editor') and self.sub_editor.all_segments:
+                project = self.project_service.current_project
+                
+                # Tìm ID của file Artifact đang được dùng
+                art_id = project.state.active_artifact_id
+                if hasattr(project.state, 'timing') and getattr(project.state.timing, 'timing_artifact_id', None):
+                    art_id = project.state.timing.timing_artifact_id
+                    
+                if art_id:
+                    artifact = self.project_service.artifact_store.get(art_id)
+                    if artifact and artifact.path:
+                        
+                        # TRƯỜNG HỢP 1: File đang mở là SRT -> Phải xuất file SRT đè lên
+                        if artifact.path.lower().endswith('.srt'):
+                            try:
+                                from core.subtitle_exporter import SubtitleExportService
+                                exporter = SubtitleExportService()
+                                subs_for_export = []
+                                for seg in self.sub_editor.all_segments:
+                                    # Lấy thời gian từ biến số nguyên (start_ms) để chính xác tuyệt đối
+                                    start_ms = int(seg.get('start_ms', self.sub_editor.time_str_to_ms(seg.get('start', '00:00:00,000'))))
+                                    end_ms = int(seg.get('end_ms', self.sub_editor.time_str_to_ms(seg.get('end', '00:00:00,000'))))
+                                    text = seg.get('text', '')
+                                    if text == "[ Chưa có nội dung ]": text = ""
+                                    subs_for_export.append((start_ms, end_ms, text))
+                                    
+                                exporter.export_srt(subs_for_export, artifact.path)
+                                print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact.path}")
+                            except Exception as ex:
+                                print(f"[LỖI XUẤT SRT] {ex}")
+                                
+                        # TRƯỜNG HỢP 2: File đang mở là Draft (.json) -> Dùng hàm lưu Draft
+                        else:
+                            draft_path = self.sub_editor.save_draft(silent=True)
+                            if draft_path and draft_path != artifact.path:
+                                artifact.path = draft_path
+                                self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_path)
+                                print(f"[DEBUG-SAVE] Đã cập nhật đường dẫn Artifact sang Draft mới: {draft_path}")
             
+            # 3. Lưu toàn bộ nhật ký Project xuống đĩa
+            self.project_service.save_project()
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            
         except Exception as e:
             Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
+            import traceback
+            print(traceback.format_exc())
 
     def action_open_project(self):
         """Mở một dự án đã có (Đã gỡ lỗi AttributeError duration_ms)"""
@@ -1652,8 +1680,11 @@ class MainWindow(QMainWindow):
             # 3. Suy ngược từ câu phụ đề cuối cùng
             if dur_ms <= 0 and self.sub_editor.all_segments:
                 last_seg = self.sub_editor.all_segments[-1]
-                end_time_str = last_seg.get('end', '00:00:00,000') if isinstance(last_seg, dict) else '00:00:00,000'
-                dur_ms = self.sub_editor.time_str_to_ms(end_time_str) + 5000
+                if 'end_ms' in last_seg:
+                    dur_ms = int(last_seg['end_ms']) + 5000
+                else:
+                    end_time_str = last_seg.get('end', '00:00:00,000') if isinstance(last_seg, dict) else '00:00:00,000'
+                    dur_ms = self.sub_editor.time_str_to_ms(end_time_str) + 5000
 
             # 4. Mặc định an toàn
             if dur_ms <= 0:
@@ -1661,6 +1692,9 @@ class MainWindow(QMainWindow):
 
             # --- TỰ ĐỘNG ĐỒNG BỘ DỮ LIỆU SANG TIMELINE KHI MỞ PROJECT ---
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
+            
+            # (Đảm bảo Table UI được vẽ lại chính xác các đoạn chữ đã load)
+            self.sub_editor.render_page()
             
             waveform_data = None
             if hasattr(self.timeline_widget, 'container') and hasattr(self.timeline_widget.container, 'waveform'):
