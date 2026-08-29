@@ -10,13 +10,11 @@ class TimelineSegmentWrapper:
         if 'id' not in self._raw:
             self._raw['id'] = str(uuid.uuid4())
 
-        # Cứu hộ định dạng: Nếu file JSON lưu bằng start_ms (số), ta tự tạo bản chuỗi (start) cho UI
         if 'start_ms' in self._raw and 'start' not in self._raw:
             self._raw['start'] = self.provider._ms_to_time_str(self._raw['start_ms'])
         if 'end_ms' in self._raw and 'end' not in self._raw:
             self._raw['end'] = self.provider._ms_to_time_str(self._raw['end_ms'])
 
-        # Ngược lại: Nếu UI sinh ra chuỗi (start) nhưng thiếu số (start_ms)
         if 'start' in self._raw and 'start_ms' not in self._raw:
             self._raw['start_ms'] = self.provider._time_str_to_ms(self._raw['start'])
         if 'end' in self._raw and 'end_ms' not in self._raw:
@@ -31,8 +29,8 @@ class TimelineSegmentWrapper:
     @start_ms.setter
     def start_ms(self, val):
         val = int(max(0, val))
-        self._raw['start_ms'] = val # Cập nhật cho Backend
-        self._raw['start'] = self.provider._ms_to_time_str(val) # Cập nhật cho UI
+        self._raw['start_ms'] = val
+        self._raw['start'] = self.provider._ms_to_time_str(val)
 
     @property
     def end_ms(self): return self._raw.get('end_ms', 0)
@@ -77,6 +75,9 @@ class TimelineDataProvider:
         if self._editor_dict_ref is None: 
             return
             
+        # [BẢO VỆ] Lọc bỏ mọi đối tượng None do rác bộ nhớ
+        self._segments = [s for s in self._segments if s is not None]
+        
         self._segments.sort(key=lambda s: s.start_ms)
         self._editor_dict_ref.clear()
         
@@ -88,11 +89,12 @@ class TimelineDataProvider:
             self._editor_dict_ref.append(raw)
 
     def get_all_segments(self) -> list:
-        return self._segments
+        # [BẢO VỆ] Chỉ trả về các khối hợp lệ
+        return [s for s in self._segments if s is not None]
 
     def get_segment(self, segment_id: str):
         for seg in self._segments:
-            if seg.segment_id == segment_id:
+            if seg and seg.segment_id == segment_id:
                 return seg
         return None
 
@@ -100,7 +102,9 @@ class TimelineDataProvider:
         return self._duration_ms
 
     def add_segment(self, segment):
-        self._segments.append(segment)
+        # [BẢO VỆ] Chặn việc thêm None vào Timeline
+        if segment is not None:
+            self._segments.append(segment)
 
     def remove_segment(self, segment):
         if segment in self._segments:
@@ -113,12 +117,23 @@ class TimelineDataProvider:
         new_raw = copy.deepcopy(orig.get_raw_dict())
         new_raw['id'] = str(uuid.uuid4())
         new_raw['text'] = "" 
+        new_raw['status'] = "timing_only"
         
         new_wrapper = TimelineSegmentWrapper(new_raw, self)
         new_wrapper.start_ms = split_ms
         new_wrapper.end_ms = orig.end_ms
         
         return new_wrapper
+
+    def restore_segment_from_raw(self, raw_dict):
+        """Khôi phục chính xác trạng thái từ Snapshot của Undo/Redo"""
+        seg = self.get_segment(raw_dict.get('id'))
+        if seg:
+            seg._raw.clear()
+            seg._raw.update(copy.deepcopy(raw_dict))
+        else:
+            new_seg = TimelineSegmentWrapper(copy.deepcopy(raw_dict), self)
+            self.add_segment(new_seg)
 
     def _time_str_to_ms(self, time_str: str) -> int:
         try:

@@ -1,5 +1,6 @@
 from core.timeline.timeline_state import TimelineState
 
+
 class TimelineVideoSync:
     """[S8-T31 -> T34] Cầu nối đồng bộ Video Player và Timeline an toàn"""
     
@@ -45,4 +46,3 @@ class TimelineVideoSync:
         from PySide6.QtMultimedia import QMediaPlayer
         if state == QMediaPlayer.PlayingState:
             self.timeline.reset_auto_scroll()  
-        pass

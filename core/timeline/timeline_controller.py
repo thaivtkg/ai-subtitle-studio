@@ -1,13 +1,18 @@
-from PySide6.QtCore import QObject, QEvent, Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 
-from core.timeline.timeline_state import TimelineState, TimelineStateManager
 from core.timeline.timeline_commands import (
-    MoveSegmentCommand, ResizeStartCommand, ResizeEndCommand, 
-    SplitSegmentCommand, MergeSegmentsCommand, DeleteSegmentCommand
+    DeleteSegmentCommand,
+    MergeSegmentsCommand,
+    MoveSegmentCommand,
+    ResizeEndCommand,
+    ResizeStartCommand,
+    SplitSegmentCommand,
 )
+from core.timeline.timeline_state import TimelineState, TimelineStateManager
 from core.timeline.timeline_undo_manager import UndoRedoManager
 from ui.timeline.subtitle_track import EditMode
-from ui.toast import Toast 
+from ui.toast import Toast
+
 
 class TimelineController(QObject):
     """Điều phối Tương tác UI -> Cập nhật State Machine -> Đẩy lệnh vào Artifact Store"""
@@ -127,7 +132,7 @@ class TimelineController(QObject):
         
         if not target_id:
             for seg in track.segments:
-                if seg.start_ms <= playhead <= seg.end_ms:
+                if getattr(seg, 'start_ms', 0) <= playhead <= getattr(seg, 'end_ms', 0):
                     target_id = seg.segment_id
                     break
                     
@@ -136,7 +141,7 @@ class TimelineController(QObject):
             if cmd.can_execute(None):
                 self._execute_safe(cmd)
             else:
-                Toast.show_warning(self.ui.window(), "Không thể cắt quá sát 2 mép của khối phụ đề (Cần cách lề 50ms)!")
+                Toast.show_info(self.ui.window(), "Không thể cắt quá sát 2 mép của khối phụ đề (Cần cách lề 50ms)!")
         else:
             Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề hoặc kim không nằm trên phụ đề nào để cắt.")
 
@@ -146,10 +151,10 @@ class TimelineController(QObject):
             cmd = MergeSegmentsCommand(self.project, self.data_provider, track.selected_ids)
             if cmd.can_execute(None):
                 self._execute_safe(cmd)
-                if cmd.target_segment:
+                if hasattr(cmd, 'target_segment') and cmd.target_segment:
                     self.ui.container.track.selected_ids = {cmd.target_segment.segment_id}
             else:
-                Toast.show_warning(self.ui.window(), "Chỉ có thể gộp các khối phụ đề đứng cạnh nhau!")
+                Toast.show_info(self.ui.window(), "Chỉ có thể gộp các khối phụ đề đứng cạnh nhau!")
         else:
             Toast.show_info(self.ui.window(), "Hãy giữ Ctrl và Click chuột chọn ít nhất 2 khối để gộp.")
 

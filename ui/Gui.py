@@ -57,6 +57,7 @@ from utils import load_settings, save_settings
 from workers.TaskQueue import FillTextWorker, HardsubWorker, WhisperWorker
 
 
+
 class StreamRedirector(QObject):
     text_written = Signal(str)
     
@@ -1652,32 +1653,35 @@ class MainWindow(QMainWindow):
             print(traceback.format_exc())
 
     def action_open_project(self):
-        """Mở một dự án đã có (Đã gỡ lỗi AttributeError duration_ms)"""
+        """Mở một dự án đã có (Tối ưu UX chống giật/co giãn Layout)"""
         project_dir = QFileDialog.getExistingDirectory(self, "Chọn Thư mục Dự án (.ai-subtitle)")
         if not project_dir:
             return
             
         try:
+            # 1. CHUYỂN TRANG NGAY LẬP TỨC: Giấu đi thời gian chờ nạp dữ liệu
+            self.switch_page(1)
+            # Ép Qt vẽ xong màn hình Workspace trước khi CPU bị chặn bởi việc nạp file
+            QApplication.processEvents() 
+
+            # 2. KHÓA RENDER: Chặn UI tự động co giãn khi nhồi dữ liệu lớn vào Table/Timeline
+            self.page_workspace.setUpdatesEnabled(False)
+
             self.project_service.open_project(project_dir)
             self.workspace_service.restore_workspace()
             
             # --- LẤY THỜI LƯỢNG AN TOÀN CHỐNG CRASH ---
             dur_ms = 0
-            
-            # 1. Thử lấy từ VideoPlayer (Dùng API chuẩn của QMediaPlayer)
             if hasattr(self, 'video_player') and hasattr(self.video_player, 'player'):
                 dur_ms = self.video_player.player.duration()
                 
-            # 2. Thử lấy từ QueueManager nếu Video chưa nạp xong
             if dur_ms <= 0:
                 vid_path = getattr(self.project_service.current_project, 'video_path', '')
                 if not vid_path:
                     vid_path = self.queue_mgr.active_vid
-                
                 if vid_path and vid_path in self.queue_mgr.get_items():
                     dur_ms = int(self.queue_mgr.get_items()[vid_path].get('duration', 0) * 1000)
 
-            # 3. Suy ngược từ câu phụ đề cuối cùng
             if dur_ms <= 0 and self.sub_editor.all_segments:
                 last_seg = self.sub_editor.all_segments[-1]
                 if 'end_ms' in last_seg:
@@ -1686,14 +1690,11 @@ class MainWindow(QMainWindow):
                     end_time_str = last_seg.get('end', '00:00:00,000') if isinstance(last_seg, dict) else '00:00:00,000'
                     dur_ms = self.sub_editor.time_str_to_ms(end_time_str) + 5000
 
-            # 4. Mặc định an toàn
             if dur_ms <= 0:
                 dur_ms = 3600000
 
-            # --- TỰ ĐỘNG ĐỒNG BỘ DỮ LIỆU SANG TIMELINE KHI MỞ PROJECT ---
+            # --- NẠP DỮ LIỆU ---
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
-            
-            # (Đảm bảo Table UI được vẽ lại chính xác các đoạn chữ đã load)
             self.sub_editor.render_page()
             
             waveform_data = None
@@ -1705,14 +1706,17 @@ class MainWindow(QMainWindow):
                 self.timeline_data_provider.get_all_segments(),
                 waveform_data
             )
-            # -----------------------------------------------------------
 
             self.update_timing_ui_info()
-            Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
             
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
             print(f"[LỖI CRASH MỞ PROJECT] {e}")
+        finally:
+            # 3. MỞ KHÓA RENDER: Vẽ đồng loạt tất cả mọi thứ ra màn hình trong 1 frame duy nhất
+            self.page_workspace.setUpdatesEnabled(True)
+            if getattr(self.project_service, 'current_project', None):
+                Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
 
     def action_open_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog
@@ -1742,7 +1746,7 @@ class MainWindow(QMainWindow):
         import uuid
         from datetime import datetime
         from core.artifacts.artifact import Artifact
-        from core.artifacts.artifact_types import ArtifactStatus
+        from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
 
         artifact = Artifact(
             artifact_id=str(uuid.uuid4()),
@@ -1755,7 +1759,22 @@ class MainWindow(QMainWindow):
             metadata=metadata or {}
         )
         self.artifact_store.register(artifact)
-        self.project_service.current_project.state.active_artifact_id = artifact.artifact_id
+        self.project_service.current_project.state.active_artifact_id = artifact.artifact_id    
+        
+        # --- ĐỒNG BỘ TIMING ARTIFACT ID ---
+        if a_type == ArtifactType.TIMING:
+            self.project_service.current_project.state.timing_status = "READY"
+            if hasattr(self.project_service.current_project.state, 'timing') and self.project_service.current_project.state.timing:
+                self.project_service.current_project.state.timing.timing_artifact_id = artifact.artifact_id
+        elif a_type == ArtifactType.DRAFT:
+            self.project_service.current_project.state.timing_status = "READY" 
+            self.project_service.current_project.state.text_status = "DRAFT"
+            if hasattr(self.project_service.current_project.state, 'timing') and self.project_service.current_project.state.timing:
+                self.project_service.current_project.state.timing.timing_artifact_id = artifact.artifact_id
+        else:
+            self.project_service.current_project.state.timing_status = "READY"
+            self.project_service.current_project.state.text_status = "READY"
+
         self.project_service.mark_dirty()
         self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
 
