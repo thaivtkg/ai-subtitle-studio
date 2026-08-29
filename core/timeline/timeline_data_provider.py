@@ -89,8 +89,10 @@ class TimelineDataProvider:
             self._editor_dict_ref.append(raw)
 
     def get_all_segments(self) -> list:
-        # [BẢO VỆ] Chỉ trả về các khối hợp lệ
-        return [s for s in self._segments if s is not None]
+        # Ép buộc sắp xếp lại mọi khối theo thời gian để sửa lỗi tàng hình khi Undo
+        valid_segs = [s for s in self._segments if s is not None]
+        valid_segs.sort(key=lambda s: getattr(s, 'start_ms', 0))
+        return valid_segs
 
     def get_segment(self, segment_id: str):
         for seg in self._segments:

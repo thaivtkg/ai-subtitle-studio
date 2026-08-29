@@ -1,7 +1,11 @@
 import copy
 
+# Định nghĩa các Policy ràng buộc cốt lõi
+MIN_DURATION_MS = 100
+MAX_MERGE_GAP_MS = 500
+
 class TimelineEditCommand:
-    """Base Command: Áp dụng cơ chế Snapshot để đảm bảo Exact-state Undo/Redo"""
+    """Base Command: Quản lý Snapshot và Transactional Integrity"""
     def __init__(self, project_service, data_provider):
         self.project_service = project_service
         self.data_provider = data_provider
@@ -10,27 +14,28 @@ class TimelineEditCommand:
         self.added_ids = []
         self.removed_ids = []
 
-    def _check_artifact(self):
+    def _check_artifact(self) -> bool:
         project = self.project_service.current_project
         if not project: return False
-        art_id = None
-        if hasattr(project.state, 'timing') and project.state.timing and hasattr(project.state.timing, 'timing_artifact_id'):
-            art_id = project.state.timing.timing_artifact_id
+        art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else None
         if not art_id: 
             art_id = project.state.active_artifact_id
         if not art_id: return False
         return self.project_service.artifact_store.get(art_id) is not None
 
-    def _increment_revision(self):
+    def _increment_revision(self) -> bool:
+        """Đảm bảo Atomic Update: Trả về False nếu Artifact không tồn tại"""
         project = self.project_service.current_project
-        art_id = None
-        if hasattr(project.state, 'timing') and project.state.timing and hasattr(project.state.timing, 'timing_artifact_id'):
-            art_id = project.state.timing.timing_artifact_id
+        if not project: return False
+        
+        art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else None
         if not art_id: 
             art_id = project.state.active_artifact_id
+            
         artifact = self.project_service.artifact_store.get(art_id)
-        if artifact:
-            artifact.revision += 1
+        if not artifact: return False # BLOCKER 2 FIXED
+        
+        artifact.revision += 1
         return True
 
     def _capture_state(self, segment_ids, state_dict):
@@ -49,13 +54,16 @@ class TimelineEditCommand:
             self.data_provider.restore_segment_from_raw(raw_dict)
 
     def undo(self):
+        # BLOCKER 2 FIXED: Fail transaction nếu revision lookup hỏng
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self._restore_state(self.before_states, self.added_ids)
-        self._increment_revision()
         self.project_service.mark_dirty()
 
     def redo(self):
+        if not self._increment_revision():
+            raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact để cập nhật Revision.")
         self._restore_state(self.after_states, self.removed_ids)
-        self._increment_revision()
         self.project_service.mark_dirty()
 
     def can_execute(self, context=None):
@@ -71,8 +79,14 @@ class MoveSegmentCommand(TimelineEditCommand):
         self.segment_id = segment_id
         self.delta_ms = delta_ms
 
+    # BLOCKER 1 FIXED: Validation cho Move
+    def can_execute(self, context=None):
+        seg = self.data_provider.get_segment(self.segment_id)
+        if not seg: return False
+        return (seg.start_ms + self.delta_ms) >= 0
+
     def execute(self, context=None):
-        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact.")
+        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
         self._capture_state([self.segment_id], self.before_states)
         
         seg = self.data_provider.get_segment(self.segment_id)
@@ -80,7 +94,7 @@ class MoveSegmentCommand(TimelineEditCommand):
         seg.end_ms += self.delta_ms
         
         self._capture_state([self.segment_id], self.after_states)
-        self._increment_revision()
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True
 
@@ -91,15 +105,22 @@ class ResizeStartCommand(TimelineEditCommand):
         self.segment_id = segment_id
         self.delta_ms = delta_ms
 
+    # BLOCKER 1 FIXED: Validation cho ResizeStart (Giữ khoảng cách tối thiểu)
+    def can_execute(self, context=None):
+        seg = self.data_provider.get_segment(self.segment_id)
+        if not seg: return False
+        new_start = seg.start_ms + self.delta_ms
+        return 0 <= new_start <= (seg.end_ms - MIN_DURATION_MS)
+
     def execute(self, context=None):
-        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact.")
+        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
         self._capture_state([self.segment_id], self.before_states)
         
         seg = self.data_provider.get_segment(self.segment_id)
         seg.start_ms += self.delta_ms
         
         self._capture_state([self.segment_id], self.after_states)
-        self._increment_revision()
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True
 
@@ -110,15 +131,22 @@ class ResizeEndCommand(TimelineEditCommand):
         self.segment_id = segment_id
         self.delta_ms = delta_ms
 
+    # BLOCKER 1 FIXED: Validation cho ResizeEnd (Giữ khoảng cách tối thiểu)
+    def can_execute(self, context=None):
+        seg = self.data_provider.get_segment(self.segment_id)
+        if not seg: return False
+        new_end = seg.end_ms + self.delta_ms
+        return new_end >= (seg.start_ms + MIN_DURATION_MS)
+
     def execute(self, context=None):
-        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact.")
+        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
         self._capture_state([self.segment_id], self.before_states)
         
         seg = self.data_provider.get_segment(self.segment_id)
         seg.end_ms += self.delta_ms
         
         self._capture_state([self.segment_id], self.after_states)
-        self._increment_revision()
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True
 
@@ -132,25 +160,23 @@ class SplitSegmentCommand(TimelineEditCommand):
     def can_execute(self, context=None):
         seg = self.data_provider.get_segment(self.segment_id)
         if not seg: return False
-        return (seg.start_ms + 50) < self.split_ms < (seg.end_ms - 50)
+        return (seg.start_ms + MIN_DURATION_MS) < self.split_ms < (seg.end_ms - MIN_DURATION_MS)
 
     def execute(self, context=None):
-        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Không tìm thấy Timing Artifact.")
+        if not self._check_artifact(): raise RuntimeError("Lỗi Integrity.")
         self._capture_state([self.segment_id], self.before_states)
         
         seg = self.data_provider.get_segment(self.segment_id)
         new_seg = self.data_provider.create_split_segment(self.segment_id, self.split_ms)
-        
-        # [BẢO VỆ] Chặn lỗi NoneType nếu tạo Segment thất bại
-        if not new_seg:
-            raise RuntimeError("Lỗi nội bộ: Không thể sinh ra đoạn khối cắt mới.")
+        if not new_seg: raise RuntimeError("Lỗi sinh khối cắt.")
             
         seg.end_ms = self.split_ms
         self.data_provider.add_segment(new_seg)
         
         self.added_ids = [new_seg.segment_id]
         self._capture_state([self.segment_id, new_seg.segment_id], self.after_states)
-        self._increment_revision()
+        
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True
 
@@ -161,13 +187,15 @@ class MergeSegmentsCommand(TimelineEditCommand):
         self.segment_ids = list(segment_ids)
         self.target_id = None
 
+    # ISSUE 4 FIXED: Khóa cứng Policy Gap và chặn Missing IDs
     def can_execute(self, context=None):
         if len(self.segment_ids) < 2: return False
         segs = [self.data_provider.get_segment(sid) for sid in self.segment_ids]
-        segs = sorted([s for s in segs if s], key=lambda x: x.start_ms)
+        if any(s is None for s in segs): return False 
         
+        segs = sorted(segs, key=lambda x: x.start_ms)
         for i in range(len(segs) - 1):
-            if segs[i + 1].start_ms - segs[i].end_ms > 500:
+            if segs[i + 1].start_ms - segs[i].end_ms > MAX_MERGE_GAP_MS:
                 return False
         return True
 
@@ -197,10 +225,8 @@ class MergeSegmentsCommand(TimelineEditCommand):
             self.data_provider.remove_segment(self.data_provider.get_segment(sid))
             
         self._capture_state([self.target_id], self.after_states)
-        self._increment_revision()
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
-        
-        # [BẢO VỆ] Lưu lại target segment để bôi đen trên UI sau khi gộp
         self.target_segment = target
         return True
 
@@ -209,6 +235,12 @@ class DeleteSegmentCommand(TimelineEditCommand):
     def __init__(self, ps, dp, segment_ids):
         super().__init__(ps, dp)
         self.segment_ids = list(segment_ids)
+
+    # ISSUE 3 FIXED: Validation chống Reject Stale IDs
+    def can_execute(self, context=None):
+        if not self.segment_ids: return False
+        found = [self.data_provider.get_segment(sid) for sid in self.segment_ids if self.data_provider.get_segment(sid)]
+        return len(found) == len(self.segment_ids)
 
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity.")
@@ -220,6 +252,6 @@ class DeleteSegmentCommand(TimelineEditCommand):
                 self.data_provider.remove_segment(seg)
                 
         self.removed_ids = self.segment_ids.copy()
-        self._increment_revision()
+        if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True

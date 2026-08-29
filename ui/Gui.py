@@ -1395,6 +1395,16 @@ class MainWindow(QMainWindow):
         self.setFocus() 
         mode = self.ai_panel.mode_combo.currentData()
         
+        # --- BẢO VỆ: CHẶN THAO TÁC KHI CHƯA NẠP VIDEO HOẶC CHƯA CÓ TIMING ---
+        if not self.queue_mgr.active_vid or not hasattr(self, 'sub_editor'):
+            Toast.show_info(self, "Vui lòng chọn Video từ Queue trước khi thao tác!")
+            return
+            
+        if mode == "fill_text" and not self.sub_editor.all_segments:
+            Toast.show_info(self, "Vui lòng chạy Timing (Tạo khối) trước khi điền chữ!")
+            return
+        # -------------------------------------------------------------------
+
         if mode == "timing":
             try:
                 batch_size = int(self.ai_panel.batch_combo.currentText())
@@ -1403,19 +1413,25 @@ class MainWindow(QMainWindow):
                 Toast.show_error(self, str(e))
                 
         elif mode == "fill_text":
-            # Điều hướng chính xác vào luồng Fill Text
             start_idx = self._find_first_empty_segment()
             if start_idx is not None:
                 self.start_fill_text_worker(start_idx, 0)
             else:
                 Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
-                
         else:
             self.start_processing()
 
     def _on_ai_continue_clicked(self):
         self.setFocus()
         mode = self.ai_panel.mode_combo.currentData()
+        
+        if not self.queue_mgr.active_vid or not hasattr(self, 'sub_editor'):
+            Toast.show_info(self, "Vui lòng chọn Video từ Queue trước khi thao tác!")
+            return
+
+        if mode == "fill_text" and not self.sub_editor.all_segments:
+            Toast.show_info(self, "Vui lòng chạy Timing (Tạo khối) trước khi điền chữ!")
+            return
         
         if mode == "timing":
             try:
@@ -1430,7 +1446,6 @@ class MainWindow(QMainWindow):
                 self.start_fill_text_worker(start_idx, 0)
             else:
                 Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
-                
         else:
             self.start_processing()
 

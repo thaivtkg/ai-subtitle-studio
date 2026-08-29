@@ -190,22 +190,36 @@ class TimelineController(QObject):
             self.state_manager.transition_to(TimelineState.IDLE)
 
     def handle_undo(self):
-        if self.state_manager.can_transition(TimelineState.COMMITTING):
-            self.state_manager.transition_to(TimelineState.COMMITTING)
-            try:
-                if self.undo_manager.undo(): 
-                    self._refresh_ui()
-            finally:
-                self.state_manager.transition_to(TimelineState.IDLE)
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            return
+            
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            if self.undo_manager.undo(): 
+                self._refresh_ui()
+        except Exception as e:
+            import traceback
+            print(f"[TIMELINE-UNDO-ERROR] Lỗi khi thực hiện Undo: {e}")
+            traceback.print_exc()
+            Toast.show_error(self.ui.window(), f"Lỗi Undo: {str(e)}")
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
 
     def handle_redo(self):
-        if self.state_manager.can_transition(TimelineState.COMMITTING):
-            self.state_manager.transition_to(TimelineState.COMMITTING)
-            try:
-                if self.undo_manager.redo(): 
-                    self._refresh_ui()
-            finally:
-                self.state_manager.transition_to(TimelineState.IDLE)
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            return
+            
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            if self.undo_manager.redo(): 
+                self._refresh_ui()
+        except Exception as e:
+            import traceback
+            print(f"[TIMELINE-REDO-ERROR] Lỗi khi thực hiện Redo: {e}")
+            traceback.print_exc()
+            Toast.show_error(self.ui.window(), f"Lỗi Redo: {str(e)}")
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
 
     def _execute_safe(self, command):
         if not self.state_manager.can_transition(TimelineState.COMMITTING): return
@@ -217,9 +231,13 @@ class TimelineController(QObject):
             self.state_manager.transition_to(TimelineState.IDLE)
 
     def _refresh_ui(self):
-        self.ui.load_project_data(self.data_provider.get_duration_ms(), self.data_provider.get_all_segments())
+        # 1. ĐỒNG BỘ DATA & SẮP XẾP TRƯỚC
         self.data_provider.sync_back_to_editor()
         
+        # 2. ĐẨY LÊN TIMELINE VIEW SAU (Lúc này danh sách đã được sắp xếp chuẩn 100%)
+        self.ui.load_project_data(self.data_provider.get_duration_ms(), self.data_provider.get_all_segments())
+        
+        # 3. VẼ LẠI TABLE BÊN DƯỚI
         main_window = self.ui.window()
         if hasattr(main_window, 'sub_editor'):
             main_window.sub_editor.render_page()
