@@ -81,6 +81,25 @@ class TimelineDataProvider:
                 return seg
         return None
 
+    def create_split_segment(self, original_segment_id: str, split_ms: int):
+        """[Fix Blocker 1 & 8] Nhân bản Wrapper để đồng nhất kiểu dữ liệu và bảo toàn Metadata"""
+        import copy
+        import uuid
+
+        orig = self.get_segment(original_segment_id)
+        if not orig:
+            return None
+
+        new_raw = copy.deepcopy(orig.get_raw_dict())
+        new_raw['id'] = str(uuid.uuid4())
+        new_raw['text'] = ""
+
+        new_wrapper = TimelineSegmentWrapper(new_raw, self)
+        new_wrapper.start_ms = split_ms
+        new_wrapper.end_ms = orig.end_ms
+
+        return new_wrapper
+
     def get_duration_ms(self) -> int:
         return self._duration_ms
 

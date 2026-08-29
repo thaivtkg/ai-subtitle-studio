@@ -73,11 +73,11 @@ class StreamRedirector(QObject):
 
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
-    waveform_ready_signal = Signal(int, object) 
+    waveform_ready_signal = Signal(str, int, object)
 
     def __init__(self):
         super().__init__()
-        
+
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
 
@@ -239,59 +239,28 @@ class MainWindow(QMainWindow):
         self.page_dashboard.navigate_requested.connect(self.switch_page)
         self.stack.addWidget(self.page_dashboard)
 
-        # Page 1: Video Workspace (Chứa luôn Subtitle Editor, không tách riêng)
+        # ========================================================
+        # PAGE 1: VIDEO WORKSPACE (DAW-STANDARD 3-TIER LAYOUT)
+        # ========================================================
         self.page_workspace = QWidget()
         ws_layout = QVBoxLayout(self.page_workspace)
-        ws_layout.setContentsMargins(8, 8, 8, 8)
-        ws_layout.setSpacing(6)
+        ws_layout.setContentsMargins(0, 0, 0, 0) # Gỡ viền thừa để tối đa hóa không gian
+        ws_layout.setSpacing(0)
 
+        # Splitter dọc (Vertical) định hình 3 tầng cốt lõi
         self.work_splitter = QSplitter(Qt.Vertical)
-        self.work_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 1px; margin: 1px 0px; }}")
+        self.work_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 2px; }}")
 
+        # --- TẦNG 1: VIDEO PREVIEW ---
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
         self.work_splitter.addWidget(self.video_player)
 
-        # ========================================================
-        # [SPRINT 8] CHÈN TIMELINE & WAVEFORM VÀO KHU VỰC LÀM VIỆC
-        # ========================================================
-        from ui.timeline.timeline_widget import TimelineWidget
-        from core.timeline.timeline_controller import TimelineController
-        from core.timeline.timeline_integration import TimelineVideoSync
-        from core.timeline.timeline_data_provider import TimelineDataProvider
+        # --- TẦNG 2: SUBTITLE EDITOR & AI SIDE-PANEL ---
+        self.editor_horizontal_splitter = QSplitter(Qt.Horizontal)
+        self.editor_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
 
-        # 1. Khởi tạo và đưa Timeline vào thanh chia ngang
-        self.timeline_widget = TimelineWidget()
-        self.timeline_widget.setMinimumHeight(120) 
-        self.work_splitter.addWidget(self.timeline_widget)
-
-        # 2. Khởi tạo Nguồn Dữ Liệu Trung Gian (Data Provider)
-        self.timeline_data_provider = TimelineDataProvider()
-
-        # 3. Khởi tạo Controller điều phối (Truyền Data Provider vào)
-        self.timeline_controller = TimelineController(
-            self.project_service, 
-            self.timeline_widget,
-            self.timeline_data_provider
-        )
-
-        # 4. Khởi tạo Cầu nối đồng bộ Video
-        self.video_sync = TimelineVideoSync(
-            self.video_player, 
-            self.timeline_widget, 
-            self.timeline_controller.state_manager
-        )
-        # ========================================================
-
-        self.bottom_tabs = QTabWidget()
-        self.bottom_tabs.setMinimumHeight(280) # Bảo vệ Tab không bị dẹp
-        self.bottom_tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; border-radius: 4px; background: {Theme.SURFACE}; }}
-            QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }}
-            QTabBar::tab:selected {{ background: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; }}
-        """)
-
-        # Khởi tạo Subtitle Editor ĐỘC NHẤT tại đây
+        # 2.1 Bảng Editor Chính (Bên trái)
         self.sub_editor = SubtitleEditorWidget()
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
@@ -301,34 +270,61 @@ class MainWindow(QMainWindow):
         self.sub_editor.preview_toggled.connect(self.video_player.sub_controller.toggle_preview)
         self.sub_editor.style_changed.connect(
             lambda s: self.video_player.subtitle_overlay.update_style(
-                family=s.get("family"),
-                size=s.get("size"),
-                color=s.get("color"),
-                out_color=s.get("out_color"),
-                out_width=s.get("out_width"),
-                position=s.get("position")
+                family=s.get("family"), size=s.get("size"), color=s.get("color"),
+                out_color=s.get("out_color"), out_width=s.get("out_width"), position=s.get("position")
             )
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
         self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
         
-        self.bottom_tabs.addTab(self.sub_editor, "📝 Inline Editor")
+        self.editor_horizontal_splitter.addWidget(self.sub_editor)
 
+        # 2.2 Side-Panel cho AI & Live Log (Bên phải - Dễ dàng Collapse sau này)
+        self.side_panel_tabs = QTabWidget()
+        self.side_panel_tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; background: {Theme.SURFACE}; }}
+            QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; font-weight: bold; }}
+            QTabBar::tab:selected {{ background: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; }}
+        """)
+        
         self.ai_panel = AIGenerationPanel()
         self.ai_panel.start_requested.connect(self._on_ai_start_clicked)
         self.ai_panel.continue_requested.connect(self._on_ai_continue_clicked)
         self.ai_panel.cancel_requested.connect(self._on_ai_cancel_clicked)
         self.ai_panel.retry_requested.connect(self._on_ai_retry_clicked)
-        self.bottom_tabs.addTab(self.ai_panel, "🤖 AI Generation")
+        self.side_panel_tabs.addTab(self.ai_panel, "🤖 AI Actions")
 
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setPlaceholderText("Nhật ký trạng thái...")
-        self.bottom_tabs.addTab(self.log_box, "📜 Live Log")
+        self.side_panel_tabs.addTab(self.log_box, "📜 Live Log")
 
-        self.work_splitter.addWidget(self.bottom_tabs)
-        self.work_splitter.setSizes([350, 120, 350])
+        self.editor_horizontal_splitter.addWidget(self.side_panel_tabs)
+        # Đặt tỷ lệ: Editor chiếm 70% không gian ngang, AI Panel ép sang mép 30%
+        self.editor_horizontal_splitter.setSizes([700, 300]) 
+        
+        self.work_splitter.addWidget(self.editor_horizontal_splitter)
+
+        # --- TẦNG 3: TIMELINE & WAVEFORM ---
+        from ui.timeline.timeline_widget import TimelineWidget
+        from core.timeline.timeline_controller import TimelineController
+        from core.timeline.timeline_integration import TimelineVideoSync
+        from core.timeline.timeline_data_provider import TimelineDataProvider
+
+        self.timeline_widget = TimelineWidget()
+        self.timeline_widget.setMinimumHeight(160) # Timeline nay đã nằm dưới cùng, chiếm ưu thế
+        self.work_splitter.addWidget(self.timeline_widget)
+
+        self.timeline_data_provider = TimelineDataProvider()
+        self.timeline_controller = TimelineController(self.project_service, self.timeline_widget, self.timeline_data_provider)
+        self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
+        
+        # Liên kết Cầu đồng bộ (Click Table -> Bôi đen Timeline)
+        self.sub_editor.seek_requested.connect(self.timeline_controller.sync_from_editor)
+
+        # Chốt tỷ lệ 3 tầng dọc: Video (25%), Editor (55%), Timeline (20%)
+        self.work_splitter.setSizes([250, 550, 200])
         ws_layout.addWidget(self.work_splitter)
         
         self.stack.addWidget(self.page_workspace)
@@ -374,11 +370,11 @@ class MainWindow(QMainWindow):
         # ========================================================
         # 4. COMPACT GLOBAL BOTTOM BAR 
         # ========================================================
-        bottom_frame = QFrame()
-        bottom_frame.setObjectName("BottomFrame")
-        bottom_frame.setMinimumHeight(96)
-        bottom_frame.setStyleSheet(f"#BottomFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; }}")
-        bottom_layout = QVBoxLayout(bottom_frame)
+        self.bottom_frame = QFrame()
+        self.bottom_frame.setObjectName("BottomFrame")
+        self.bottom_frame.setMinimumHeight(96)
+        self.bottom_frame.setStyleSheet(f"#BottomFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; }}")
+        bottom_layout = QVBoxLayout(self.bottom_frame) # <-- Sửa ở đây
         bottom_layout.setContentsMargins(14, 10, 14, 10)
         bottom_layout.setSpacing(10)
 
@@ -437,7 +433,7 @@ class MainWindow(QMainWindow):
         prog_action_row.addWidget(open_folder_btn)
 
         bottom_layout.addLayout(prog_action_row)
-        right_layout.addWidget(bottom_frame)
+        right_layout.addWidget(self.bottom_frame)
         root_layout.addWidget(right_area)
 
         self.stdout_redirector = StreamRedirector(sys.stdout)
@@ -462,14 +458,18 @@ class MainWindow(QMainWindow):
         self.sub_editor.emit_style()
 
     # --- HÀM THỰC THI SIGNAL AN TOÀN TRÊN MAIN THREAD ---
-    def _on_waveform_ready_slot(self, duration_ms, peaks):
+    def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
+        if req_vid_path != self.queue_mgr.active_vid:
+            print(f"[DEBUG-WAVEFORM] Bỏ qua kết quả cũ của worker do người dùng đã chuyển video: {req_vid_path}")
+            return
+
         try:
             # 3. [FIX REVIEW 1] Nạp Data Provider SAU KHI cả SRT và Sóng âm đã sẵn sàng trên Main Thread
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
-            
+
             self.timeline_widget.load_project_data(
-                duration_ms, 
-                self.timeline_data_provider.get_all_segments(), 
+                duration_ms,
+                self.timeline_data_provider.get_all_segments(),
                 peaks
             )
             print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
@@ -509,6 +509,9 @@ class MainWindow(QMainWindow):
         
         if original_index == 2:
             self.bottom_tabs.setCurrentIndex(0)
+
+        if original_index == 4:
+            self.page_drafts.set_directory(self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else ""))
             
         target_btn = self.nav_btns.get(original_index)
         if target_btn:
@@ -524,6 +527,14 @@ class MainWindow(QMainWindow):
                 self.indicator_anim.setStartValue(self.sidebar_indicator.pos())
                 self.indicator_anim.setEndValue(target_pos)
                 self.indicator_anim.start()
+        # --- BỔ SUNG ĐOẠN NÀY ĐỂ TỰ ĐỘNG ẨN OUTPUT BAR ---
+        if hasattr(self, 'bottom_frame'):
+            if original_index == 1 or original_index == 2: 
+                # Đang ở trong Video Workspace hoặc Subtitle Editor (Đã gộp)
+                self.bottom_frame.hide()
+            else:
+                # Trở ra Dashboard hoặc Export Center thì hiện lại
+                self.bottom_frame.show()
 
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
@@ -535,6 +546,12 @@ class MainWindow(QMainWindow):
 
         if original_index == 4:
             self.page_drafts.set_directory(self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else ""))
+
+        if hasattr(self, 'bottom_frame'):
+            if target_stack_idx == 1: # Đang ở Video Workspace
+                self.bottom_frame.hide()
+            else:
+                self.bottom_frame.show()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -797,7 +814,7 @@ class MainWindow(QMainWindow):
                     duration_ms = 3600000 
 
                 # Báo cáo kết quả về Main Thread
-                self.waveform_ready_signal.emit(duration_ms, peaks)
+                self.waveform_ready_signal.emit(vid_path, duration_ms, peaks)
                 
             except Exception as e:
                 print(f"[DEBUG-WAVEFORM] ❌ LỖI TỔNG QUÁT LUỒNG SÓNG ÂM: {e}")
@@ -1381,38 +1398,81 @@ class MainWindow(QMainWindow):
             "min_silence_ms": self.page_settings.silence_spin.value()
         }
 
+    def _find_first_empty_segment(self):
+        """Hàm phụ trợ: Quét tìm câu phụ đề trống đầu tiên để điền chữ"""
+        for i, seg in enumerate(self.sub_editor.all_segments):
+            text = str(seg.get('text', '')).strip()
+            if not text or text == "[ Chưa có nội dung ]":
+                return i
+        return None
+
     def _on_ai_start_clicked(self):
         self.setFocus() 
-        if self.ai_panel.mode_combo.currentData() == "timing":
+        mode = self.ai_panel.mode_combo.currentData()
+        
+        if mode == "timing":
             try:
                 batch_size = int(self.ai_panel.batch_combo.currentText())
                 self.timing_service.start_timing(batch_size, self._get_current_ai_settings())
             except Exception as e:
                 Toast.show_error(self, str(e))
+                
+        elif mode == "fill_text":
+            # Điều hướng chính xác vào luồng Fill Text
+            start_idx = self._find_first_empty_segment()
+            if start_idx is not None:
+                self.start_fill_text_worker(start_idx, 0)
+            else:
+                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
+                
         else:
             self.start_processing()
 
     def _on_ai_continue_clicked(self):
         self.setFocus()
-        try:
-            batch_size = int(self.ai_panel.batch_combo.currentText())
-            self.timing_service.continue_timing(batch_size, self._get_current_ai_settings())
-        except Exception as e:
-            Toast.show_error(self, str(e))
+        mode = self.ai_panel.mode_combo.currentData()
+        
+        if mode == "timing":
+            try:
+                batch_size = int(self.ai_panel.batch_combo.currentText())
+                self.timing_service.continue_timing(batch_size, self._get_current_ai_settings())
+            except Exception as e:
+                Toast.show_error(self, str(e))
+                
+        elif mode == "fill_text":
+            start_idx = self._find_first_empty_segment()
+            if start_idx is not None:
+                self.start_fill_text_worker(start_idx, 0)
+            else:
+                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
+                
+        else:
+            self.start_processing()
 
     def _on_ai_cancel_clicked(self):
-        if self.ai_panel.mode_combo.currentData() == "timing":
+        mode = self.ai_panel.mode_combo.currentData()
+        if mode == "timing":
             self.timing_service.cancel_timing()
         else:
+            # Dùng chung hàm cancel cho cả Fill Text và Transcribe
             self.cancel_processing()
 
     def _on_ai_retry_clicked(self):
-        if self.ai_panel.mode_combo.currentData() == "timing":
+        mode = self.ai_panel.mode_combo.currentData()
+        if mode == "timing":
             try:
                 batch_size = int(self.ai_panel.batch_combo.currentText())
                 self.timing_service.retry_timing(batch_size, self._get_current_ai_settings())
             except Exception as e:
                 Toast.show_error(self, str(e))
+                
+        elif mode == "fill_text":
+            start_idx = self._find_first_empty_segment()
+            if start_idx is not None:
+                self.start_fill_text_worker(start_idx, 0)
+            else:
+                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
+                
         else:
             self._retry_current_task()
 
@@ -1564,6 +1624,7 @@ class MainWindow(QMainWindow):
             Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
 
     def action_open_project(self):
+        """Mở một dự án đã có (Đã gỡ lỗi AttributeError duration_ms)"""
         project_dir = QFileDialog.getExistingDirectory(self, "Chọn Thư mục Dự án (.ai-subtitle)")
         if not project_dir:
             return
@@ -1572,11 +1633,52 @@ class MainWindow(QMainWindow):
             self.project_service.open_project(project_dir)
             self.workspace_service.restore_workspace()
             
-            self.update_timing_ui_info()
+            # --- LẤY THỜI LƯỢNG AN TOÀN CHỐNG CRASH ---
+            dur_ms = 0
             
+            # 1. Thử lấy từ VideoPlayer (Dùng API chuẩn của QMediaPlayer)
+            if hasattr(self, 'video_player') and hasattr(self.video_player, 'player'):
+                dur_ms = self.video_player.player.duration()
+                
+            # 2. Thử lấy từ QueueManager nếu Video chưa nạp xong
+            if dur_ms <= 0:
+                vid_path = getattr(self.project_service.current_project, 'video_path', '')
+                if not vid_path:
+                    vid_path = self.queue_mgr.active_vid
+                
+                if vid_path and vid_path in self.queue_mgr.get_items():
+                    dur_ms = int(self.queue_mgr.get_items()[vid_path].get('duration', 0) * 1000)
+
+            # 3. Suy ngược từ câu phụ đề cuối cùng
+            if dur_ms <= 0 and self.sub_editor.all_segments:
+                last_seg = self.sub_editor.all_segments[-1]
+                end_time_str = last_seg.get('end', '00:00:00,000') if isinstance(last_seg, dict) else '00:00:00,000'
+                dur_ms = self.sub_editor.time_str_to_ms(end_time_str) + 5000
+
+            # 4. Mặc định an toàn
+            if dur_ms <= 0:
+                dur_ms = 3600000
+
+            # --- TỰ ĐỘNG ĐỒNG BỘ DỮ LIỆU SANG TIMELINE KHI MỞ PROJECT ---
+            self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
+            
+            waveform_data = None
+            if hasattr(self.timeline_widget, 'container') and hasattr(self.timeline_widget.container, 'waveform'):
+                waveform_data = getattr(self.timeline_widget.container.waveform, 'waveform_data', None)
+
+            self.timeline_widget.load_project_data(
+                dur_ms,
+                self.timeline_data_provider.get_all_segments(),
+                waveform_data
+            )
+            # -----------------------------------------------------------
+
+            self.update_timing_ui_info()
             Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
+            
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
+            print(f"[LỖI CRASH MỞ PROJECT] {e}")
 
     def action_open_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog

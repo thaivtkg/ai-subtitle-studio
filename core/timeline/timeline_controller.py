@@ -1,3 +1,5 @@
+from PySide6.QtCore import QObject, QEvent, Qt
+
 from core.timeline.timeline_state import TimelineState, TimelineStateManager
 from core.timeline.timeline_commands import (
     MoveSegmentCommand, ResizeStartCommand, ResizeEndCommand, 
@@ -5,81 +7,188 @@ from core.timeline.timeline_commands import (
 )
 from core.timeline.timeline_undo_manager import UndoRedoManager
 from ui.timeline.subtitle_track import EditMode
+from ui.toast import Toast 
 
-class TimelineController:
+class TimelineController(QObject):
     """Điều phối Tương tác UI -> Cập nhật State Machine -> Đẩy lệnh vào Artifact Store"""
     
     def __init__(self, project_service, ui_widget, data_provider):
+        super().__init__()
         self.project = project_service
         self.ui = ui_widget
-        self.data_provider = data_provider # Inject Interface
+        self.data_provider = data_provider 
         self.state_manager = TimelineStateManager()
         self.undo_manager = UndoRedoManager()
 
-        # Ràng buộc tín hiệu Edit (Kéo thả & Resize)
+        self.ui.setFocusPolicy(Qt.StrongFocus)
+        if hasattr(self.ui.container, 'waveform'):
+            self.ui.container.waveform.setFocusPolicy(Qt.StrongFocus)
+        if hasattr(self.ui.container, 'ruler'):
+            self.ui.container.ruler.setFocusPolicy(Qt.StrongFocus)
+            
         self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
         
-        # Ràng buộc tín hiệu Phím tắt cấu trúc
-        self.ui.container.track.action_split_requested.connect(self.handle_split)
-        self.ui.container.track.action_merge_requested.connect(self.handle_merge)
-        self.ui.container.track.action_delete_requested.connect(self.handle_delete)
-        self.ui.container.track.action_undo_requested.connect(self.handle_undo)
-        self.ui.container.track.action_redo_requested.connect(self.handle_redo)
+        self.ui.installEventFilter(self)
+        if hasattr(self.ui.container, 'ruler'):
+            self.ui.container.ruler.installEventFilter(self)
+        if hasattr(self.ui.container, 'waveform'):
+            self.ui.container.waveform.installEventFilter(self)
+        self.ui.container.track.installEventFilter(self)
 
-    # ==========================================
-    # 1. XỬ LÝ CHỈNH SỬA KÉO THẢ (MOVE / RESIZE)
-    # ==========================================
+    # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
+    def sync_from_editor(self, ms: int):
+        """Đồng bộ từ Bảng chữ lên Timeline: Bôi đen khối phụ đề và tự động cuộn Timeline tới đó"""
+        track = self.ui.container.track
+        found_id = None
+        for seg in track.segments:
+            if seg.start_ms - 50 <= ms <= seg.end_ms + 50:
+                found_id = seg.segment_id
+                break
+        
+        if found_id:
+            track.selected_ids = {found_id}
+        else:
+            track.selected_ids.clear()
+            
+        track.update()
+
+        # Tự động cuộn thanh Scroll của Timeline
+        from PySide6.QtWidgets import QScrollArea
+        scroll_area = self.ui if isinstance(self.ui, QScrollArea) else self.ui.findChild(QScrollArea)
+        if scroll_area:
+            x = track._ms_to_x(ms)
+            scrollbar = scroll_area.horizontalScrollBar()
+            viewport_width = scroll_area.viewport().width()
+            target_scroll = x - (viewport_width // 2) # Tính toán đưa khối ra giữa màn hình
+            target_scroll = max(0, min(target_scroll, scrollbar.maximum()))
+            scrollbar.setValue(target_scroll)
+    # -------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                obj.setFocus() 
+                if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    self._do_seek(event.pos().x(), event.modifiers())
+                    return True 
+        elif event.type() == QEvent.MouseMove and (event.buttons() & Qt.LeftButton):
+            if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                self._do_seek(event.pos().x(), event.modifiers())
+                return True
+        elif event.type() == QEvent.KeyPress:
+            key = event.key()
+            modifiers = event.modifiers()
+            if key == Qt.Key_T:
+                self._trigger_split()
+                return True
+            elif key == Qt.Key_M:
+                self._trigger_merge()
+                return True
+            elif key == Qt.Key_Delete:
+                self._trigger_delete()
+                return True
+            elif key == Qt.Key_Z:
+                if modifiers == Qt.ControlModifier:
+                    self.handle_undo()
+                    return True
+                elif modifiers == (Qt.ControlModifier | Qt.ShiftModifier):
+                    self.handle_redo()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _do_seek(self, x, modifiers=Qt.NoModifier):
+        pixels_per_sec = self.ui.container.track.pixels_per_second
+        target_ms = int((x / pixels_per_sec) * 1000.0)
+        target_ms = max(0, target_ms) 
+        
+        if hasattr(self.ui, 'seek_requested'):
+            self.ui.seek_requested.emit(target_ms)
+        if hasattr(self.ui, 'update_playhead'):
+            self.ui.update_playhead(target_ms)
+
+        if modifiers != Qt.ControlModifier:
+            track = self.ui.container.track
+            found_seg = None
+            for seg in track.segments:
+                if seg.start_ms <= target_ms <= seg.end_ms:
+                    found_seg = seg
+                    break
+            
+            if found_seg:
+                track.selected_ids = {found_seg.segment_id}
+            else:
+                track.selected_ids.clear()
+            track.update()
+
+    def _trigger_split(self):
+        track = self.ui.container.track
+        target_id = track.hovered_id if track.hovered_id != "" else (list(track.selected_ids)[0] if track.selected_ids else "")
+        playhead = track.playhead_ms
+        
+        if not target_id:
+            for seg in track.segments:
+                if seg.start_ms <= playhead <= seg.end_ms:
+                    target_id = seg.segment_id
+                    break
+                    
+        if target_id: 
+            cmd = SplitSegmentCommand(self.project, self.data_provider, target_id, playhead)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+            else:
+                Toast.show_warning(self.ui.window(), "Không thể cắt quá sát 2 mép của khối phụ đề (Cần cách lề 50ms)!")
+        else:
+            Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề hoặc kim không nằm trên phụ đề nào để cắt.")
+
+    def _trigger_merge(self):
+        track = self.ui.container.track
+        if len(track.selected_ids) >= 2: 
+            cmd = MergeSegmentsCommand(self.project, self.data_provider, track.selected_ids)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+                if cmd.target_segment:
+                    self.ui.container.track.selected_ids = {cmd.target_segment.segment_id}
+            else:
+                Toast.show_warning(self.ui.window(), "Chỉ có thể gộp các khối phụ đề đứng cạnh nhau!")
+        else:
+            Toast.show_info(self.ui.window(), "Hãy giữ Ctrl và Click chuột chọn ít nhất 2 khối để gộp.")
+
+    def _trigger_delete(self):
+        track = self.ui.container.track
+        if track.selected_ids: 
+            cmd = DeleteSegmentCommand(self.project, self.data_provider, track.selected_ids)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+                self.ui.container.track.selected_ids.clear()
+        else:
+            Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề nào để xóa.")
+
     def handle_edit_commit(self, segment_id: str, mode: EditMode, delta_ms: int):
-        """Khóa FSM, xử lý Command và ép UI vẽ lại dữ liệu gốc"""
         if not self.state_manager.can_transition(TimelineState.COMMITTING):
-            self.ui.container.track.update() # Hủy Ghost render
+            self.ui.container.track.update()
             return
-
         self.state_manager.transition_to(TimelineState.COMMITTING)
-
         try:
             command = None
-            if mode == EditMode.MOVE:
-                command = MoveSegmentCommand(self.project, self.data_provider, segment_id, delta_ms)
-            elif mode == EditMode.RESIZE_LEFT: 
-                command = ResizeStartCommand(self.project, self.data_provider, segment_id, delta_ms)
-            elif mode == EditMode.RESIZE_RIGHT:
-                command = ResizeEndCommand(self.project, self.data_provider, segment_id, delta_ms)
+            if mode == EditMode.MOVE: command = MoveSegmentCommand(self.project, self.data_provider, segment_id, delta_ms)
+            elif mode == EditMode.RESIZE_LEFT: command = ResizeStartCommand(self.project, self.data_provider, segment_id, delta_ms)
+            elif mode == EditMode.RESIZE_RIGHT: command = ResizeEndCommand(self.project, self.data_provider, segment_id, delta_ms)
 
-            if command and self.undo_manager.execute_command(command, self.state_manager):
-                self._refresh_ui()
+            if command and command.can_execute(None):
+                if self.undo_manager.execute_command(command, self.state_manager):
+                    self._refresh_ui()
+                else:
+                    self.ui.container.track.update()
             else:
                 self.ui.container.track.update()
         finally:
             self.state_manager.transition_to(TimelineState.IDLE)
 
-    # ==========================================
-    # 2. XỬ LÝ PHÍM TẮT (SPLIT, MERGE, DELETE)
-    # ==========================================
-    def handle_split(self, segment_id: str):
-        playhead_ms = self.ui.container.track.playhead_ms
-        cmd = SplitSegmentCommand(self.project, self.data_provider, segment_id, playhead_ms)
-        self._execute_safe(cmd)
-
-    def handle_merge(self, segment_ids: set):
-        cmd = MergeSegmentsCommand(self.project, self.data_provider, segment_ids)
-        self._execute_safe(cmd)
-        if cmd.target_segment:
-            self.ui.container.track.selected_ids = {cmd.target_segment.segment_id}
-
-    def handle_delete(self, segment_ids: set):
-        cmd = DeleteSegmentCommand(self.project, self.data_provider, segment_ids)
-        self._execute_safe(cmd)
-        self.ui.container.track.selected_ids.clear()
-
-    # ==========================================
-    # 3. QUẢN LÝ LỊCH SỬ (UNDO / REDO)
-    # ==========================================
     def handle_undo(self):
         if self.state_manager.can_transition(TimelineState.COMMITTING):
             self.state_manager.transition_to(TimelineState.COMMITTING)
             try:
-                if self.undo_manager.undo():
+                if self.undo_manager.undo(): 
                     self._refresh_ui()
             finally:
                 self.state_manager.transition_to(TimelineState.IDLE)
@@ -88,19 +197,13 @@ class TimelineController:
         if self.state_manager.can_transition(TimelineState.COMMITTING):
             self.state_manager.transition_to(TimelineState.COMMITTING)
             try:
-                if self.undo_manager.redo():
+                if self.undo_manager.redo(): 
                     self._refresh_ui()
             finally:
                 self.state_manager.transition_to(TimelineState.IDLE)
 
-    # ==========================================
-    # 4. HÀM PHỤ TRỢ (HELPERS)
-    # ==========================================
     def _execute_safe(self, command):
-        """Hàm bọc (Wrapper) để kiểm tra FSM và thực thi lệnh an toàn"""
-        if not self.state_manager.can_transition(TimelineState.COMMITTING):
-            return
-            
+        if not self.state_manager.can_transition(TimelineState.COMMITTING): return
         self.state_manager.transition_to(TimelineState.COMMITTING)
         try:
             if self.undo_manager.execute_command(command, self.state_manager):
@@ -109,23 +212,11 @@ class TimelineController:
             self.state_manager.transition_to(TimelineState.IDLE)
 
     def _refresh_ui(self):
-        """View cập nhật lại trạng thái và đồng bộ ngược về hệ thống file"""
-        # 1. Yêu cầu giao diện Timeline tự vẽ lại các block
-        self.ui.load_project_data(
-            self.data_provider.get_duration_ms(), 
-            self.data_provider.get_all_segments()
-        )
-        
-        # 2. Ép đồng bộ dữ liệu chuẩn mực ngược về Subtitle Editor (Dạng Dict)
+        self.ui.load_project_data(self.data_provider.get_duration_ms(), self.data_provider.get_all_segments())
         self.data_provider.sync_back_to_editor()
         
-        # 3. Yêu cầu Subtitle Editor (Bảng chữ) vẽ lại Table với dữ liệu mới
-        # Truy xuất ngược lên MainWindow (Gui.py) thông qua widget hiện tại
         main_window = self.ui.window()
         if hasattr(main_window, 'sub_editor'):
-            # Gọi hàm render_page() của SubtitleEditorWidget để load lại các hàng chữ
             main_window.sub_editor.render_page()
-            
-            # 4. Đánh dấu Project bị thay đổi để khi đóng app, phần mềm nhắc người dùng Ctrl+S
             if hasattr(main_window, 'project_service'):
                 main_window.project_service.mark_dirty()

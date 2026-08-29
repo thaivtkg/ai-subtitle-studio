@@ -34,18 +34,21 @@ class TimelineEditCommand(ABC):
         pass
 
     def _increment_revision(self):
-        """[Fix Blocker 5] Trỏ chính xác vào Timing Artifact thay vì Active chung chung"""
+        """[Fix Blocker 3] Cảnh báo rõ ràng nếu việc tăng Revision thất bại"""
         project = self.project_service.current_project
         if project:
             try:
-                # Cố gắng lấy ID cụ thể của phiên bản Timing
                 art_id = project.state.timing.timing_artifact_id if hasattr(project.state, 'timing') else project.state.active_artifact_id
                 if art_id:
                     artifact = self.project_service.artifact_store.get(art_id)
                     if artifact:
                         artifact.revision += 1
-            except Exception:
-                pass
+                    else:
+                        print(f"[CẢNH BÁO MỨC CAO] Không tìm thấy Artifact ID {art_id} trong Store. Revision không được tăng!")
+                else:
+                    print("[CẢNH BÁO] Project không có active_artifact_id hoặc timing_artifact_id hợp lệ")
+            except Exception as e:
+                print(f"[LỖI NGHIÊM TRỌNG] Đứt gãy tính toàn vẹn dữ liệu khi cập nhật Artifact Revision: {e}")
 
     def undo(self) -> None:
         if self.snapshot and self.snapshot.before_states:
@@ -167,14 +170,15 @@ class SplitSegmentCommand(TimelineEditCommand):
 
     def execute(self, context=None):
         seg = self.data_provider.get_segment(self.segment_id)
+        if not seg:
+            return None
+
         self.original_end_ms = seg.end_ms
+        self.new_segment = self.data_provider.create_split_segment(self.segment_id, self.split_ms)
+        if self.new_segment is None:
+            return None
+
         seg.end_ms = self.split_ms
-        
-        # Tạo object phụ đề mới với ID xịn thay vì dùng time()
-        from core.subtitle_model import SubtitleSegment 
-        new_id = str(uuid.uuid4())
-        self.new_segment = SubtitleSegment(segment_id=new_id, start_ms=self.split_ms, end_ms=self.original_end_ms, text="")
-        
         self.data_provider.add_segment(self.new_segment)
         self._increment_revision()
         self.project_service.mark_dirty()
