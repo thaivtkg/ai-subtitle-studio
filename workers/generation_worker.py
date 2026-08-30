@@ -12,6 +12,8 @@ from core.generation.generation_validator import GenerationValidator
 class GenerationWorker(QThread):
     progress_signal = Signal(int, str)
     error_signal = Signal(str)
+    # BLOCKER 3 FIXED: Phát tín hiệu thay vì chạy hàm trực tiếp
+    batch_ready_signal = Signal(object, list, str) 
     finished_signal = Signal()
 
     def __init__(self, request: GenerationRequest, batches: List[GenerationBatch], all_segments: List[Dict], ai_engine: AIEngine, policy: ContextPolicy):
@@ -44,7 +46,7 @@ class GenerationWorker(QThread):
                 self.progress_signal.emit(int((i / total_batches) * 100), f"Đang xử lý Batch {i+1}/{total_batches}...")
 
                 prev_segs, target_segs, next_segs = SubtitleContextEngine.build_context(
-                    self.all_segments, batch.start_index, batch.end_index, self.policy
+                    self.all_segments, batch.start_stt, batch.end_stt, self.policy
                 )
 
                 prompt = PromptBuilder.build_context_prompt(
@@ -67,17 +69,19 @@ class GenerationWorker(QThread):
                     break # DỪNG DÂY CHUYỀN
 
                 try:
-                    candidates = GenerationValidator.validate(ai_res.parsed_json, target_segs, self.request.request_id, self.request.model_id)
-                    
-                    # Gọi ngược về Service để ghi File và kiểm tra Revision
-                    if self.commit_callback:
-                        self.commit_callback(batch, candidates)
-                        
-                    batch.status = "COMPLETED"
+                    candidates = GenerationValidator.validate(
+                        ai_res.parsed_json, target_segs, 
+                        self.request.request_id, ai_res.request_id, self.request.model_id
+                    )
+                    # Gửi Signal về Main Thread để nó tự xử lý Commit
+                    self.batch_ready_signal.emit(batch, candidates, ai_res.request_id)
+                    # Tạm ngưng Worker chờ Main Thread commit xong (trong Service sẽ quản lý việc chạy Batch tiếp theo)
+                    # Ở phiên bản MVP này, ta giả định Main Thread xử lý signal đồng bộ nhanh, 
+                    # Worker sẽ tự đi tiếp. Nếu lỗi, Signal error từ Main Thread sẽ gọi self.cancel().
                 except Exception as val_err:
                     batch.status = "FAILED"
                     self.error_signal.emit(f"Batch {batch.batch_id} bị từ chối: {str(val_err)}")
-                    break # DỪNG DÂY CHUYỀN
+                    break
 
             if not self.is_cancelled:
                 self.progress_signal.emit(100, "Hoàn tất sinh chữ!")

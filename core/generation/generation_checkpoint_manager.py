@@ -8,8 +8,8 @@ class GenerationCheckpointManager:
 
     def _get_checkpoint_path(self):
         project = self.project_service.current_project
-        if not project:
-            return None
+        if not project: return None
+        
         gen_dir = os.path.join(project.project_dir, "artifacts", "generation")
         os.makedirs(gen_dir, exist_ok=True)
         return os.path.join(gen_dir, "checkpoint.json")
@@ -17,8 +17,10 @@ class GenerationCheckpointManager:
     def save_checkpoint(self, checkpoint: GenerationCheckpoint):
         path = self._get_checkpoint_path()
         if path:
-            with open(path, 'w', encoding='utf-8') as f:
+            temp_path = path + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(checkpoint.__dict__, f, ensure_ascii=False, indent=4)
+            os.replace(temp_path, path)  # Ghi đè nguyên tử (Atomic Replace)
 
     def load_checkpoint(self) -> GenerationCheckpoint:
         path = self._get_checkpoint_path()

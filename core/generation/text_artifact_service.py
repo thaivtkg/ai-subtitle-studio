@@ -13,7 +13,7 @@ class TextArtifactService:
         self.project_service = project_service
         self.data_provider = data_provider
 
-    def _get_text_artifact(self):
+    def get_or_create_text_artifact(self) -> Artifact:
         project = self.project_service.current_project
         if not project: return None
         
@@ -24,7 +24,7 @@ class TextArtifactService:
             
             text_dir = os.path.join(project.project_dir, "artifacts", "text")
             os.makedirs(text_dir, exist_ok=True)
-            path = os.path.join(text_dir, "text_draft.json")
+            path = os.path.join(text_dir, f"{art_id}_text.json")
             
             artifact = Artifact(
                 artifact_id=art_id,
@@ -35,14 +35,20 @@ class TextArtifactService:
                 source_project_id=project.project_id,
                 status=ArtifactStatus.READY
             )
+            # Khởi tạo revision = 0 cho Artifact rỗng
+            artifact.revision = 0
+            
             self.project_service.artifact_store.register(artifact)
-            self._save_text_data(path, {"version": 1.0, "segments": []})
+            self._save_text_data_atomic(path, {"version": 1.0, "segments": []})
             
         return self.project_service.artifact_store.get(art_id)
-
-    def _save_text_data(self, path: str, data: dict):
-        with open(path, 'w', encoding='utf-8') as f:
+    
+    def _save_text_data_atomic(self, path: str, data: dict):
+        # MAJOR 10 FIXED: Atomic Text Artifact write
+        temp_path = path + ".tmp"
+        with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+        os.replace(temp_path, path)
 
     def _load_text_data(self, path: str) -> dict:
         if os.path.exists(path):
@@ -55,12 +61,10 @@ class TextArtifactService:
         timing_art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else project.state.active_artifact_id
         timing_artifact = self.project_service.artifact_store.get(timing_art_id)
 
-        # STALE GUARD: Block rác
         if not timing_artifact or timing_artifact.revision != checkpoint.generation_revision:
-            raise RuntimeError("STALE_TIMING: Dữ liệu Timeline đã bị user thay đổi.")
+            raise RuntimeError("STALE_TIMING: Dữ liệu Timeline đã bị thay đổi.")
 
-        # LƯU XUỐNG TEXT ARTIFACT
-        text_artifact = self._get_text_artifact()
+        text_artifact = self.get_or_create_text_artifact()
         text_data = self._load_text_data(text_artifact.path)
         existing_segs = {str(s.get('id')): s for s in text_data.get('segments', [])}
         
@@ -69,17 +73,19 @@ class TextArtifactService:
                 existing_segs[cand.segment_id] = {
                     "id": cand.segment_id,
                     "text": cand.generated_text,
-                    "status": "draft"  # BLOCKER FIXED: lowercase chuẩn contract
+                    "status": "draft"
                 }
-                # Adapter tạm thời cho MVP: Sync lên Runtime cho User thấy chữ
-                seg = self.data_provider.get_segment(cand.segment_id)
-                if seg:
-                    seg.text = cand.generated_text
-                    seg.status = "draft"
+                # CẬP NHẬT TRỰC TIẾP VÀO DATA PROVIDER (RAM / UI)
+                if self.data_provider:
+                    seg = self.data_provider.get_segment(cand.segment_id)
+                    if seg:
+                        seg.text = cand.generated_text
+                        seg.status = "draft"
                     
         text_data['segments'] = list(existing_segs.values())
-        self._save_text_data(text_artifact.path, text_data)
         
+        # Ghi file Atomic -> Tăng Revision -> Báo dơ Project
+        self._save_text_data_atomic(text_artifact.path, text_data)
         text_artifact.revision += 1
         text_artifact.updated_at = datetime.now().isoformat()
         
