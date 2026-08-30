@@ -1,5 +1,5 @@
 from PySide6.QtCore import QThread, Signal
-from typing import List, Dict
+from typing import List, Dict, Callable
 from core.generation.generation_batch import GenerationBatch
 from core.generation.generation_request import GenerationRequest
 from core.generation.context_engine import SubtitleContextEngine
@@ -11,7 +11,6 @@ from core.generation.generation_validator import GenerationValidator
 
 class GenerationWorker(QThread):
     progress_signal = Signal(int, str)
-    batch_completed_signal = Signal(object, list) # Truyền về (GenerationBatch, List[GenerationCandidate])
     error_signal = Signal(str)
     finished_signal = Signal()
 
@@ -23,6 +22,9 @@ class GenerationWorker(QThread):
         self.ai_engine = ai_engine
         self.policy = policy
         self.is_cancelled = False
+        
+        # Cổng cắm (Hook) để Service đưa hàm Commit vào
+        self.commit_callback: Callable = None 
 
     def cancel(self):
         self.is_cancelled = True
@@ -41,19 +43,18 @@ class GenerationWorker(QThread):
                 batch.status = "RUNNING"
                 self.progress_signal.emit(int((i / total_batches) * 100), f"Đang xử lý Batch {i+1}/{total_batches}...")
 
-                # 1. Bơm Context
                 prev_segs, target_segs, next_segs = SubtitleContextEngine.build_context(
                     self.all_segments, batch.start_index, batch.end_index, self.policy
                 )
 
-                # 2. Xây Prompt
-                instruction = "Điền chữ / Dịch thuật ngữ cảnh cho các khối phụ đề sau."
-                prompt = PromptBuilder.build_context_prompt(prev_segs, target_segs, next_segs, instruction)
+                prompt = PromptBuilder.build_context_prompt(
+                    prev_segs, target_segs, next_segs, 
+                    "Bạn là chuyên gia dịch thuật phụ đề. Hãy dịch/điền chữ cho các khối mục tiêu."
+                )
 
-                # 3. Gửi AI
                 ai_req = AIRequest(
                     request_id=self.request.request_id,
-                    system_instruction="You are a professional subtitle translator.",
+                    system_instruction="Trả về JSON chuẩn. Không giải thích.",
                     prompt=prompt,
                     temperature=self.request.temperature,
                     max_tokens=self.request.max_tokens
@@ -62,24 +63,25 @@ class GenerationWorker(QThread):
 
                 if ai_res.error or not ai_res.parsed_json:
                     batch.status = "FAILED"
-                    self.error_signal.emit(f"Batch {batch.batch_id} lỗi: {ai_res.error or 'Parse JSON thất bại'}")
-                    continue
+                    self.error_signal.emit(f"Batch {batch.batch_id} lỗi AI: {ai_res.error or 'Parse JSON thất bại'}")
+                    break # DỪNG DÂY CHUYỀN
 
-                # 4. Kiểm duyệt dữ liệu Output
-                candidates = GenerationValidator.validate(ai_res.parsed_json, target_segs, self.request.request_id, self.request.model_id)
-
-                if any(c.validation_status == "FAILED" for c in candidates):
-                    batch.status = "FAILED"
-                    self.error_signal.emit(f"Batch {batch.batch_id} bị từ chối do thiếu/sai dữ liệu Validation.")
-                else:
+                try:
+                    candidates = GenerationValidator.validate(ai_res.parsed_json, target_segs, self.request.request_id, self.request.model_id)
+                    
+                    # Gọi ngược về Service để ghi File và kiểm tra Revision
+                    if self.commit_callback:
+                        self.commit_callback(batch, candidates)
+                        
                     batch.status = "COMPLETED"
-
-                # Gửi Candidates về cho Service xử lý tiếp
-                self.batch_completed_signal.emit(batch, candidates)
+                except Exception as val_err:
+                    batch.status = "FAILED"
+                    self.error_signal.emit(f"Batch {batch.batch_id} bị từ chối: {str(val_err)}")
+                    break # DỪNG DÂY CHUYỀN
 
             if not self.is_cancelled:
                 self.progress_signal.emit(100, "Hoàn tất sinh chữ!")
             self.finished_signal.emit()
 
         except Exception as e:
-            self.error_signal.emit(str(e))
+            self.error_signal.emit(f"Lỗi hệ thống ngầm: {str(e)}")
