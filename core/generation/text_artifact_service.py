@@ -28,14 +28,14 @@ class TextArtifactService:
             
             artifact = Artifact(
                 artifact_id=art_id,
-                artifact_type=ArtifactType.DRAFT,
+                # FIXED: Dùng đúng Semantic thay vì DRAFT
+                artifact_type=ArtifactType.TEXT, 
                 path=path,
                 created_at=datetime.now().isoformat(),
                 updated_at=datetime.now().isoformat(),
                 source_project_id=project.project_id,
                 status=ArtifactStatus.READY
             )
-            # Khởi tạo revision = 0 cho Artifact rỗng
             artifact.revision = 0
             
             self.project_service.artifact_store.register(artifact)
@@ -65,6 +65,13 @@ class TextArtifactService:
             raise RuntimeError("STALE_TIMING: Dữ liệu Timeline đã bị thay đổi.")
 
         text_artifact = self.get_or_create_text_artifact()
+        
+        # FIXED: Lớp khiên bảo vệ tuyệt đối cho Text Artifact
+        if text_artifact.artifact_id != checkpoint.text_artifact_id:
+            raise RuntimeError("STALE_TEXT_ARTIFACT: Text Artifact đã bị thay thế.")
+        if text_artifact.revision != checkpoint.text_revision:
+            raise RuntimeError("STALE_TEXT: Text Artifact đã bị thay đổi kể từ khi Generation bắt đầu.")
+
         text_data = self._load_text_data(text_artifact.path)
         existing_segs = {str(s.get('id')): s for s in text_data.get('segments', [])}
         
@@ -75,7 +82,6 @@ class TextArtifactService:
                     "text": cand.generated_text,
                     "status": "draft"
                 }
-                # CẬP NHẬT TRỰC TIẾP VÀO DATA PROVIDER (RAM / UI)
                 if self.data_provider:
                     seg = self.data_provider.get_segment(cand.segment_id)
                     if seg:
@@ -84,7 +90,6 @@ class TextArtifactService:
                     
         text_data['segments'] = list(existing_segs.values())
         
-        # Ghi file Atomic -> Tăng Revision -> Báo dơ Project
         self._save_text_data_atomic(text_artifact.path, text_data)
         text_artifact.revision += 1
         text_artifact.updated_at = datetime.now().isoformat()
