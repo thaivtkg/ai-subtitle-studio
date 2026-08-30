@@ -170,5 +170,51 @@ class TestGenerationIntegration(unittest.TestCase):
             
         self.assertTrue("Checkpoint thuộc về Project khác" in str(context.exception))
 
+    def test_05_resume_skips_completed_batches(self):
+        """Chứng minh Resume khôi phục trạng thái COMPLETED và bỏ qua các batch đã xong"""
+        from core.generation.generation_service import GenerationService
+        from core.ai.ai_engine import AIEngine
+        from core.ai.ai_response import AIResponse
+
+        class MockAIEngine(AIEngine):
+            def __init__(self):
+                self.processed_batches = []
+            def generate(self, req):
+                import re
+                target_ids = re.findall(r"ID: (seg_\d+)", req.prompt)
+                segs_json = [{"id": sid, "text": f"Dịch {sid}"} for sid in target_ids]
+                return AIResponse(request_id=req.request_id, raw_text="", parsed_json={"segments": segs_json})
+            def load_model(self, path): pass
+            def unload_model(self): pass
+
+        mock_ai = MockAIEngine()
+        gen_service = GenerationService(mock_ai, self.ps, self.dp)
+
+        # Giả lập 20 câu, 2 batch: B1 (1-10), B2 (11-20)
+        req_data = {
+            "request_id": "req_resume_1", "project_id": "proj_123", "source_fingerprint": "source_hash_123",
+            "timing_artifact_id": "timing_123", "start_segment": 1, "end_segment": 20, "mode": "fill_text",
+            "source_language": "vi", "target_language": "vi", "context_before": 3, "context_after": 3,
+            "model_id": "mock_m", "temperature": 0.2, "max_tokens": 1000
+        }
+        b1_data = {"batch_id": "b1", "start_stt": 1, "end_stt": 10, "status": "PENDING", "revision": 0, "created_at": "now", "updated_at": "now"}
+        b2_data = {"batch_id": "b2", "start_stt": 11, "end_stt": 20, "status": "PENDING", "revision": 0, "created_at": "now", "updated_at": "now"}
+
+        # B1 đã hoàn thành trước đó
+        chk = GenerationCheckpoint(
+            project_id="proj_123", source_fingerprint="source_hash_123", timing_artifact_id="timing_123",
+            text_artifact_id="text_123", request_id="req_resume_1", generation_revision=5, next_segment_index=11,
+            completed_batches=["b1"], request_data=req_data, batches_data=[b1_data, b2_data], active_batch=None, updated_at="now"
+        )
+        self.checkpoint_mgr.save_checkpoint(chk)
+
+        dummy_segs = [{"id": f"seg_{i}", "text": ""} for i in range(1, 21)]
+        gen_service.resume_generation(dummy_segs)
+
+        # Batch 1 phải ở trạng thái COMPLETED
+        self.assertEqual(gen_service.current_batches[0].status, "COMPLETED")
+        self.assertIn("b1", gen_service.current_checkpoint.completed_batches)
+        gen_service.cancel_generation()
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

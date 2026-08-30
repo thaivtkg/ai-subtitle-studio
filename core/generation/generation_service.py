@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from typing import List, Dict, Optional
 from PySide6.QtCore import QObject, Slot
@@ -10,22 +9,24 @@ from core.generation.generation_checkpoint import GenerationCheckpoint
 from core.generation.generation_checkpoint_manager import GenerationCheckpointManager
 from core.generation.text_artifact_service import TextArtifactService
 from core.ai.ai_engine import AIEngine
-from workers.generation_worker import GenerationWorker
+from workers.generation_worker import GenerationBatchWorker
 
 class GenerationService(QObject):
     def __init__(self, ai_engine: AIEngine, project_service, data_provider):
         super().__init__()
         self.ai_engine = ai_engine
         self.project_service = project_service
-        self.data_provider = data_provider # Lưu lại để update UI sau khi commit
+        self.data_provider = data_provider
         self.checkpoint_manager = GenerationCheckpointManager(project_service)
         self.text_artifact_service = TextArtifactService(project_service, data_provider)
         
         self.policy = ContextPolicy(before=3, after=3, max_chars=6000)
-        self.current_worker: Optional[GenerationWorker] = None
+        self.current_worker: Optional[GenerationBatchWorker] = None
         self.current_request: Optional[GenerationRequest] = None
         self.current_batches: List[GenerationBatch] = []
         self.current_checkpoint: Optional[GenerationCheckpoint] = None
+        self.all_segments_ref: List[Dict] = []
+        self._is_cancelled: bool = False
         
         self.on_progress = None
         self.on_batch_complete = None
@@ -34,8 +35,11 @@ class GenerationService(QObject):
 
     def start_generation(self, request: GenerationRequest, all_segments: List[Dict], batch_size: int):
         project = self.project_service.current_project
-        if not project: raise ValueError("Không có Project nào đang mở.")
+        if not project:
+            raise ValueError("Không có Project nào đang mở.")
 
+        self._is_cancelled = False
+        self.all_segments_ref = all_segments
         self.current_request = request
         self.current_batches = GenerationPlanner.create_plan(request, batch_size)
         
@@ -43,9 +47,8 @@ class GenerationService(QObject):
         timing_artifact = self.project_service.artifact_store.get(timing_art_id)
         timing_rev = timing_artifact.revision if timing_artifact else 0
 
-        # BLOCKER 4 FIXED: Tạo Text Artifact trước, lấy ID nhét vào Checkpoint
         text_artifact = self.text_artifact_service.get_or_create_text_artifact()
-        source_fp = getattr(project.source, 'fingerprint', 'unknown') if hasattr(project, 'source') else 'unknown' # BLOCKER 6 FIXED
+        source_fp = getattr(project.source, 'fingerprint', 'unknown') if hasattr(project, 'source') else 'unknown'
 
         self.current_checkpoint = GenerationCheckpoint(
             project_id=project.project_id,
@@ -64,35 +67,51 @@ class GenerationService(QObject):
         )
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
         self.ai_engine.load_model(request.model_id)
-        self._run_worker(all_segments)
+        self._dispatch_next_batch()
 
     def resume_generation(self, all_segments: List[Dict]):
-        # BLOCKER 5 & 7 FIXED: True Resume với Deep Validation
         checkpoint = self.checkpoint_manager.load_checkpoint()
-        if not checkpoint: raise ValueError("Không tìm thấy Checkpoint.")
+        if not checkpoint:
+            raise ValueError("Không tìm thấy Checkpoint.")
 
         project = self.project_service.current_project
+        if not project:
+            raise ValueError("Không có Project nào đang mở.")
+
         timing_art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else project.state.active_artifact_id
         timing_artifact = self.project_service.artifact_store.get(timing_art_id)
         source_fp = getattr(project.source, 'fingerprint', 'unknown') if hasattr(project, 'source') else 'unknown'
 
-        if checkpoint.project_id != project.project_id: raise ValueError("Checkpoint thuộc về Project khác.")
-        if checkpoint.source_fingerprint != source_fp: raise ValueError("Source video đã thay đổi, không thể Resume.")
-        if checkpoint.timing_artifact_id != timing_art_id: raise ValueError("Timing Artifact đã bị thay thế.")
+        if checkpoint.project_id != project.project_id:
+            raise ValueError("Checkpoint thuộc về Project khác.")
+        if checkpoint.source_fingerprint != source_fp:
+            raise ValueError("Source video đã thay đổi, không thể Resume.")
+        if checkpoint.timing_artifact_id != timing_art_id:
+            raise ValueError("Timing Artifact đã bị thay thế.")
         if not timing_artifact or timing_artifact.revision != checkpoint.generation_revision:
             raise RuntimeError("STALE TIMING: Dữ liệu Timeline đã bị thay đổi kể từ lần chạy trước.")
 
-        # Phục hồi State lên RAM
+        # BLOCKER 1 FIXED: Khôi phục trạng thái COMPLETED cho các batch đã xử lý
+        completed_set = set(checkpoint.completed_batches)
+        self.current_batches = []
+        for b_data in checkpoint.batches_data:
+            b = GenerationBatch(**b_data)
+            if b.batch_id in completed_set:
+                b.status = "COMPLETED"
+            self.current_batches.append(b)
+
+        self._is_cancelled = False
+        self.all_segments_ref = all_segments
         self.current_request = GenerationRequest(**checkpoint.request_data)
-        self.current_batches = [GenerationBatch(**b_data) for b_data in checkpoint.batches_data]
         self.current_checkpoint = checkpoint
         self.current_checkpoint.status = "RUNNING"
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
 
         self.ai_engine.load_model(self.current_request.model_id)
-        self._run_worker(all_segments)
+        self._dispatch_next_batch()
 
     def cancel_generation(self):
+        self._is_cancelled = True
         if self.current_worker and self.current_worker.isRunning():
             self.current_worker.cancel()
             self.current_worker.wait(1500)
@@ -101,35 +120,75 @@ class GenerationService(QObject):
             self.current_checkpoint.status = "CANCELLED"
             self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
 
-    def _run_worker(self, all_segments: List[Dict]):
-        self.current_worker = GenerationWorker(
-            self.current_request, self.current_batches, all_segments, self.ai_engine, self.policy
+    def _get_next_pending_batch(self) -> Optional[GenerationBatch]:
+        for batch in self.current_batches:
+            if batch.status != "COMPLETED":
+                return batch
+        return None
+
+    def _dispatch_next_batch(self):
+        if self._is_cancelled:
+            return
+
+        next_batch = self._get_next_pending_batch()
+        if not next_batch:
+            if self.current_checkpoint:
+                self.current_checkpoint.status = "COMPLETED"
+                self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+            self.ai_engine.unload_model()
+            if self.on_progress:
+                self.on_progress(100, "Hoàn tất sinh chữ!")
+            if self.on_finish:
+                self.on_finish()
+            return
+
+        total_batches = len(self.current_batches)
+        completed_count = len(self.current_checkpoint.completed_batches)
+        progress_pct = int((completed_count / total_batches) * 100) if total_batches > 0 else 0
+        
+        if self.on_progress:
+            self.on_progress(progress_pct, f"Đang xử lý Batch {completed_count + 1}/{total_batches}...")
+
+        # BLOCKER 2 FIXED: Khởi chạy đơn lẻ từng Batch
+        self.current_worker = GenerationBatchWorker(
+            self.current_request,
+            next_batch,
+            self.all_segments_ref,
+            self.ai_engine,
+            self.policy
         )
-        
-        # KẾT NỐI SIGNAL ĐẾN MAIN THREAD SLOT
-        self.current_worker.batch_ready_signal.connect(self._sync_commit_batch_slot)
-        
-        if self.on_progress: self.current_worker.progress_signal.connect(self.on_progress)
-        if self.on_error: self.current_worker.error_signal.connect(self.on_error)
-        self.current_worker.finished_signal.connect(self._handle_finished)
+        self.current_worker.batch_success_signal.connect(self._sync_commit_batch_slot)
+        self.current_worker.error_signal.connect(self._handle_worker_error)
         self.current_worker.start()
 
     @Slot(object, list, str)
     def _sync_commit_batch_slot(self, batch: GenerationBatch, candidates: list, res_req_id: str):
-        """Chạy trên Main Thread, thao tác File và UI an toàn"""
+        """Xử lý đồng bộ trên Main Thread trước khi dispatch Batch kế tiếp"""
         try:
-            # Ghi Text Artifact và đồng bộ DataProvider cùng lúc
             self.text_artifact_service.commit_candidates(candidates, self.current_checkpoint)
             
             batch.status = "COMPLETED"
-            self.current_checkpoint.completed_batches.append(batch.batch_id)
+            if batch.batch_id not in self.current_checkpoint.completed_batches:
+                self.current_checkpoint.completed_batches.append(batch.batch_id)
+                
+            self.current_checkpoint.batches_data = [b.__dict__ for b in self.current_batches]
             self.current_checkpoint.updated_at = datetime.now().isoformat()
             self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
             
             if self.on_batch_complete:
                 self.on_batch_complete(batch, candidates)
                 
+            # Chạy tiếp Batch tiếp theo
+            self._dispatch_next_batch()
+                
         except Exception as e:
             batch.status = "STALE" if "STALE" in str(e) else "FAILED"
-            if self.on_error: self.on_error(str(e))
+            if self.on_error:
+                self.on_error(str(e))
             self.cancel_generation()
+
+    @Slot(str)
+    def _handle_worker_error(self, err_msg: str):
+        if self.on_error:
+            self.on_error(err_msg)
+        self.cancel_generation()
