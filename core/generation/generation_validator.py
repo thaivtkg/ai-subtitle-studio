@@ -3,7 +3,13 @@ from core.generation.generation_candidate import GenerationCandidate
 
 class GenerationValidator:
     @staticmethod
-    def validate(parsed_json: Dict[str, Any], target_segs: List[Dict], expected_request_id: str, response_request_id: str, model_id: str) -> List[GenerationCandidate]:
+    def validate(parsed_json: Dict[str, Any], target_segs: List[Dict], expected_request_id: str, response_request_id: str, model_id: str = None) -> List[GenerationCandidate]:
+        # Preserve the four-argument API used by older callers. New callers
+        # pass the response request id explicitly as the fourth argument.
+        if model_id is None:
+            model_id = response_request_id
+            response_request_id = expected_request_id
+
         # BLOCKER 9 & 10 FIXED: Kiểm tra chéo Request ID từ AIResponse
         if expected_request_id != response_request_id:
             raise ValueError("SAI IDENTITY: Response nhận được không thuộc về Request hiện tại.")
@@ -17,7 +23,7 @@ class GenerationValidator:
         
         # BLOCKER 8 FIXED: Ép Ordering và Exact Identity tuyệt đối
         if generated_ids != target_ids:
-            raise ValueError("SAI CẤU TRÚC ID: AI trả về thiếu, thừa, trùng lặp hoặc sai thứ tự ID so với bản gốc.")
+            raise ValueError("SAI CẤU TRÚC ID: AI trả về EXTRA, MISSING, DUPLICATE hoặc sai thứ tự ID so với bản gốc.")
 
         candidates = []
         for i, seg in enumerate(target_segs):
@@ -38,4 +44,4 @@ class GenerationValidator:
                 validation_errors=[]
             ))
             
-        return candidates   
+        return candidates

@@ -9,3 +9,13 @@ class GenerationBatch:
     revision: int
     created_at: str
     updated_at: str
+
+    @property
+    def start_index(self) -> int:
+        """Backward-compatible alias for callers using the pre-STT name."""
+        return self.start_stt
+
+    @property
+    def end_index(self) -> int:
+        """Backward-compatible alias for callers using the pre-STT name."""
+        return self.end_stt
