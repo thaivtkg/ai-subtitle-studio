@@ -4,6 +4,7 @@ class ArtifactType(Enum):
     SOURCE_REFERENCE = "source_reference"
     TIMING = "timing"
     DRAFT = "draft"
+    TEXT = "text"
     SUBTITLE = "subtitle"
     EXPORT = "export"
     HARDSUB = "hardsub"

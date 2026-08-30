@@ -61,7 +61,7 @@ class TextArtifactService:
         timing_art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else project.state.active_artifact_id
         timing_artifact = self.project_service.artifact_store.get(timing_art_id)
 
-        if not timing_artifact or timing_artifact.revision != checkpoint.generation_revision:
+        if not timing_artifact or timing_artifact.revision != checkpoint.timing_revision:
             raise RuntimeError("STALE_TIMING: Dữ liệu Timeline đã bị thay đổi.")
 
         text_artifact = self.get_or_create_text_artifact()

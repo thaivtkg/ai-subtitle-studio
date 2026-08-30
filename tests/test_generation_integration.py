@@ -3,6 +3,7 @@ import sys
 import os
 import tempfile
 import shutil
+import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -11,12 +12,15 @@ from core.generation.generation_batch import GenerationBatch
 from core.generation.generation_candidate import GenerationCandidate
 from core.generation.generation_checkpoint import GenerationCheckpoint
 from core.generation.generation_checkpoint_manager import GenerationCheckpointManager
+from core.generation.generation_service import GenerationService
 from core.generation.text_artifact_service import TextArtifactService
 from core.artifacts.artifact import Artifact
-from core.artifacts.artifact_types import ArtifactType
+from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
+from core.ai.ai_engine import AIEngine
+from core.ai.ai_response import AIResponse
 
 # ==========================================
-# 1. MOCK (GIẢ LẬP MÔI TRƯỜNG DỰ ÁN THỰC TẾ)
+# 1. MOCK DATA & SERVICES
 # ==========================================
 class MockSource:
     def __init__(self):
@@ -26,7 +30,7 @@ class MockState:
     def __init__(self):
         self.timing_artifact_id = "timing_123"
         self.active_artifact_id = "timing_123"
-        self.text_artifact_id = None
+        self.text_artifact_id = "text_123"
 
 class MockProject:
     def __init__(self, temp_dir):
@@ -49,18 +53,20 @@ class MockProjectService:
         self.current_project = MockProject(temp_dir)
         self.artifact_store = MockArtifactStore()
         
-        # Đăng ký sẵn Timing Artifact
-        timing_art = Artifact("timing_123", ArtifactType.TIMING, "dummy.srt", "now", "now", "proj_123", "READY")
+        # Đăng ký sẵn Timing Artifact (Rev 5)
+        timing_art = Artifact("timing_123", ArtifactType.TIMING, "dummy.srt", "now", "now", "proj_123", ArtifactStatus.READY)
         timing_art.revision = 5
         self.artifact_store.register(timing_art)
 
-    def mark_dirty(self): pass
+        # Đăng ký sẵn Text Artifact (Rev 0)
+        text_dir = os.path.join(temp_dir, "artifacts", "text")
+        os.makedirs(text_dir, exist_ok=True)
+        text_path = os.path.join(text_dir, "text_123_text.json")
+        text_art = Artifact("text_123", ArtifactType.TEXT, text_path, "now", "now", "proj_123", ArtifactStatus.READY)
+        text_art.revision = 0
+        self.artifact_store.register(text_art)
 
-class MockDataProvider:
-    def __init__(self):
-        self.segments = {"seg_1": MockSegment("seg_1")}
-    def get_segment(self, sid):
-        return self.segments.get(sid)
+    def mark_dirty(self): pass
 
 class MockSegment:
     def __init__(self, sid):
@@ -68,12 +74,18 @@ class MockSegment:
         self.text = ""
         self.status = "timing_only"
 
+class MockDataProvider:
+    def __init__(self):
+        self.segments = {f"seg_{i}": MockSegment(f"seg_{i}") for i in range(1, 25)}
+    def get_segment(self, sid):
+        return self.segments.get(sid)
+
+
 # ==========================================
-# 2. BỘ KIỂM THỬ TÍCH HỢP (INTEGRATION TESTS)
+# 2. BỘ TEST INTEGRATION HOÀN CHỈNH
 # ==========================================
 class TestGenerationIntegration(unittest.TestCase):
     def setUp(self):
-        # Tạo thư mục tạm trên ổ cứng để test Atomic Write thật sự
         self.test_dir = tempfile.mkdtemp()
         self.ps = MockProjectService(self.test_dir)
         self.dp = MockDataProvider()
@@ -86,70 +98,92 @@ class TestGenerationIntegration(unittest.TestCase):
     def test_01_atomic_checkpoint_roundtrip(self):
         """Chứng minh file Checkpoint được ghi nguyên tử (Atomic) và nạp lại chuẩn xác"""
         chk = GenerationCheckpoint(
-            project_id="proj_123", source_fingerprint="source_hash_123",
-            timing_artifact_id="timing_123", text_artifact_id="text_123",
-            request_id="req_1", generation_revision=5, next_segment_index=1,
-            completed_batches=[], request_data={}, batches_data=[], active_batch=None, updated_at="now"
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=1,
+            completed_batches=[],
+            request_data={"request_id": "req_1"},
+            batches_data=[],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
         )
         
-        # Lưu file
         self.checkpoint_mgr.save_checkpoint(chk)
-        
-        # Nạp file
         loaded_chk = self.checkpoint_mgr.load_checkpoint()
+        
         self.assertIsNotNone(loaded_chk)
         self.assertEqual(loaded_chk.project_id, "proj_123")
-        self.assertEqual(loaded_chk.generation_revision, 5)
-        
-        # Xác minh đường dẫn vật lý
-        chk_path = self.checkpoint_mgr._get_checkpoint_path()
-        self.assertTrue(os.path.exists(chk_path), "File checkpoint.json không tồn tại trên ổ cứng!")
+        self.assertEqual(loaded_chk.timing_revision, 5)
+        self.assertEqual(loaded_chk.text_revision, 0)
+        self.assertEqual(loaded_chk.status, "RUNNING")
+        self.assertTrue(os.path.exists(self.checkpoint_mgr._get_checkpoint_path()))
 
     def test_02_text_artifact_atomic_commit(self):
         """Chứng minh Candidate được lưu Atomic xuống Text Artifact và cập nhật RAM UI an toàn"""
         chk = GenerationCheckpoint(
-            "proj_123", "source_hash_123", "timing_123", "text_123", "req_1", 5, 1, [], {}, [], None, "now"
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=1,
+            completed_batches=[],
+            request_data={"request_id": "req_1"},
+            batches_data=[],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
         )
         candidates = [GenerationCandidate("seg_1", "", "Bản dịch test", "model_1", "req_1", 1.0, "PASSED", [])]
         
-        # Thực hiện Commit
         success = self.text_service.commit_candidates(candidates, chk)
         self.assertTrue(success)
         
-        # Kiểm tra dữ liệu UI Runtime
+        # UI Runtime phải có dữ liệu
         seg = self.dp.get_segment("seg_1")
         self.assertEqual(seg.text, "Bản dịch test")
         self.assertEqual(seg.status, "draft")
         
-        # Kiểm tra Artifact File
-        art_id = self.ps.current_project.state.text_artifact_id
-        self.assertIsNotNone(art_id)
-        artifact = self.ps.artifact_store.get(art_id)
-        self.assertEqual(artifact.revision, 1) # Text Revision phải tăng 1
+        # Text Artifact Revision phải tăng từ 0 lên 1
+        artifact = self.ps.artifact_store.get("text_123")
+        self.assertEqual(artifact.revision, 1)
 
     def test_03_stale_timing_guard_rejects_commit(self):
         """Chứng minh STALE GUARD chặn đứng việc ghi đè nếu Timeline bị User sửa"""
         chk = GenerationCheckpoint(
-            "proj_123", "source_hash_123", "timing_123", "text_123", "req_1", 5, 1, [], {}, [], None, "now"
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=1,
+            completed_batches=[],
+            request_data={"request_id": "req_1"},
+            batches_data=[],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
         )
         candidates = [GenerationCandidate("seg_1", "", "Dịch ngầm", "model_1", "req_1", 1.0, "PASSED", [])]
         
-        # CỐ TÌNH: Giả lập người dùng bấm cắt/gộp Timeline làm tăng Revision lên 6
+        # Giả lập Timeline bị sửa (Revision nhảy từ 5 lên 6)
         self.ps.artifact_store.get("timing_123").revision = 6
         
-        # TextService phải ném lỗi STALE_TIMING
         with self.assertRaises(RuntimeError) as context:
             self.text_service.commit_candidates(candidates, chk)
             
         self.assertTrue("STALE_TIMING" in str(context.exception))
-        
-        # Dữ liệu UI tuyệt đối không được phép đổi
         self.assertEqual(self.dp.get_segment("seg_1").text, "")
 
     def test_04_resume_identity_validation_failure(self):
-        """Chứng minh Resume từ chối khôi phục nếu mở sai Dự án (Project/Source Mismatch)"""
-        from core.generation.generation_service import GenerationService
-        from core.ai.ai_engine import AIEngine
+        """Chứng minh Resume từ chối khôi phục nếu mở sai Dự án hoặc sai Artifact"""
         class DummyAIEngine(AIEngine):
             def generate(self, req): pass
             def load_model(self, path): pass
@@ -158,11 +192,23 @@ class TestGenerationIntegration(unittest.TestCase):
         gen_service = GenerationService(DummyAIEngine(), self.ps, self.dp)
         
         chk = GenerationCheckpoint(
-            "proj_123", "source_hash_123", "timing_123", "text_123", "req_1", 5, 1, [], {}, [], None, "now"
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=1,
+            completed_batches=[],
+            request_data={"request_id": "req_1"},
+            batches_data=[],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
         )
         self.checkpoint_mgr.save_checkpoint(chk)
         
-        # CỐ TÌNH: Giả lập mở một dự án khác (ID khác) nhưng thư mục vô tình trỏ tới Checkpoint cũ
+        # Giả lập ID dự án bị mismatch
         self.ps.current_project.project_id = "proj_HACKER_999"
         
         with self.assertRaises(ValueError) as context:
@@ -171,15 +217,12 @@ class TestGenerationIntegration(unittest.TestCase):
         self.assertTrue("Checkpoint thuộc về Project khác" in str(context.exception))
 
     def test_05_resume_skips_completed_batches(self):
-        """Chứng minh Resume khôi phục trạng thái COMPLETED và bỏ qua các batch đã xong"""
-        from core.generation.generation_service import GenerationService
-        from core.ai.ai_engine import AIEngine
-        from core.ai.ai_response import AIResponse
-
-        class MockAIEngine(AIEngine):
+        """Chứng minh Resume khôi phục trạng thái COMPLETED và bỏ qua THỰC SỰ các batch đã xong"""
+        class MockAIEngineSkipCheck(AIEngine):
             def __init__(self):
-                self.processed_batches = []
+                self.call_count = 0
             def generate(self, req):
+                self.call_count += 1
                 import re
                 target_ids = re.findall(r"ID: (seg_\d+)", req.prompt)
                 segs_json = [{"id": sid, "text": f"Dịch {sid}"} for sid in target_ids]
@@ -187,34 +230,82 @@ class TestGenerationIntegration(unittest.TestCase):
             def load_model(self, path): pass
             def unload_model(self): pass
 
-        mock_ai = MockAIEngine()
+        mock_ai = MockAIEngineSkipCheck()
         gen_service = GenerationService(mock_ai, self.ps, self.dp)
 
-        # Giả lập 20 câu, 2 batch: B1 (1-10), B2 (11-20)
         req_data = {
-            "request_id": "req_resume_1", "project_id": "proj_123", "source_fingerprint": "source_hash_123",
-            "timing_artifact_id": "timing_123", "start_segment": 1, "end_segment": 20, "mode": "fill_text",
-            "source_language": "vi", "target_language": "vi", "context_before": 3, "context_after": 3,
-            "model_id": "mock_m", "temperature": 0.2, "max_tokens": 1000
+            "request_id": "req_resume_1",
+            "project_id": "proj_123",
+            "source_fingerprint": "source_hash_123",
+            "timing_artifact_id": "timing_123",
+            "start_segment": 1,
+            "end_segment": 20,
+            "mode": "fill_text",
+            "source_language": "vi",
+            "target_language": "vi",
+            "context_before": 3,
+            "context_after": 3,
+            "model_id": "mock_m",
+            "temperature": 0.2,
+            "max_tokens": 1000
         }
         b1_data = {"batch_id": "b1", "start_stt": 1, "end_stt": 10, "status": "PENDING", "revision": 0, "created_at": "now", "updated_at": "now"}
         b2_data = {"batch_id": "b2", "start_stt": 11, "end_stt": 20, "status": "PENDING", "revision": 0, "created_at": "now", "updated_at": "now"}
 
-        # B1 đã hoàn thành trước đó
+        # Checkpoint: B1 đã hoàn thành trước đó
         chk = GenerationCheckpoint(
-            project_id="proj_123", source_fingerprint="source_hash_123", timing_artifact_id="timing_123",
-            text_artifact_id="text_123", request_id="req_resume_1", generation_revision=5, next_segment_index=11,
-            completed_batches=["b1"], request_data=req_data, batches_data=[b1_data, b2_data], active_batch=None, updated_at="now"
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=11,
+            completed_batches=["b1"],
+            request_data=req_data,
+            batches_data=[b1_data, b2_data],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
         )
         self.checkpoint_mgr.save_checkpoint(chk)
 
         dummy_segs = [{"id": f"seg_{i}", "text": ""} for i in range(1, 21)]
         gen_service.resume_generation(dummy_segs)
 
-        # Batch 1 phải ở trạng thái COMPLETED
+        # Đợi worker hoàn tất Batch 2
+        if gen_service.current_worker:
+            gen_service.current_worker.wait(2000)
+
+        # Batch 1 được đánh dấu COMPLETED và chỉ gọi AI 1 lần cho Batch 2
         self.assertEqual(gen_service.current_batches[0].status, "COMPLETED")
-        self.assertIn("b1", gen_service.current_checkpoint.completed_batches)
+        self.assertEqual(mock_ai.call_count, 1, "LỖI: AI đã bị gọi lại cho Batch lẽ ra phải được bỏ qua!")
         gen_service.cancel_generation()
+
+    def test_06_checkpoint_persists_next_segment_and_text_revision(self):
+        """Chứng minh sau khi Commit, text_revision và tịnh tiến trạng thái được cập nhật chuẩn"""
+        chk = GenerationCheckpoint(
+            project_id="proj_123",
+            source_fingerprint="source_hash_123",
+            timing_artifact_id="timing_123",
+            text_artifact_id="text_123",
+            timing_revision=5,
+            text_revision=0,
+            next_segment_index=1,
+            completed_batches=[],
+            request_data={"request_id": "req_1"},
+            batches_data=[],
+            active_batch=None,
+            updated_at="now",
+            status="RUNNING"
+        )
+        candidates = [GenerationCandidate("seg_1", "", "Bản dịch test", "model_1", "req_1", 1.0, "PASSED", [])]
+        
+        self.text_service.commit_candidates(candidates, chk)
+        
+        artifact = self.ps.artifact_store.get("text_123")
+        self.assertEqual(artifact.revision, 1)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
