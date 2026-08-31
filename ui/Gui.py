@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self._is_dragging = False
 
         self.queue_mgr = QueueManager()
+        self._queue_project_dirs = {}
         self.queue_mgr.queue_updated.connect(self.on_queue_updated)
         self.queue_mgr.active_changed.connect(
             lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid) if hasattr(self, 'queue_ui') else None
@@ -307,6 +308,9 @@ class MainWindow(QMainWindow):
         self.generation_panel.timing_start_requested.connect(
             self._start_timing_draft
         )
+        self.generation_panel.timing_resume_requested.connect(
+            self._resume_timing_draft
+        )
         self.generation_panel.timing_cancel_requested.connect(
             self.timing_service.cancel_timing
         )
@@ -319,6 +323,7 @@ class MainWindow(QMainWindow):
             self._on_timing_state_changed
         )
         self.timing_service.error_signal.connect(self._on_timing_error)
+        self._restore_panel_callbacks()
         self.generation_dock = QDockWidget("AI Generation", self)
         self.generation_dock.setObjectName("SubtitleGenerationDock")
         self.generation_dock.setAllowedAreas(
@@ -590,7 +595,7 @@ class MainWindow(QMainWindow):
                 added.append(f)
         if added:
             self._start_metadata_worker(added)
-            self.on_queue_item_clicked(added[-1])
+            self.on_queue_item_clicked(added[-1], fresh_project=True)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -758,7 +763,8 @@ class MainWindow(QMainWindow):
         if files:
             added = [f for f in files if self.queue_mgr.add_video(f)]
             self._start_metadata_worker(added)
-            if added: self.on_queue_item_clicked(added[-1])
+            if added:
+                self.on_queue_item_clicked(added[-1], fresh_project=True)
 
     def select_srt_for_video(self):
         vid, _ = QFileDialog.getOpenFileName(self, "Chọn Video", "", "Media (*.mp4 *.mkv *.avi *.mov *.wmv)")
@@ -772,6 +778,7 @@ class MainWindow(QMainWindow):
                 self.on_queue_item_clicked(vid)
 
     def clear_files(self):
+        self._queue_project_dirs.clear()
         self.queue_mgr.clear_queue()
 
     def select_output_dir(self):
@@ -793,32 +800,55 @@ class MainWindow(QMainWindow):
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
 
-    def on_queue_item_clicked(self, vid_path):
+    def on_queue_item_clicked(self, vid_path, fresh_project=False):
         self.queue_mgr.set_active(vid_path)
 
         # Queue items can arrive through Drag & Drop without going through
         # the New Project dialog. SubtitleGenerationService requires a
         # project because its checkpoint and canonical artifact live there.
-        if not getattr(self.project_service, "current_project", None):
+        if fresh_project:
+            self._queue_project_dirs.pop(vid_path, None)
+
+        if self.project_service.requires_project_switch(
+            vid_path, fresh_project=fresh_project
+        ):
             file_name = os.path.basename(vid_path)
-            safe_name = "".join(
-                char if char.isalnum() else "_" for char in file_name
-            )
             output_dir = self.out_input.text().strip() or os.path.dirname(vid_path)
-            project_dir = os.path.join(output_dir, f"{safe_name}.ai-subtitle")
+            project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
-                if not os.path.exists(project_dir):
-                    self.project_service.create_project(
-                        project_dir, file_name, vid_path
+                if fresh_project:
+                    self.project_service.create_auto_project(
+                        output_dir,
+                        file_name,
+                        vid_path,
+                        uuid.uuid4().hex[:8],
                     )
-                else:
+                    project_dir = self.project_service.project_dir
+                elif project_dir and os.path.exists(project_dir):
                     self.project_service.open_project(project_dir)
+                else:
+                    safe_name = "".join(
+                        char if char.isalnum() else "_" for char in file_name
+                    )
+                    project_dir = os.path.join(
+                        output_dir, f"{safe_name}.ai-subtitle"
+                    )
+                    if not os.path.exists(project_dir):
+                        self.project_service.create_project(
+                            project_dir, file_name, vid_path
+                        )
+                    else:
+                        self.project_service.open_project(project_dir)
+                self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
                 )
             except Exception as exc:
+                # Never leave another video's project active after a failed
+                # auto-project switch.
+                self.project_service.close_project()
                 self.append_log(
                     f"❌ [LỖI] Không thể tự động tạo/nạp dự án: {exc}"
                 )
@@ -883,6 +913,7 @@ class MainWindow(QMainWindow):
             self.video_player.sub_controller.load_srt(None)
 
     def on_queue_item_removed_handler(self, vid_path):
+        self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
         if not items:
             self.video_player.cleanup()
@@ -991,7 +1022,9 @@ class MainWindow(QMainWindow):
             self.generation_panel._update_progress
         )
         self.subtitle_generation_service.on_error = self.generation_panel._on_error
-        self.subtitle_generation_service.on_finish = self.generation_panel._on_finish
+        self.subtitle_generation_service.on_finish = (
+            self._on_interactive_generation_finished
+        )
         self.subtitle_generation_service.on_batch_complete = (
             self._on_generation_batch_sync
         )
@@ -1081,22 +1114,12 @@ class MainWindow(QMainWindow):
         self.on_queue_item_clicked(self.current_vid)
 
         if not current_srt:
-            # Each queued source gets its own guarded project/checkpoint.
-            source_root = self.output_dir or os.path.dirname(self.current_vid)
-            safe_name = "".join(
-                char if char.isalnum() else "_"
-                for char in os.path.splitext(file_name)[0]
-            )
-            project_dir = os.path.join(source_root, f"{safe_name}.ai-subtitle")
-            try:
-                if not os.path.exists(project_dir):
-                    self.project_service.create_project(
-                        project_dir, file_name, self.current_vid
-                    )
-                else:
-                    self.project_service.open_project(project_dir)
-            except Exception as exc:
-                self.process_error(f"Lỗi khởi tạo Project tự động: {exc}")
+            if not self.project_service.is_current_project_for_video(
+                self.current_vid
+            ):
+                self.process_error(
+                    "Project tự động không khớp với video đang xử lý."
+                )
                 return
 
             duration_ms = self._queue_video_duration_ms(self.current_vid)
@@ -1228,6 +1251,19 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._on_timing_error(str(exc))
 
+    def _resume_timing_draft(self, batch_minutes: int, settings: dict):
+        """Continue the Timing checkpoint without entering the ASR pipeline."""
+        try:
+            checkpoint = self.project_service.load_timing_checkpoint()
+            if checkpoint and checkpoint.timing_artifact_id:
+                self.timing_service.continue_timing(batch_minutes, settings)
+            else:
+                # No Timing Artifact exists when cancellation happens before
+                # the first batch commits, so there is nothing to continue.
+                self.timing_service.start_timing(batch_minutes, settings)
+        except Exception as exc:
+            self._on_timing_error(str(exc))
+
     def _on_timing_progress(self, percent: int, message: str):
         percent = max(0, min(100, int(percent)))
         self.generation_panel._update_progress(percent, message)
@@ -1267,6 +1303,20 @@ class MainWindow(QMainWindow):
         if not artifact or not artifact.path or not os.path.exists(artifact.path):
             return
 
+        source_path = getattr(getattr(project, "source", None), "path", "")
+        if source_path:
+            self.queue_mgr.set_srt_for_video(source_path, artifact.path)
+
+        active_video = self.queue_mgr.active_vid
+        if not active_video or not self.project_service.is_current_project_for_video(
+            active_video
+        ):
+            self.append_log(
+                "[TIMING] Đã lưu Draft cho video nền; UI hiện đang chọn video khác."
+            )
+            self.generation_panel.refresh_batch_mode_availability()
+            return
+
         try:
             self.sub_editor.load_srt_file(artifact.path)
             self.video_player.sub_controller.load_srt(artifact.path)
@@ -1285,22 +1335,22 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
 
-    def _on_generation_batch_sync(self, batch, segments):
-        """Refresh editor/player/timeline after each committed ASR batch."""
-        for segment in segments:
+    def _on_generation_batch_sync(self, batch=None, segments=None):
+        """Persist the generated Shadow SRT without disturbing the active editor."""
+        for segment in segments or []:
             start_str = self.timing_service._ms_to_time_str(segment.start_ms)
             end_str = self.timing_service._ms_to_time_str(segment.end_ms)
             self.append_log(f"[{start_str} --> {end_str}] {segment.text}")
 
         project = self.project_service.current_project
         if not project or not project.state.subtitle_artifact_id:
-            return
+            return None
 
         artifact = self.project_service.artifact_store.get(
             project.state.subtitle_artifact_id
         )
         if not artifact or not os.path.exists(artifact.path):
-            return
+            return None
 
         try:
             import json
@@ -1310,11 +1360,10 @@ class MainWindow(QMainWindow):
             subtitles = [
                 (segment["start_ms"], segment["end_ms"], segment["text"])
                 for segment in data.get("segments", [])
-                if segment.get("text", "").strip()
             ]
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.append_log(f"[SYNC] Không đọc được Subtitle Artifact: {exc}")
-            return
+            return None
 
         shadow_srt_path = artifact.path.replace(".sub.json", "_shadow.srt")
         temp_srt_path = f"{shadow_srt_path}.tmp"
@@ -1327,7 +1376,19 @@ class MainWindow(QMainWindow):
             if os.path.exists(temp_srt_path):
                 os.remove(temp_srt_path)
             self.append_log(f"[SYNC] Không tạo được Shadow SRT: {exc}")
-            return
+            return None
+
+        return shadow_srt_path
+
+    def _on_interactive_generation_finished(self):
+        """Publish the completed ASR result once, preserving editor pagination."""
+        shadow_srt_path = self._on_generation_batch_sync()
+        if shadow_srt_path:
+            self._load_generated_subtitles_into_ui(shadow_srt_path)
+        self.generation_panel._on_finish()
+
+    def _load_generated_subtitles_into_ui(self, shadow_srt_path):
+        """Reload editor, player and timeline only after a full ASR run completes."""
 
         self.sub_editor.load_srt_file(shadow_srt_path)
         self.video_player.sub_controller.load_srt(shadow_srt_path)
@@ -1681,6 +1742,8 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(False)
 
             self.project_service.open_project(project_dir)
+            source_path = self.project_service.current_project.source.path
+            self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
             
             # --- LẤY THỜI LƯỢNG AN TOÀN CHỐNG CRASH ---

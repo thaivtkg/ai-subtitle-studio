@@ -18,4 +18,7 @@ class SubtitleGenerationCheckpoint:
     updated_at: str
     status: str = "RUNNING"
     # SHA-256 of the canonical subtitle JSON at the last committed checkpoint.
-    artifact_content_hash: Optional[str] = None
+    artifact_content_hash: str = ""
+    # Number of Timing Artifact ranges already requested by segment-mode ASR.
+    timing_segment_cursor: int = 0
+    timing_segment_count: int = 0

@@ -42,6 +42,7 @@ class SubtitleGenerationService(QObject):
         self.current_request: Optional[SubtitleGenerationRequest] = None
         self.current_batches: List[SubtitleGenerationBatch] = []
         self.current_checkpoint: Optional[SubtitleGenerationCheckpoint] = None
+        self.current_timing_ranges = []
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -68,13 +69,27 @@ class SubtitleGenerationService(QObject):
         if video_duration_ms <= 0:
             raise ValueError("Video duration must be positive.")
 
-        segment_ranges = None
-        if request.batch_mode == "segments":
-            segment_ranges = self._load_timing_segment_ranges(project)
-
         artifact = self.artifact_service.get_or_create_artifact()
         if artifact is None:
             raise RuntimeError("Unable to create subtitle artifact.")
+
+        segment_ranges = None
+        timing_segment_cursor = 0
+        timing_segment_count = 0
+        if request.batch_mode == "segments":
+            all_timing_ranges = self._load_timing_segment_ranges(project)
+            timing_segment_cursor = self._get_timing_segment_cursor(
+                project, artifact, len(all_timing_ranges)
+            )
+            self._ensure_timing_rows(artifact, all_timing_ranges)
+            segment_ranges = all_timing_ranges[
+                timing_segment_cursor : timing_segment_cursor
+                + request.batch_size_value
+            ]
+            if not segment_ranges:
+                raise ValueError("Tất cả Timing segments đã được điền phụ đề.")
+            timing_segment_count = len(segment_ranges)
+        self.current_timing_ranges = list(segment_ranges or [])
 
         self._is_cancelled = False
         self._pending_dispatch = False
@@ -104,6 +119,8 @@ class SubtitleGenerationService(QObject):
             detected_language=None,
             updated_at=self._now(),
             artifact_content_hash=artifact_hash,
+            timing_segment_cursor=timing_segment_cursor,
+            timing_segment_count=timing_segment_count,
         )
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
         self.whisper_service.load_model(request.model_size, request.compute_type)
@@ -135,6 +152,17 @@ class SubtitleGenerationService(QObject):
         self._pending_error = None
         self._terminal_notified = False
         self.current_request = SubtitleGenerationRequest(**checkpoint.request_data)
+        self.current_timing_ranges = []
+        if self.current_request.batch_mode == "segments":
+            all_timing_ranges = self._load_timing_segment_ranges(project)
+            count = (
+                checkpoint.timing_segment_count
+                or self.current_request.batch_size_value
+            )
+            self.current_timing_ranges = all_timing_ranges[
+                checkpoint.timing_segment_cursor : checkpoint.timing_segment_cursor
+                + count
+            ]
         self.current_batches = [
             SubtitleGenerationBatch(**batch_data)
             for batch_data in checkpoint.batches_data
@@ -236,20 +264,27 @@ class SubtitleGenerationService(QObject):
             valid = SubtitleGenerationValidator.validate(
                 result.segments, batch.start_ms, batch.end_ms
             )
+            if self.current_request.batch_mode == "segments":
+                valid = self._align_text_to_timing_ranges(
+                    valid, self.current_timing_ranges
+                )
             data = self.artifact_service.load_data(artifact.path)
             existing = data.get("segments", [])
-            reconciled = BoundaryReconciler.reconcile(existing, valid)
-            existing.extend(
-                {
-                    "id": str(uuid.uuid4()),
-                    "start_ms": segment.start_ms,
-                    "end_ms": segment.end_ms,
-                    "text": segment.text,
-                    "words": segment.words,
-                    "status": "generated",
-                }
-                for segment in reconciled
-            )
+            if self.current_request.batch_mode == "segments":
+                reconciled = self._fill_timing_rows(existing, valid)
+            else:
+                reconciled = BoundaryReconciler.reconcile(existing, valid)
+                existing.extend(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "start_ms": segment.start_ms,
+                        "end_ms": segment.end_ms,
+                        "text": segment.text,
+                        "words": segment.words,
+                        "status": "generated",
+                    }
+                    for segment in reconciled
+                )
             existing.sort(key=lambda segment: (segment["start_ms"], segment["end_ms"]))
             data["segments"] = existing
             self.artifact_service._save_atomic(artifact.path, data)
@@ -265,6 +300,10 @@ class SubtitleGenerationService(QObject):
             )
             self.current_checkpoint.active_batch = None
             self.current_checkpoint.next_start_ms = batch.end_ms
+            if self.current_request.batch_mode == "segments":
+                self.current_checkpoint.timing_segment_cursor += (
+                    self.current_checkpoint.timing_segment_count
+                )
             self.current_checkpoint.batches_data = [
                 asdict(candidate) for candidate in self.current_batches
             ]
@@ -397,6 +436,118 @@ class SubtitleGenerationService(QObject):
         if not ranges:
             raise ValueError("Timing Artifact does not contain valid subtitle ranges.")
         return ranges
+
+    def _get_timing_segment_cursor(self, project, artifact, total_ranges: int) -> int:
+        """Restore the next segment index only for the same safe ASR artifact."""
+        checkpoint = self.checkpoint_manager.load_checkpoint()
+        if not checkpoint:
+            return 0
+        if (
+            checkpoint.project_id != project.project_id
+            or checkpoint.source_fingerprint != project.source.fingerprint
+            or checkpoint.subtitle_artifact_id != artifact.artifact_id
+            or checkpoint.request_data.get("batch_mode") != "segments"
+        ):
+            return 0
+        return max(0, min(int(checkpoint.timing_segment_cursor), total_ranges))
+
+    def _ensure_timing_rows(self, artifact, timing_ranges) -> None:
+        """Seed missing subtitle rows from Timing without replacing unrelated data."""
+        data = self.artifact_service.load_data(artifact.path)
+        existing = data.get("segments", [])
+        timing_keys = [(int(start_ms), int(end_ms)) for start_ms, end_ms in timing_ranges]
+        timing_key_set = set(timing_keys)
+        existing_by_range = {}
+
+        for row in existing:
+            key = (int(row.get("start_ms", -1)), int(row.get("end_ms", -1)))
+            if key not in timing_key_set or key in existing_by_range:
+                return
+            existing_by_range[key] = row
+
+        synchronized = []
+        for start_ms, end_ms in timing_keys:
+            row = existing_by_range.get((start_ms, end_ms))
+            if row is None:
+                row = {
+                    "id": str(uuid.uuid4()),
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "text": "",
+                    "words": None,
+                    "status": "timing",
+                }
+            synchronized.append(row)
+
+        if synchronized == existing:
+            return
+
+        data["segments"] = synchronized
+        self.artifact_service._save_atomic(artifact.path, data)
+        artifact.revision += 1
+        artifact.updated_at = self._now()
+        mark_dirty = getattr(self.project_service, "mark_dirty", None)
+        if mark_dirty:
+            mark_dirty()
+
+    @staticmethod
+    def _fill_timing_rows(existing, segments):
+        """Update text in exact Timing slots instead of appending duplicate rows."""
+        rows_by_range = {
+            (int(row.get("start_ms", -1)), int(row.get("end_ms", -1))): row
+            for row in existing
+        }
+        applied = []
+        for segment in segments:
+            key = (int(segment.start_ms), int(segment.end_ms))
+            row = rows_by_range.get(key)
+            if row is None:
+                row = {
+                    "id": str(uuid.uuid4()),
+                    "start_ms": segment.start_ms,
+                    "end_ms": segment.end_ms,
+                }
+                existing.append(row)
+                rows_by_range[key] = row
+            row.update(
+                {
+                    "text": segment.text,
+                    "words": segment.words,
+                    "status": "generated",
+                }
+            )
+            applied.append(segment)
+        return applied
+
+    @staticmethod
+    def _align_text_to_timing_ranges(segments, timing_ranges):
+        """Keep Timing boundaries authoritative while assigning ASR text."""
+        text_buckets = [[] for _range in timing_ranges]
+        for segment in segments:
+            overlaps = [
+                max(
+                    0,
+                    min(segment.end_ms, end_ms)
+                    - max(segment.start_ms, start_ms),
+                )
+                for start_ms, end_ms in timing_ranges
+            ]
+            if not overlaps or max(overlaps) <= 0:
+                continue
+            target_index = max(range(len(overlaps)), key=overlaps.__getitem__)
+            text = (segment.text or "").strip()
+            if text:
+                text_buckets[target_index].append(text)
+
+        return [
+            WhisperSegmentResult(
+                start_ms=start_ms,
+                end_ms=end_ms,
+                text=" ".join(text_buckets[index]),
+                words=None,
+            )
+            for index, (start_ms, end_ms) in enumerate(timing_ranges)
+        ]
 
     @staticmethod
     def _parse_srt_time_ms(value: str) -> int:

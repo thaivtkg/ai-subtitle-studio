@@ -20,6 +20,7 @@ class SubtitleGenerationPlanner:
         overlap_ms: int = 2000,
         batch_duration_ms: Optional[int] = None,
         segment_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+        timing_segments: Optional[Sequence[dict]] = None,
     ) -> List[SubtitleGenerationBatch]:
         if batch_duration_ms is not None:
             # Backward-compatible support for the former named argument.
@@ -41,6 +42,12 @@ class SubtitleGenerationPlanner:
             raise ValueError("batch_mode must be 'time' or 'segments'")
 
         if batch_mode == "segments":
+            if timing_segments is not None:
+                segment_ranges = [
+                    (segment.get("start_ms", 0), segment.get("end_ms", 0))
+                    for segment in timing_segments
+                    if isinstance(segment, dict)
+                ]
             if not segment_ranges:
                 raise ValueError(
                     "Segment-based batching requires a completed Timing Artifact."
@@ -102,7 +109,10 @@ class SubtitleGenerationPlanner:
         batches: List[SubtitleGenerationBatch] = []
         for index in range(0, len(normalized), batch_size):
             group = normalized[index : index + batch_size]
-            start_ms = max(0, group[0][0] - overlap_ms)
+            # The Timing Artifact already supplies the exact semantic start
+            # boundary. Apply overlap only to the trailing edge so a batch
+            # cannot pull in part of the preceding timing group.
+            start_ms = group[0][0]
             end_ms = min(duration_ms, group[-1][1] + overlap_ms)
             now = datetime.now(timezone.utc).isoformat()
             batches.append(

@@ -75,6 +75,26 @@ class ProjectService:
         self.save_project()
         return self.current_project
 
+    def create_auto_project(
+        self,
+        output_dir: str,
+        name: str,
+        video_path: str,
+        session_id: str,
+    ) -> Project:
+        """Create isolated state for a raw Queue import in this app session."""
+        safe_name = "".join(
+            char if char.isalnum() else "_"
+            for char in os.path.splitext(name)[0]
+        ).strip("_") or "video"
+        safe_session_id = "".join(
+            char for char in str(session_id) if char.isalnum()
+        ) or uuid.uuid4().hex
+        project_dir = os.path.join(
+            output_dir, f"{safe_name}_auto_{safe_session_id}.ai-subtitle"
+        )
+        return self.create_project(project_dir, name, video_path)
+
     def save_project(self) -> None:
         """Lưu Project hiện tại xuống đĩa cứng, chia thành các file riêng biệt"""
         if not self.current_project or not self.project_dir:
@@ -192,6 +212,25 @@ class ProjectService:
         self.current_project = None
         self.project_dir = None
         self.artifact_store.clear()
+
+    def is_current_project_for_video(self, video_path: str) -> bool:
+        """Return whether the open project owns exactly this source video."""
+        source_path = getattr(
+            getattr(self.current_project, "source", None), "path", None
+        )
+        if not source_path or not video_path:
+            return False
+        return os.path.normcase(os.path.abspath(source_path)) == os.path.normcase(
+            os.path.abspath(video_path)
+        )
+
+    def requires_project_switch(
+        self, video_path: str, fresh_project: bool = False
+    ) -> bool:
+        """A fresh raw import always owns new state, even for the same file."""
+        return bool(fresh_project) or not self.is_current_project_for_video(
+            video_path
+        )
 
     def mark_dirty(self) -> None:
         if self.current_project:

@@ -26,6 +26,7 @@ class SubtitleGenerationPanel(QWidget):
 
     # Timing Draft dùng pipeline VAD riêng, không khởi tạo Whisper ASR.
     timing_start_requested = Signal(int, dict)
+    timing_resume_requested = Signal(int, dict)
     timing_cancel_requested = Signal()
 
     def __init__(self, generation_service, parent=None):
@@ -138,6 +139,7 @@ class SubtitleGenerationPanel(QWidget):
 
         layout.addStretch()
         self.lbl_status = QLabel("Ready")
+        self._configure_status_label(self.lbl_status)
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED};")
         layout.addWidget(self.lbl_status)
@@ -166,6 +168,11 @@ class SubtitleGenerationPanel(QWidget):
         self.refresh_batch_mode_availability()
         self._on_mode_changed()
 
+    @staticmethod
+    def _configure_status_label(label):
+        """Keep long errors inside the drawer's existing width."""
+        label.setWordWrap(True)
+
     def _connect_signals(self):
         self.btn_generate.clicked.connect(self._on_generate_clicked)
         self.btn_resume.clicked.connect(self._on_resume_clicked)
@@ -186,9 +193,10 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_compute.setEnabled(is_asr)
         self.cmb_language.setEnabled(is_asr)
         self.chk_word_timestamps.setEnabled(is_asr)
-        self.cmb_batch_mode.setEnabled(is_asr)
-        # Timing Draft still needs its minute-based batch size; only the mode
-        # selector is locked to Time in that pipeline.
+        self.cmb_batch_mode.setEnabled(True)
+        # Timing Draft accepts both the legacy time setting and its native
+        # segment-count setting. The worker already consumes this value as a
+        # target segment count.
         self.spin_batch_val.setEnabled(True)
 
         if is_asr:
@@ -199,12 +207,28 @@ class SubtitleGenerationPanel(QWidget):
             self.chk_vad.setEnabled(False)
             self.chk_vad.setText("Enable VAD (Bắt buộc cho chế độ này)")
 
+        if hasattr(self, "btn_resume"):
+            self.check_resumable_state()
+        self.refresh_batch_mode_availability()
+
     def _is_timing_mode(self) -> bool:
         return self.cmb_mode.currentData() == "timing"
 
     @Slot()
     def _on_batch_mode_changed(self):
         """Update batch-value range and suffix for the selected mode."""
+        if (
+            self.cmb_batch_mode.currentData() == "segments"
+            and not self._is_timing_mode()
+            and not self._timing_segments_available()
+        ):
+            QMessageBox.warning(
+                self,
+                "Timing Draft required",
+                "Chế độ băm theo câu yêu cầu Timing Draft đã hoàn tất.",
+            )
+            self.cmb_batch_mode.setCurrentIndex(0)
+            return
         if self.cmb_batch_mode.currentData() == "time":
             self.spin_batch_val.setRange(1, 30)
             self.spin_batch_val.setValue(5)
@@ -227,6 +251,14 @@ class SubtitleGenerationPanel(QWidget):
         artifact = store.get(artifact_id) if store and artifact_id else None
         return bool(artifact and getattr(artifact, "path", None))
 
+    def _timing_segments_available(self) -> bool:
+        project_service = getattr(self.generation_service, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        timing_status = getattr(
+            getattr(project, "state", None), "timing_status", None
+        )
+        return timing_status in {"DRAFT", "READY"} and self._has_timing_artifact()
+
     def refresh_batch_mode_availability(self):
         """Allow true segment-count batching only when Timing ranges exist."""
         if not hasattr(self, "cmb_batch_mode"):
@@ -234,19 +266,43 @@ class SubtitleGenerationPanel(QWidget):
         item = self.cmb_batch_mode.model().item(1)
         if item is None:
             return
-        enabled = self._has_timing_artifact()
+        # Timing Draft is what creates the Timing Artifact, so it must be
+        # allowed to use segment-count batching before an artifact exists.
+        enabled = self._is_timing_mode() or (
+            self._timing_segments_available()
+        )
         item.setEnabled(enabled)
         if not enabled and self.cmb_batch_mode.currentData() == "segments":
             self.cmb_batch_mode.setCurrentIndex(0)
 
     def check_resumable_state(self):
-        checkpoint = self.generation_service.checkpoint_manager.load_checkpoint()
-        resumable = bool(
-            checkpoint and checkpoint.status in {"RUNNING", "CANCELLED", "FAILED"}
-        )
+        if self._is_timing_mode():
+            resumable = self._has_resumable_timing_checkpoint()
+        else:
+            checkpoint = self.generation_service.checkpoint_manager.load_checkpoint()
+            resumable = bool(
+                checkpoint
+                and checkpoint.status in {"RUNNING", "CANCELLED", "FAILED"}
+            )
         self.btn_resume.setVisible(resumable)
         service_running = bool(getattr(self.generation_service, "is_running", False))
         self.btn_resume.setEnabled(resumable and not service_running)
+
+    def _has_resumable_timing_checkpoint(self) -> bool:
+        project_service = getattr(self.generation_service, "project_service", None)
+        load_checkpoint = getattr(project_service, "load_timing_checkpoint", None)
+        checkpoint = load_checkpoint() if callable(load_checkpoint) else None
+        if not checkpoint:
+            return False
+
+        project = getattr(project_service, "current_project", None)
+        timing_state = getattr(getattr(project, "state", None), "timing", None)
+        if getattr(timing_state, "status", None) == "COMPLETED":
+            return False
+        return bool(
+            getattr(checkpoint, "timing_artifact_id", None)
+            or getattr(checkpoint, "active_batch", None)
+        )
 
     @Slot()
     def _on_generate_clicked(self):
@@ -255,20 +311,16 @@ class SubtitleGenerationPanel(QWidget):
             return
 
         if self._is_timing_mode():
-            # Timing Draft is defined in minutes and does not consume the
-            # subtitle segment-count planner.
-            if self.cmb_batch_mode.currentData() != "time":
-                self.cmb_batch_mode.setCurrentIndex(0)
+            timing_settings = {"use_vad": True, "min_silence_ms": 500}
             self._set_ui_state_running()
-            self.timing_start_requested.emit(
-                self.spin_batch_val.value(),
-                {
-                    # Keep the domain invariant even if the checkbox was
-                    # changed programmatically while the mode was switching.
-                    "use_vad": True,
-                    "min_silence_ms": 500,
-                },
-            )
+            if self._has_resumable_timing_checkpoint():
+                self.timing_resume_requested.emit(
+                    self.spin_batch_val.value(), timing_settings
+                )
+            else:
+                self.timing_start_requested.emit(
+                    self.spin_batch_val.value(), timing_settings
+                )
             return
 
         project = self.generation_service.project_service.current_project
@@ -308,7 +360,13 @@ class SubtitleGenerationPanel(QWidget):
     def _on_resume_clicked(self):
         self._set_ui_state_running()
         try:
-            self.generation_service.resume_generation()
+            if self._is_timing_mode():
+                self.timing_resume_requested.emit(
+                    self.spin_batch_val.value(),
+                    {"use_vad": True, "min_silence_ms": 500},
+                )
+            else:
+                self.generation_service.resume_generation()
         except Exception as exc:
             self._on_error(str(exc))
 

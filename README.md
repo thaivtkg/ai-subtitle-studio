@@ -1,362 +1,225 @@
+````
 # 🎬 AI Subtitle Studio
 
-> **Hệ thống tạo phụ đề tự động, biên tập Waveform/Timeline và render Hardsub Video theo quy trình NLE chuyên nghiệp.**
+> **Hệ thống Tạo Phụ đề Tự động, Biên tập Dạng sóng âm (Waveform/Timeline) & Render Hardsub Video chuẩn NLE Chuyên nghiệp.**
 
-AI Subtitle Studio là ứng dụng Windows viết bằng Python và PySide6, tập trung vào quy trình **Timestamp-First**: xác định và chỉnh sửa mốc thời gian trước, sau đó mới chạy nhận dạng giọng nói để sinh nội dung phụ đề.
+---
 
 ## 📌 Mục lục
 
-1. [Tính năng](#-tính-năng)
-2. [Kiến trúc giao diện](#-kiến-trúc-giao-diện)
-3. [Bắt đầu nhanh](#-bắt-đầu-nhanh)
-4. [Quy trình sử dụng](#-quy-trình-sử-dụng)
-5. [Batch Mode](#-batch-mode)
-6. [Dự án và Artifact](#-dự-án-và-artifact)
-7. [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
-8. [Cài đặt dependency](#-cài-đặt-dependency)
-9. [Đóng gói Windows](#-đóng-gói-windows)
-10. [Cấu trúc thư mục](#-cấu-trúc-thư-mục)
-11. [Kiểm thử](#-kiểm-thử)
-12. [Xử lý sự cố](#-xử-lý-sự-cố)
-13. [Lộ trình](#-lộ-trình)
+1. [Giới thiệu](#-giới-thiệu)
+2. [Tính năng cốt lõi](#-tính-năng-cốt-lõi)
+3. [Bố cục Giao diện Chuẩn DAW (3-Tier Workspace)](#-bố-cục-giao-diện-chuẩn-daw-3-tier-workspace)
+4. [Bảng Phím tắt Toàn cục (Shortcuts)](#-bảng-phím-tắt-toàn-cục-shortcuts)
+5. [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
+6. [Hướng dẫn cài đặt & Chạy mã nguồn](#-hướng-dẫn-cài-đặt--chạy-mã-nguồn)
+7. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#-đóng-gói--tạo-bộ-cài-đặt-windows-installer)
+8. [Cấu trúc thư mục dự án](#-cấu-trúc-thư-mục-dự-án)
+9. [Quy trình làm việc (Workflows)](#-quy-trình-làm-việc-workflows)
+10. [Kiểm thử tự động (Automated Testing)](#-kiểm-thử-tự-động-automated-testing)
+11. [Xử lý sự cố thường gặp (Troubleshooting)](#-xử-lý-sự-cố-thường-gặp-troubleshooting)
+12. [Lộ trình phát triển (Roadmap)](#-lộ-trình-phát-triển-roadmap)
 
-## 🚀 Tính năng
+---
 
-- **Full Subtitle (Whisper ASR)**: nhận dạng giọng nói bằng Faster-Whisper và sinh phụ đề theo từng Batch.
-- **Timing Draft (VAD Only)**: chỉ phát hiện vùng có tiếng nói bằng VAD để tạo các khối thời gian rỗng; không nạp Whisper.
-- **Hai cách chia Batch**:
-  - `Time-based`: chia theo số phút, phù hợp với video dài và kiểm soát VRAM.
-  - `Segment-based`: chia theo số câu thực tế từ Timing Artifact đã hoàn tất.
-- **Overlap và Reconciler**: các Batch có vùng chồng lấn để tránh cắt mất từ ở ranh giới; Reconciler loại bỏ câu trùng.
-- **Timestamp shifting**: timestamp local từ Whisper được dịch về timeline tuyệt đối của video.
-- **Checkpoint/Resume**: lưu tiến độ sau từng Batch, hỗ trợ tiếp tục sau khi hủy hoặc ứng dụng gặp sự cố.
-- **Commit nguyên tử**: Artifact JSON và Checkpoint được ghi qua file tạm rồi `os.replace` để tránh file dở dang.
-- **Realtime Sync**: phụ đề của Batch vừa hoàn tất được cập nhật ngay lên Editor, Video Player và Timeline.
-- **Hallucination filter**: loại các kết quả rác phổ biến như `Transcription by CastingWords` hoặc `Amara.org`.
-- **Interactive Waveform/Timeline**: di chuyển, co giãn, cắt, gộp, xóa và Undo/Redo các khối phụ đề.
-- **Xuất phụ đề**: hỗ trợ SRT, VTT, TXT và render Hardsub thông qua FFmpeg.
-- **Queue Manager**: xử lý nhiều video tuần tự; video kéo-thả khi chưa có Project sẽ được tự động tạo Project nền.
+## 📖 Giới thiệu
 
-## 🖥️ Kiến trúc giao diện
+**AI Subtitle Studio** là phần mềm biên tập phụ đề video chuyên dụng chạy trực tiếp trên máy tính cá nhân. Ứng dụng kết hợp sức mạnh nhận diện giọng nói cục bộ của **Faster-Whisper (Large-v3-Turbo)**, thuật toán phân tách giọng nói Silero VAD, công cụ trích xuất/kết xuất **FFmpeg**, cùng giao diện điều khiển phi tuyến tính (NLE) hiện đại được xây dựng hoàn toàn trên nền tảng **PySide6 (Qt6)**.
 
-Workspace chính được tổ chức theo ba vùng:
+Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)** và kiến trúc **Dự án Độc lập (`.ai-subtitle`)**, cho phép bóc tách – nắn chỉnh thời gian trên trục sóng âm trước khi sinh nội dung chữ bằng AI, đảm bảo độ chính xác tuyệt đối từng mili-giây.
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ TẦNG 1: VIDEO PREVIEW                                                │
-│ Video Player · Subtitle Overlay · Play/Pause · Seek · Volume         │
-├─────────────────────────────────────────────┬────────────────────────┤
-│ TẦNG 2A: SUBTITLE EDITOR                    │ TẦNG 2B: DOCK PANEL     │
-│ Bảng STT · Start · End · Text               │ Generate Subtitle       │
-│                                             │ Live Log                │
-├─────────────────────────────────────────────┴────────────────────────┤
-│ TẦNG 3: TIMELINE & WAVEFORM                                           │
-│ Ruler · Audio Peaks · Subtitle Blocks · Playhead                       │
-└──────────────────────────────────────────────────────────────────────┘
-```
+---
 
-Panel **Generate Subtitle** là `QDockWidget`, có thể kéo, dock, float hoặc đóng. Central Widget có kích thước tối thiểu để Workspace không bị co về 0 khi Dock được float.
+## 🚀 Tính năng cốt lõi
 
-### Phím tắt
+* 🎚️ **Trục thời gian & Dải sóng âm Tương tác (Interactive Waveform Timeline)**
+  * Tự động trích xuất đỉnh sóng âm thanh (Audio Peaks) chạy trên luồng ngầm không gây đơ giao diện.
+  * Khối phụ đề hiển thị trực tiếp số thứ tự và nội dung text (`#1 Nội dung...`).
+  * Hỗ trợ thao tác chuột trực quan: Kéo di chuyển (`Move`), Kéo giãn 2 đầu (`Resize Left/Right`), Bôi đen đa khối.
+  * Đồng bộ vị trí phát tức thì giữa Kim thời gian (Playhead), Video Player và Bảng phụ đề.
 
-| Phím tắt | Phạm vi | Chức năng |
-| --- | --- | --- |
-| `Ctrl + N` | Toàn ứng dụng | Tạo Project mới |
-| `Ctrl + O` | Toàn ứng dụng | Mở Project có sẵn |
-| `Ctrl + S` | Toàn ứng dụng | Lưu Project, cấu hình và dữ liệu Timeline |
-| `Space` | Video Player | Phát / tạm dừng video |
-| `Ctrl + T` | Timeline | Split tại vị trí Playhead |
-| `Ctrl + M` | Timeline | Merge các khối đang chọn |
-| `Delete` | Timeline | Xóa khối đang chọn |
-| `Ctrl + Z` | Timeline | Undo |
-| `Ctrl + Shift + Z` | Timeline | Redo |
+* ⚡ **Hệ thống Lệnh Cấu trúc & Snapshot Undo/Redo Tuyệt đối**
+  * Hỗ trợ đầy đủ các thao tác cắt (`Split`), gộp câu liền kề (`Merge`), xóa (`Delete`).
+  * Áp dụng mẫu thiết kế **Snapshot Pattern**: Chụp toàn bộ trạng thái dữ liệu trước/sau thao tác, đảm bảo hoàn tác (`Ctrl+Z`) và làm lại (`Ctrl+Shift+Z`) chính xác 100%.
+  * Cơ chế **Transactional Integrity**: Tự động rollback và khóa lệnh nếu phát hiện sai lệch mốc thời gian hoặc lỗi tham chiếu Artifact.
 
-## 📦 Bắt đầu nhanh
+* 📁 **Quản lý Dự án Độc lập (`.ai-subtitle`) & Checkpoint/Resume**
+  * Đóng gói toàn bộ Artifacts (SRT, Draft JSON, Checkpoint) vào một thư mục dự án duy nhất.
+  * Cơ chế **Checkpoint & Resume** tự động ghi nhận tiến độ theo từng Batch (Hỗ trợ băm theo thời gian hoặc số câu), cho phép tiếp tục chạy ngay cả khi sập nguồn hoặc hủy ngang.
+  * Tự động đồng bộ và ghi đè dữ liệu Timeline xuống chính xác tập tin đang mở khi nhấn `Ctrl+S`.
 
-### 1. Lấy mã nguồn
+* 🎨 **Hiệu ứng Chữ & Trình phát Video Tối ưu**
+  * Xem trước phụ đề nổi thời gian thực trên khung hình chuẩn tỉ lệ (Aspect Ratio Locked).
+  * Tích hợp bộ điều khiển hoạt ảnh (Fade, Rise, Drop, Highlight Reveal).
+  * Tùy biến đầy đủ Font, Cỡ chữ, Màu sắc, Viền chữ (Outline), Vị trí (Top, Center, Bottom).
 
-Thay `<repository-url>` bằng URL repository thực tế của dự án:
+* 🎬 **Xuất xưởng Đa Định dạng & Render Hardsub GPU/CPU**
+  * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
+  * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
 
-```powershell
-git clone <repository-url>
-cd ai-subtitle-studio
-```
+---
 
-### 2. Tạo môi trường ảo
+## 🖥️ Bố cục Giao diện Chuẩn DAW (3-Tier Workspace)
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Nếu PowerShell chặn script activation, có thể chạy trực tiếp Python trong `.venv` hoặc dùng Command Prompt:
-
-```bat
-.venv\Scripts\activate.bat
-```
-
-### 3. Cài dependency
-
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-### 4. Chuẩn bị FFmpeg
-
-Đặt hai file sau trong thư mục `ffmpeg/` ở thư mục gốc dự án:
+Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo bố cục 3 tầng dọc tối ưu luồng mắt:
 
 ```text
-ffmpeg/ffmpeg.exe
-ffmpeg/ffprobe.exe
-```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        TẦNG 1: VIDEO PREVIEW                           │
+│               [Khung nhìn Video + Subtitle Overlay Nổi]                │
+│               [Nút Play/Pause | Thanh Tua Seek | Âm lượng]             │
+├──────────────────────────────────────────┬─────────────────────────────┤
+│          TẦNG 2A: SUBTITLE EDITOR        │   TẦNG 2B: AI / LOG PANEL   │
+│                                          │                             │
+│  STT | Bắt đầu  | Kết thúc | Nội dung    │  [Tab AI Quick Actions]     │
+│   1  | 00:00:00 | 00:00:04 | Chào bạn... │  - Chọn Model / Mode        │
+│   2  | 00:00:04 | 00:00:08 | ...         │  - Batch Mode & Time/Count  │
+│                                          │  [Tab Live Log]             │
+│  [Chốt Timing] [Lưu Draft] [Lưu SRT]     │  - Nhật ký tiến trình ngầm  │
+├──────────────────────────────────────────┴─────────────────────────────┤
+│                         TẦNG 3: TIMELINE & WAVEFORM                    │
+│ 00:00      00:01      00:02      00:03      00:04      00:05      │
+│ ════════════════════════ Waveform Sóng Âm ════════════════════════════ │
+│   [ #1 Chào bạn... ]   [ #2 ...          ]                             │
+│          │ (Playhead Đồng bộ Kim thời gian)                            │
+└────────────────────────────────────────────────────────────────────────┘
 
-Ứng dụng cũng có thể dùng `ffmpeg` và `ffprobe` có sẵn trong `PATH`. Có thể tải bản Windows từ [ffmpeg.org](https://ffmpeg.org/) hoặc [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
+````
 
-### 5. Chạy ứng dụng
+## ⌨️ Bảng Phím tắt Toàn cục (Shortcuts)
 
-```powershell
-python main.py
-```
-
-`main.py` là entrypoint khuyến nghị vì nó thiết lập runtime path, icon và cấu hình Qt trước khi mở `MainWindow`.
-
-## 🔄 Quy trình sử dụng
-
-1. Tạo Project mới bằng `Ctrl + N`, mở Project bằng `Ctrl + O`, hoặc kéo video vào Queue.
-2. Chọn video trong Queue. Nếu chưa có Project, ứng dụng tự tạo thư mục `.ai-subtitle` cho video.
-3. Mở Dock **Generate Subtitle**.
-4. Chọn một trong hai chế độ:
-   - **Timing Draft (VAD Only)** để tạo khối thời gian rỗng.
-   - **Full Subtitle (Whisper ASR)** để nhận dạng và điền nội dung.
-5. Chọn Batch Mode, Batch Size và các tùy chọn VAD/Word Timestamps.
-6. Nhấn **Generate**. Kết quả được ghi từng Batch và hiển thị realtime.
-7. Kiểm tra/chỉnh sửa trên Editor và Timeline.
-8. Xuất SRT/VTT/TXT hoặc render Hardsub từ Export Center.
-
-Khi nhấn **Cancel**, Batch đang chạy sẽ dừng an toàn sau khi Worker kết thúc. Nút **Resume** chỉ được mở lại khi luồng cũ đã thực sự kết thúc, tránh lỗi chạy trùng generation.
-
-## ⏱️ Batch Mode
-
-### Time-based
-
-Ví dụ video dài 10 phút, Batch Size là 5 phút và overlap là 2 giây:
-
-```text
-Batch 1: 00:00.000 → 05:02.000
-Batch 2: 05:00.000 → 10:00.000
-```
-
-Đây là chế độ mặc định của Queue và phù hợp để kiểm soát bộ nhớ trên GPU có VRAM thấp.
-
-### Segment-based
-
-Chế độ này yêu cầu Project đã có Timing Artifact. Planner gom các khoảng thời gian thật theo số câu trong Timing Draft:
-
-```text
-Timing segments 1–10 → Batch 1
-Timing segments 11–20 → Batch 2
-```
-
-Nếu chưa có Timing Artifact, UI chỉ cho phép `Time-based`. `overlap_ms` mở rộng vùng thời gian quanh mỗi nhóm để Whisper có thêm ngữ cảnh; Boundary Reconciler chịu trách nhiệm loại bỏ segment trùng.
-
-## 📁 Dự án và Artifact
-
-Mỗi Project có dạng thư mục độc lập:
-
-```text
-<project-name>.ai-subtitle/
-├── project.json
-└── artifacts/
-    ├── subtitle/
-    │   └── <artifact-id>.sub.json
-    ├── subtitle_generation/
-    │   └── checkpoint.json
-    └── timing/
-        ├── <name>_timing.srt
-        └── checkpoint.json
-```
-
-File `.sub.json` là **canonical subtitle artifact**, không phải file SRT trung gian:
-
-```json
-{
-  "version": 1,
-  "segments": [
-    {
-      "id": "segment-id",
-      "start_ms": 0,
-      "end_ms": 2000,
-      "text": "Hello",
-      "words": [],
-      "status": "generated"
-    }
-  ]
-}
-```
-
-UI dùng dữ liệu canonical này để cập nhật realtime. File `_shadow.srt` chỉ là bản xuất tạm phục vụ các thành phần hiện đang nhận input SRT; người dùng nên xuất SRT chính thức từ Export Center.
+| **Phím tắt**           | **Phạm vi**   | **Chức năng**                                          |
+| ---------------------- | ------------- | ------------------------------------------------------ |
+| **`Ctrl + N`**         | Toàn ứng dụng | Mở hộp thoại tạo Dự án mới (`.ai-subtitle`)            |
+| **`Ctrl + O`**         | Toàn ứng dụng | Mở thư mục Dự án đã có                                 |
+| **`Ctrl + S`**         | Toàn ứng dụng | Lưu toàn bộ dự án, cấu hình và ghi đè Timing xuống đĩa |
+| **`Space`**            | Video Player  | Bật / Tạm dừng phát video                              |
+| **`Ctrl + T`**         | Timeline      | **Cắt khối phụ đề (Split)** tại vị trí kim thời gian   |
+| **`Ctrl + M`**         | Timeline      | **Gộp các khối phụ đề (Merge)** đang được chọn         |
+| **`Delete`**           | Timeline      | **Xóa khối phụ đề (Delete)** đang chọn                 |
+| **`Ctrl + Z`**         | Timeline      | **Hoàn tác (Undo)** thao tác chỉnh sửa gần nhất        |
+| **`Ctrl + Shift + Z`** | Timeline      | **Làm lại (Redo)** thao tác vừa hoàn tác               |
 
 ## 💻 Yêu cầu hệ thống
 
-| Thành phần | Tối thiểu | Khuyến nghị |
-| --- | --- | --- |
-| Hệ điều hành | Windows 10/11 64-bit | Windows 11 64-bit |
-| Python | 3.10 | 3.10.x hoặc 3.11.x |
-| RAM | 8 GB | 16 GB trở lên |
-| GPU | Không bắt buộc, chạy CPU | NVIDIA GPU từ 4 GB VRAM |
-| CUDA/cuDNN | Theo bản PyTorch cài đặt | CUDA/cuDNN tương thích |
-| Dung lượng trống | 5 GB | 15 GB trở lên |
+| **Thành phần**       | **Yêu cầu tối thiểu**     | **Khuyến nghị**                           |
+| -------------------- | ------------------------- | ----------------------------------------- |
+| **Hệ điều hành**     | Windows 10 / 11 (64-bit)  | Windows 11 (64-bit)                       |
+| **Python**           | Python 3.10               | Python 3.10.x hoặc 3.11.x                 |
+| **RAM**              | 8 GB                      | 16 GB trở lên                             |
+| **GPU**              | Không bắt buộc (chạy CPU) | NVIDIA GPU (≥ 4GB VRAM, GTX 1650 trở lên) |
+| **CUDA / cuDNN**     | CUDA 11.8 hoặc 12.x       | cuDNN tương thích với phiên bản PyTorch   |
+| **Dung lượng trống** | 5 GB SSD                  | 15 GB SSD                                 |
 
-Model Whisper được tải về khi cần và có thể chiếm thêm dung lượng. Với GPU 4 GB VRAM, nên dùng model nhỏ hơn và `int8`; GPU 8 GB có thể dùng cấu hình lớn hơn tùy video và model.
+## 📦 Hướng dẫn cài đặt & Chạy mã nguồn
 
-## 📚 Cài đặt dependency
+### Bước 1: Tải mã nguồn
 
-`requirements.txt` hiện bao gồm các dependency chính:
 
-- `PySide6`: giao diện Qt6.
-- `faster-whisper`: nhận dạng giọng nói.
-- `torch`, `torchaudio`: runtime xử lý audio/model.
-- `numpy`: dữ liệu waveform.
-- `psutil`: thông tin tài nguyên hệ thống.
+```bash
+git clone https://github.com/your-username/ai-subtitle-studio.git
+cd ai-subtitle-studio
 
-`requirements-runtime.txt` chứa bộ phiên bản đã ghim cho môi trường runtime cụ thể. Chỉ dùng file này khi máy triển khai cần tái tạo đúng bộ phiên bản runtime đã kiểm thử.
-
-## 🛠️ Đóng gói Windows
-
-### PyInstaller
-
-Lệnh mẫu cho bản onedir:
-
-```powershell
-pyinstaller --noconfirm --onedir --windowed `
-    --name "AI Subtitle Studio" `
-    --add-data "ffmpeg;ffmpeg" `
-    --add-data "resources;resources" `
-    --collect-all faster_whisper `
-    main.py
 ```
 
-Trên Command Prompt, thay ký tự nối dòng PowerShell `` ` `` bằng `^`.
+### Bước 2: Thiết lập môi trường ảo
 
-Sau khi build, kiểm tra thư mục `dist/` có executable, `ffmpeg/`, `resources/` và các thư viện Faster-Whisper cần thiết.
 
-### Inno Setup
+```bash
+# Tạo môi trường ảo
+python -m venv venv
 
-1. Build PyInstaller trước.
-2. Mở [installer/setup.iss](installer/setup.iss) bằng Inno Setup 6+.
-3. Kiểm tra `OutputDir` và tên thư mục `dist` khớp với bản build.
-4. Nhấn **Compile** hoặc `Ctrl + F9`.
+# Kích hoạt trên Windows PowerShell:
+.\venv\Scripts\Activate.ps1
 
-Bộ cài đặt được xuất vào thư mục `release/` theo cấu hình trong `setup.iss`.
+# Hoặc trên Command Prompt (cmd):
+.\venv\Scripts\activate.bat
 
-## 📂 Cấu trúc thư mục
+```
+
+### Bước 3: Cài đặt các gói phụ thuộc
+
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+
+```
+
+### Bước 4: Cấu hình FFmpeg
+
+1. Tải bản build tĩnh của FFmpeg từ trang chủ hoặc các nguồn uy tín (Gyan.dev).
+2. Đặt `ffmpeg.exe` và `ffprobe.exe` vào thư mục `bin/` hoặc `installer/ffmpeg/` của dự án.
+
+### Bước 5: Khởi chạy ứng dụng
+
+
+```bash
+python ui/Gui.py
+
+```
+
+## 🛠️ Đóng gói & Tạo bộ cài đặt Windows (Installer)
+
+### 1. Đóng gói mã nguồn thành File thực thi (`PyInstaller`)
+
+
+```bash
+pyinstaller --noconfirm --onedir --windowed ^
+    --name "AI Subtitle Studio" ^
+    --add-data "bin;bin" ^
+    --add-data "resources;resources" ^
+    --collect-all faster_whisper ^
+    ui/Gui.py
+
+```
+
+### 2. Tạo File Setup Cài đặt (`Inno Setup`)
+
+1. Cài đặt công cụ [Inno Setup 6+](https://jrsoftware.org/).
+2. Mở file cấu hình cài đặt `installer/setup_script.iss`.
+3. Nhấn **Compile** (`Ctrl + F9`) để xuất file `AI_Subtitle_Studio_Setup.exe` vào thư mục `release/`.
+
+## 📂 Cấu trúc thư mục dự án
+
 
 ```text
 ai-subtitle-studio/
-├── core/
-│   ├── artifacts/                    # Artifact và ArtifactStore
-│   ├── project/                      # Project và ProjectState
-│   ├── services/                     # Project/Workspace services
-│   ├── subtitle_generation/          # Whisper, Planner, Validator, Checkpoint
-│   │   ├── faster_whisper_service.py
-│   │   ├── generation_planner.py
-│   │   ├── generation_service.py
-│   │   ├── generation_validator.py
-│   │   ├── subtitle_artifact_service.py
-│   │   ├── subtitle_generation_request.py
-│   │   └── subtitle_generation_result.py
-│   ├── timing/                       # Timing Draft và VAD batching
-│   ├── timeline/                     # Timeline commands, provider, undo/redo
-│   ├── waveform/                     # Trích xuất audio peaks
-│   ├── queue_manager.py              # Quản lý Queue video
-│   └── subtitle_exporter.py          # Xuất SRT/VTT/TXT
-├── ffmpeg/                           # ffmpeg.exe và ffprobe.exe
-├── installer/                        # Cấu hình Inno Setup
-├── player/                           # Video Player và Subtitle Overlay
-├── resources/                        # Icon và tài nguyên UI
-├── tests/                            # Unit/Integration tests
-├── ui/
-│   ├── Gui.py                        # MainWindow và điều phối sự kiện
-│   ├── subtitle_generation_panel.py  # Panel ASR/Timing/Batch
-│   ├── SubEditor.py                  # Subtitle Editor
-│   └── timeline/                     # Timeline widgets
-├── workers/
-│   ├── subtitle_generation_worker.py # Worker một Batch Whisper
-│   ├── TimingBatchWorker.py          # Worker Timing/VAD
-│   └── TaskQueue.py                  # Hardsub và tác vụ Queue khác
-├── main.py                           # Entrypoint khuyến nghị
-├── requirements.txt
-└── README.md
+├── bin/                          # Binary FFmpeg / FFprobe độc lập
+├── core/                         # Tầng Logic Xử lý Cốt lõi
+│   ├── artifacts/                # Quản lý Artifact & Vòng đời Subtitle/Draft
+│   ├── subtitle_generation/      # Domain Faster-Whisper, Planner, Reconciler, Checkpoint
+│   ├── services/                 # Quản lý Trạng thái Dự án & Workspace
+│   ├── timeline/                 # Động cơ Timeline & Quản lý Lệnh (Undo/Redo)
+│   ├── timing/                   # Thuật toán Timing & VAD Batching
+│   ├── waveform/                 # Dịch vụ Trích xuất Sóng âm Background
+│   └── queue_manager.py          # Quản lý danh sách hàng đợi Video
+├── installer/                    # Kịch bản đóng gói Inno Setup
+├── player/                       # Thành phần Video Player (QGraphicsView)
+├── tests/                        # Bộ kiểm thử Tự động (Automated Test Suite)
+│   └── test_subtitle_generation.py
+├── ui/                           # Giao diện Người dùng PySide6 (Qt6)
+│   ├── subtitle_generation_panel.py # Panel ngăn kéo cấu hình ASR & Batch
+│   ├── Gui.py                    # Cửa sổ Chính & Điều phối Sự kiện Toàn cục
+│   └── SubEditor.py              # Bảng Biên tập Phụ đề Dạng Lưới
+├── workers/                      # Background Worker Threads (Hardsub, Subtitle Gen)
+└── requirements.txt              # Danh sách thư viện Python
+
 ```
 
-## 🧪 Kiểm thử
+## 🧪 Kiểm thử tự động (Automated Testing)
 
-Chạy toàn bộ test từ thư mục gốc:
+Chạy bộ kiểm thử tích hợp (bao gồm kiểm tra Time/Segment Planner, Stale Guard, Checkpoint Resume và Boundary Reconciliation):
 
-```powershell
-python -m unittest discover -s tests -p "test*.py" -v
-```
 
-Chạy riêng các nhóm test:
-
-```powershell
+```bash
 python -m unittest tests/test_subtitle_generation.py -v
 python -m unittest tests/test_timeline.py -v
+
 ```
-
-Các kịch bản quan trọng gồm:
-
-- Planner Time-based và Segment-based.
-- Request lưu đúng Batch Mode.
-- Atomic Artifact/Checkpoint commit.
-- Resume bỏ qua Batch đã hoàn tất.
-- Cancel không commit Batch dở dang.
-- Source fingerprint và Artifact revision stale guard.
-- Boundary Reconciliation chống trùng subtitle.
-- Hallucination filter của Whisper.
-- Undo/Redo và tính toàn vẹn Timeline.
-
-## 🛠️ Xử lý sự cố
-
-### Không tìm thấy FFmpeg
-
-Kiểm tra `ffmpeg/ffmpeg.exe`, `ffmpeg/ffprobe.exe` hoặc thêm FFmpeg vào `PATH`. Khởi động lại ứng dụng sau khi thay đổi.
-
-### CUDA out of memory
-
-Giảm `Model Size`, chuyển `Compute Type` sang `int8`, giảm Batch Size hoặc dùng `Time-based` với Batch ngắn hơn. Không chạy đồng thời nhiều generation worker.
-
-### Không thấy phụ đề sau khi Batch hoàn tất
-
-Kiểm tra tab **Live Log**, file `.sub.json` và `_shadow.srt` trong `artifacts/subtitle/`. Nếu Artifact bị sửa ngoài ứng dụng, Checkpoint có thể bị đánh dấu stale để bảo vệ dữ liệu.
-
-### Resume báo đang chạy
-
-Chờ Worker kết thúc hẳn sau khi nhấn **Cancel**. UI chỉ bật **Resume** sau khi QThread đã phát tín hiệu kết thúc; không nhấn Generate lại trong thời gian đang hiện `Cancelling...`.
-
-### Timeline không có waveform
-
-Video có thể không có audio stream hoặc FFmpeg không đọc được codec. Kiểm tra log và thử mở video bằng FFmpeg/ffprobe độc lập.
-
-### Model tải chậm ở lần chạy đầu
-
-Faster-Whisper cần tải model về máy. Đảm bảo có Internet và đủ dung lượng; các lần chạy sau sẽ dùng model đã cache.
-
-## 🗺️ Lộ trình
-
-- [x] Timestamp-First architecture và Project độc lập `.ai-subtitle`.
-- [x] Waveform/Timeline tương tác, Snapshot Undo/Redo.
-- [x] Timing Draft với VAD và Checkpoint.
-- [x] Subtitle Generation với Faster-Whisper, Time-based và Segment-based batching.
-- [x] Atomic Artifact, Reconciler, timestamp shifting và realtime UI sync.
-- [x] Queue generation tuần tự và Cancel/Resume an toàn.
-- [ ] Tối ưu streaming audio cho video siêu dài trên nhiều cấu hình GPU.
-- [ ] Mở rộng cấu hình model và preset VRAM tự động.
-- [ ] Cải thiện Word-level Timing/Karaoke export.
 
 ## 📄 Giấy phép
 
-Phần mềm được phát hành theo giấy phép **MIT License**.
+Phần mềm được phát hành dưới giấy phép **MIT License**.
 
 **Made with ❤️ for Content Creators, Translators & Video Editors**

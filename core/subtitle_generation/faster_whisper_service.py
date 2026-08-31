@@ -75,26 +75,18 @@ class FasterWhisperService:
                 "beam_size": 5,
                 "word_timestamps": request.word_timestamps,
             }
+            # Every batch is an independent, zero-based audio input.  This
+            # keeps VAD compatible with batch processing and makes the offset
+            # contract unambiguous for both VAD and non-VAD transcription.
+            input_path, temp_dir = self._extract_batch_audio(request, batch)
+            timestamp_offset_ms = batch.start_ms
             if request.use_vad:
-                # Faster-Whisper may ignore vad_filter when clip_timestamps is
-                # supplied. Crop the batch first so VAD is applied to the
-                # actual input while timestamps remain local to this batch.
-                input_path, temp_dir = self._extract_batch_audio(request, batch)
                 transcribe_options["vad_filter"] = True
                 transcribe_options["vad_parameters"] = {
                     "min_silence_duration_ms": request.min_silence_ms
                 }
-                timestamp_offset_ms = batch.start_ms
             else:
-                # With clip_timestamps, Faster-Whisper returns timestamps on
-                # the source timeline, so do not add batch.start_ms again.
-                input_path = request.video_path
-                transcribe_options["clip_timestamps"] = [
-                    batch.start_ms / 1000,
-                    batch.end_ms / 1000,
-                ]
                 transcribe_options["vad_filter"] = False
-                timestamp_offset_ms = 0
 
             segments, _info = self.model.transcribe(
                 input_path, **transcribe_options
@@ -145,10 +137,13 @@ class FasterWhisperService:
             "-hide_banner",
             "-loglevel",
             "error",
-            "-ss",
-            f"{batch.start_ms / 1000:.3f}",
             "-i",
             request.video_path,
+            # Output seeking is deliberately used here: input seeking can
+            # begin at a preceding keyframe, which breaks the zero-based
+            # timestamp contract for the extracted WAV.
+            "-ss",
+            f"{batch.start_ms / 1000:.3f}",
             "-t",
             f"{duration_s:.3f}",
             "-vn",
