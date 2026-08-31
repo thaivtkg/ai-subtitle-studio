@@ -99,6 +99,7 @@ class ProjectService:
             "text_status": self.current_project.state.text_status,
             "export_status": self.current_project.state.export_status,
             "active_artifact_id": self.current_project.state.active_artifact_id,
+            "subtitle_artifact_id": self.current_project.state.subtitle_artifact_id,
             "selected_segment_id": self.current_project.state.selected_segment_id,
             "dirty": False,
             # [S7.1-T05] Lưu TimingState
@@ -150,6 +151,7 @@ class ProjectService:
                 project_state.text_status = s_data.get("text_status", "EMPTY")
                 project_state.export_status = s_data.get("export_status", "EMPTY")
                 project_state.active_artifact_id = s_data.get("active_artifact_id")
+                project_state.subtitle_artifact_id = s_data.get("subtitle_artifact_id")
                 project_state.selected_segment_id = s_data.get("selected_segment_id")
                 
                 # --- [S7.1-T05 & T08] Backward Compatibility cho TimingState ---
@@ -221,4 +223,4 @@ class ProjectService:
             except Exception as e:
                 print(f"[ERROR] Không thể nạp Timing Checkpoint: {e}")
                 return None
-        return None 
+        return None

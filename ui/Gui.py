@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -28,6 +29,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTabWidget,
+    QDockWidget,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -38,13 +41,14 @@ from core.Backend import is_garbage
 from core.queue_manager import QueueManager
 from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
+from core.timing.timing_batch_service import TimingBatchService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
 from ui.dialogs.new_project_dialog import NewProjectDialog
-from ui.pages.ai_panel import AIGenerationPanel
+from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
@@ -54,7 +58,7 @@ from ui.SubEditor import SubtitleEditorWidget
 from ui.theme import Theme
 from ui.toast import Toast
 from utils import load_settings, save_settings
-from workers.TaskQueue import FillTextWorker, HardsubWorker, WhisperWorker
+from workers.TaskQueue import HardsubWorker
 
 
 
@@ -87,16 +91,15 @@ class MainWindow(QMainWindow):
         self.project_service = ProjectService(self.artifact_store)
         self.workspace_service = WorkspaceService(self, self.project_service)
 
-        # --- [SPRINT 7.1] TIMING BATCH SERVICE ---
-        from core.timing.timing_batch_service import TimingBatchService
+        # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
+        from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+        from core.subtitle_generation.generation_service import SubtitleGenerationService
+        self.subtitle_whisper_service = FasterWhisperService()
+        self.subtitle_generation_service = SubtitleGenerationService(
+            self.subtitle_whisper_service, self.project_service
+        )
+        self.subtitle_generation_service.on_batch_complete = self._on_generation_batch_sync
         self.timing_service = TimingBatchService(self.project_service)
-        self.timing_service.progress_signal.connect(self.update_progress)
-        self.timing_service.log_signal.connect(self.append_log)
-        self.timing_service.batch_completed_signal.connect(self._on_timing_batch_completed)
-        self.timing_service.timing_finished_signal.connect(self._on_timing_finished)
-        self.timing_service.state_changed_signal.connect(self._on_timing_state_changed)
-        self.timing_service.error_signal.connect(self._on_timing_error)
-        # -----------------------------------------
 
         # Phím tắt Dự án (Gắn cờ ApplicationShortcut để chống mất Focus)
         self.shortcut_new = QShortcut(QKeySequence("Ctrl+N"), self)
@@ -115,10 +118,14 @@ class MainWindow(QMainWindow):
         
         self.setMinimumSize(1280, 720)
         self.resize(1366, 768)
+        self.setDockOptions(
+            QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
+        )
         self.center_on_screen()
         self.setStyleSheet(Theme.get_global_stylesheet())
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.old_pos = QPoint()
+        self._is_dragging = False
 
         self.queue_mgr = QueueManager()
         self.queue_mgr.queue_updated.connect(self.on_queue_updated)
@@ -129,6 +136,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         root_widget = QWidget()
+        root_widget.setMinimumSize(800, 600)
+        root_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setCentralWidget(root_widget)
         root_layout = QHBoxLayout(root_widget)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -277,35 +286,58 @@ class MainWindow(QMainWindow):
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
-        self.sub_editor.fill_text_requested.connect(self.start_fill_text_worker)
         
         self.editor_horizontal_splitter.addWidget(self.sub_editor)
 
         # 2.2 Side-Panel cho AI & Live Log (Bên phải - Dễ dàng Collapse sau này)
-        self.side_panel_tabs = QTabWidget()
-        self.side_panel_tabs.setStyleSheet(f"""
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setPlaceholderText("Nhật ký trạng thái...")
+
+        # The legacy panel is intentionally not added to the editor splitter.
+        # Đặt tỷ lệ: Editor chiếm 70% không gian ngang, AI Panel ép sang mép 30%
+        self.editor_horizontal_splitter.setSizes([1100])
+        
+        self.work_splitter.addWidget(self.editor_horizontal_splitter)
+
+        # --- [SPRINT 9] RIGHT DOCK: SUBTITLE GENERATION + LIVE LOG ---
+        self.generation_panel = SubtitleGenerationPanel(
+            self.subtitle_generation_service, self
+        )
+        self.generation_panel.timing_start_requested.connect(
+            self._start_timing_draft
+        )
+        self.generation_panel.timing_cancel_requested.connect(
+            self.timing_service.cancel_timing
+        )
+        self.timing_service.progress_signal.connect(self._on_timing_progress)
+        self.timing_service.log_signal.connect(self._on_timing_log)
+        self.timing_service.batch_completed_signal.connect(
+            self._on_timing_batch_completed
+        )
+        self.timing_service.state_changed_signal.connect(
+            self._on_timing_state_changed
+        )
+        self.timing_service.error_signal.connect(self._on_timing_error)
+        self.generation_dock = QDockWidget("AI Generation", self)
+        self.generation_dock.setObjectName("SubtitleGenerationDock")
+        self.generation_dock.setAllowedAreas(
+            Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea
+        )
+        self.generation_dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
+        )
+        self.generation_dock.setMinimumWidth(330)
+        dock_tabs = QTabWidget()
+        dock_tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; background: {Theme.SURFACE}; }}
             QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; font-weight: bold; }}
             QTabBar::tab:selected {{ background: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; }}
         """)
-        
-        self.ai_panel = AIGenerationPanel()
-        self.ai_panel.start_requested.connect(self._on_ai_start_clicked)
-        self.ai_panel.continue_requested.connect(self._on_ai_continue_clicked)
-        self.ai_panel.cancel_requested.connect(self._on_ai_cancel_clicked)
-        self.ai_panel.retry_requested.connect(self._on_ai_retry_clicked)
-        self.side_panel_tabs.addTab(self.ai_panel, "🤖 AI Actions")
-
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setPlaceholderText("Nhật ký trạng thái...")
-        self.side_panel_tabs.addTab(self.log_box, "📜 Live Log")
-
-        self.editor_horizontal_splitter.addWidget(self.side_panel_tabs)
-        # Đặt tỷ lệ: Editor chiếm 70% không gian ngang, AI Panel ép sang mép 30%
-        self.editor_horizontal_splitter.setSizes([850, 150]) 
-        
-        self.work_splitter.addWidget(self.editor_horizontal_splitter)
+        dock_tabs.addTab(self.generation_panel, "✨ Generate Subtitle")
+        dock_tabs.addTab(self.log_box, "📜 Live Log")
+        self.generation_dock.setWidget(dock_tabs)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
 
         # --- TẦNG 3: TIMELINE & WAVEFORM ---
         from ui.timeline.timeline_widget import TimelineWidget
@@ -344,9 +376,6 @@ class MainWindow(QMainWindow):
         self.page_drafts = DraftCenterPage()
         self.page_drafts.open_draft_requested.connect(self._load_draft_from_center)
 
-        self.ai_panel.batch_spin.valueChanged.connect(self.sub_editor.spin_batch.setValue)
-        self.sub_editor.spin_batch.valueChanged.connect(self.ai_panel.batch_spin.setValue)
-
         self.page_drafts.continue_draft_requested.connect(self._continue_draft_from_center)
 
         self.stack.addWidget(self.page_drafts)
@@ -354,7 +383,6 @@ class MainWindow(QMainWindow):
         # Page 5 (Index 4): Export Center
         self.page_export = ExportCenterPage()
         self.page_export.export_srt_requested.connect(self._trigger_export_softsub)
-        self.ai_panel.retry_requested.connect(self._retry_current_task)
         self.page_export.burn_hardsub_requested.connect(self._trigger_export_hardsub)
         self.stack.addWidget(self.page_export)
 
@@ -435,7 +463,8 @@ class MainWindow(QMainWindow):
 
         bottom_layout.addLayout(prog_action_row)
         right_layout.addWidget(self.bottom_frame)
-        root_layout.addWidget(right_area)
+        # Keep the central workspace expanding when a dock is floated/closed.
+        root_layout.addWidget(right_area, stretch=1)
 
         self.stdout_redirector = StreamRedirector(sys.stdout)
         self.stdout_redirector.text_written.connect(self.append_log)
@@ -465,6 +494,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.generation_panel.set_video_duration(duration_ms)
             # 3. [FIX REVIEW 1] Nạp Data Provider SAU KHI cả SRT và Sóng âm đã sẵn sàng trên Main Thread
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
 
@@ -564,13 +594,25 @@ class MainWindow(QMainWindow):
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            self.old_pos = event.globalPosition().toPoint()
+            # Only the 42px topbar is a drag handle. Child widgets such as
+            # dock controls must keep their native mouse interaction.
+            self._is_dragging = event.pos().y() <= 42
+            if self._is_dragging:
+                self.old_pos = event.globalPosition().toPoint()
+        else:
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() == Qt.LeftButton:
+        if event.buttons() == Qt.LeftButton and self._is_dragging:
             delta = event.globalPosition().toPoint() - self.old_pos
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.old_pos = event.globalPosition().toPoint()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
 
     def apply_saved_settings(self):
         s = load_settings()
@@ -609,12 +651,6 @@ class MainWindow(QMainWindow):
             self.page_settings.font_combo.setCurrentText(s["font_name"])
         if "font_size" in s:
             self.page_settings.size_spin.setValue(s["font_size"])
-        if "ai_mode" in s:
-            idx = self.ai_panel.mode_combo.findData(s["ai_mode"])
-            if idx >= 0: self.ai_panel.mode_combo.setCurrentIndex(idx)
-        if "prompt" in s:
-            self.ai_panel.prompt_edit.setText(s["prompt"])
-
     def on_motion_preset_changed(self):
         preset = self.page_settings.motion_preset_combo.currentData()
         
@@ -759,6 +795,34 @@ class MainWindow(QMainWindow):
 
     def on_queue_item_clicked(self, vid_path):
         self.queue_mgr.set_active(vid_path)
+
+        # Queue items can arrive through Drag & Drop without going through
+        # the New Project dialog. SubtitleGenerationService requires a
+        # project because its checkpoint and canonical artifact live there.
+        if not getattr(self.project_service, "current_project", None):
+            file_name = os.path.basename(vid_path)
+            safe_name = "".join(
+                char if char.isalnum() else "_" for char in file_name
+            )
+            output_dir = self.out_input.text().strip() or os.path.dirname(vid_path)
+            project_dir = os.path.join(output_dir, f"{safe_name}.ai-subtitle")
+
+            try:
+                if not os.path.exists(project_dir):
+                    self.project_service.create_project(
+                        project_dir, file_name, vid_path
+                    )
+                else:
+                    self.project_service.open_project(project_dir)
+                self.generation_panel.check_resumable_state()
+                self.append_log(
+                    f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
+                )
+            except Exception as exc:
+                self.append_log(
+                    f"❌ [LỖI] Không thể tự động tạo/nạp dự án: {exc}"
+                )
+
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
 
@@ -919,172 +983,372 @@ class MainWindow(QMainWindow):
         Toast.show_error(self, f"Lỗi Hardsub: {err}")
         self._cleanup_ui_after_task()
 
+    def _restore_panel_callbacks(self):
+        """Return subtitle-generation callbacks to the interactive drawer."""
+        if not hasattr(self, "generation_panel"):
+            return
+        self.subtitle_generation_service.on_progress = (
+            self.generation_panel._update_progress
+        )
+        self.subtitle_generation_service.on_error = self.generation_panel._on_error
+        self.subtitle_generation_service.on_finish = self.generation_panel._on_finish
+        self.subtitle_generation_service.on_batch_complete = (
+            self._on_generation_batch_sync
+        )
+
+    def _queue_update_progress(self, percent, message):
+        """Mirror Queue generation progress in the global bar and drawer."""
+        self.update_progress(percent, message)
+        if hasattr(self, "generation_panel"):
+            self.generation_panel._update_progress(percent, message)
+
+    @staticmethod
+    def _parse_queue_duration_ms(value) -> int:
+        """Parse Queue metadata duration, which is normally HH:MM:SS."""
+        if isinstance(value, (int, float)):
+            return max(0, int(float(value) * 1000))
+        if not isinstance(value, str):
+            return 0
+        parts = value.strip().split(":")
+        if len(parts) != 3:
+            return 0
+        try:
+            hours, minutes, seconds = (int(part) for part in parts)
+            return max(0, (hours * 3600 + minutes * 60 + seconds) * 1000)
+        except ValueError:
+            return 0
+
+    def _queue_video_duration_ms(self, video_path: str) -> int:
+        queue_data = self.queue_mgr.get_items().get(video_path, {})
+        metadata = queue_data.get("metadata") or {}
+        duration_ms = self._parse_queue_duration_ms(
+            metadata.get("duration", queue_data.get("duration", 0))
+        )
+        if duration_ms > 0:
+            return duration_ms
+
+        # Metadata is asynchronous; obtain a reliable fallback before the
+        # planner creates time batches.
+        try:
+            from workers.TaskQueue import get_video_duration
+
+            duration_sec = get_video_duration(video_path)
+            if duration_sec > 0:
+                return int(duration_sec * 1000)
+        except Exception as exc:
+            self.append_log(f"[QUEUE] Không đọc được thời lượng video: {exc}")
+        return 3600000
+
     def start_processing(self):
         items = self.queue_mgr.get_items()
         if not items: return
         self.is_cancelled_flag = False
+        self._queue_generation_active = False
         self.batch_queue = [(vid, data.get("srt_path")) for vid, data in items.items()]
         self.total_batch_items = len(self.batch_queue)
         self.current_batch_index = 0
-        self.output_dir = self.out_input.text().strip()
+        self.output_dir = (
+            self.out_input.text().strip()
+            or self.page_export.out_edit.text().strip()
+            or os.path.dirname(next(iter(items)))
+        )
 
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
-        self.ai_panel.set_state("PROCESSING", "Đang khởi chạy luồng AI...")
         self.page_dashboard.card_status_val.setText("Processing")
         self.log_box.clear()
         self.process_next_batch_item()
 
     def process_next_batch_item(self):
-        if self.is_cancelled_flag or not hasattr(self, 'batch_queue') or len(self.batch_queue) == 0:
-            if not self.is_cancelled_flag:
-                self.process_finished("Toàn bộ tiến trình đã hoàn tất!")
+        if (
+            getattr(self, "is_cancelled_flag", False)
+            or not hasattr(self, "batch_queue")
+            or not self.batch_queue
+        ):
+            if not getattr(self, "is_cancelled_flag", False):
+                self.process_finished("Toàn bộ tiến trình Queue đã hoàn tất!")
             return
 
         self.current_batch_index += 1
         self.current_vid, current_srt = self.batch_queue.pop(0)
         file_name = os.path.basename(self.current_vid)
-
-        self.append_log(f"\n==================================================")
-        self.append_log(f"🎬 ĐANG XỬ LÝ [{self.current_batch_index}/{self.total_batch_items}]: {file_name}")
-        self.append_log(f"==================================================")
-
+        self.append_log("\n==================================================")
+        self.append_log(
+            f"🎬 ĐANG XỬ LÝ [{self.current_batch_index}/{self.total_batch_items}]: "
+            f"{file_name}"
+        )
+        self.append_log("==================================================")
         self.on_queue_item_clicked(self.current_vid)
 
         if not current_srt:
-            if self.ai_panel.mode_combo.currentData() == "timing":
-                self.append_log("[AI] Bắt đầu chế độ Timing Only (Chỉ trích xuất thời gian).")
-                self.append_log("[AI] Đang chạy thuật toán VAD (Silero) để phân tách giọng nói...")
-                self.append_log("[AI] Quá trình này chạy ngầm và rất nhanh, vui lòng đợi...")
-            
-            if getattr(self, 'project_service', None) and self.project_service.current_project:
-                worker_out_dir = os.path.join(self.project_service.project_dir, "artifacts")
-                os.makedirs(worker_out_dir, exist_ok=True)
-            else:
-                worker_out_dir = self.output_dir
-
-            self.worker = WhisperWorker(
-                video_path=self.current_vid,
-                output_dir=worker_out_dir, 
-                initial_prompt=self.ai_panel.prompt_edit.text().strip(),
-                compute_type=self.page_settings.compute_combo.currentData(),
-                use_vad=self.page_settings.chk_vad.isChecked(),
-                min_silence_ms=self.page_settings.silence_spin.value(), 
-                model_size=self.page_settings.model_combo.currentData(),
-                generation_mode=self.ai_panel.mode_combo.currentData()
+            # Each queued source gets its own guarded project/checkpoint.
+            source_root = self.output_dir or os.path.dirname(self.current_vid)
+            safe_name = "".join(
+                char if char.isalnum() else "_"
+                for char in os.path.splitext(file_name)[0]
             )
-            self.worker.progress_signal.connect(self.update_progress)
-            self.worker.log_signal.connect(self.append_log)
-            self.worker.finished_signal.connect(self.on_whisper_finished)
-            self.worker.error_signal.connect(self.process_error)
-            self.worker.start()
-        else:
-            if current_srt.endswith('.ai-subtitle-draft'):
-                self.append_log("❌ File Draft cần được lưu thành SRT trước khi Hardsub.")
-                self.process_next_batch_item()
-                return
-
-            if not self.page_settings.chk_hardsub_enable.isChecked():
-                self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Bỏ qua Hardsub cho video hiện tại.")
-                self.process_next_batch_item()
-                return
-
-            self.worker = HardsubWorker(
-                video_path=self.current_vid,
-                srt_path=current_srt,
-                output_dir=self.output_dir,
-                font_size=self.page_settings.size_spin.value(),
-                font_color="white",
-                font_name=self.page_settings.font_combo.currentText()
-            )
-            self.worker.progress_signal.connect(self.update_progress)
-            self.worker.log_signal.connect(self.append_log)
-            self.worker.finished_signal.connect(self.on_hardsub_finished)
-            self.worker.error_signal.connect(self.process_error)
-            self.worker.start()
-
-    def on_whisper_finished(self, msg, srt_path):
-        self.append_log(f"[AI] {msg}")
-        self.queue_mgr.set_srt_for_video(self.current_vid, srt_path)
-        
-        if getattr(self, 'project_service', None) and self.project_service.current_project and srt_path and os.path.exists(srt_path):
-            import uuid
-            from datetime import datetime
-            from core.artifacts.artifact import Artifact
-            from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
-            
-            run_mode = self.ai_panel.mode_combo.currentData()
-            
-            if run_mode == "timing":
-                a_type = ArtifactType.TIMING
-            elif srt_path.endswith('.ai-subtitle-draft'):
-                a_type = ArtifactType.DRAFT
-            else:
-                a_type = ArtifactType.SUBTITLE
-                
-            artifact = Artifact(
-                artifact_id=str(uuid.uuid4()),
-                artifact_type=a_type,
-                path=srt_path,
-                created_at=datetime.now().isoformat(),
-                updated_at=datetime.now().isoformat(),
-                source_project_id=self.project_service.current_project.project_id,
-                status=ArtifactStatus.READY
-            )
-            
-            self.artifact_store.register(artifact)
-            self.project_service.current_project.state.active_artifact_id = artifact.artifact_id
-            
-            if a_type == ArtifactType.TIMING:
-                self.project_service.current_project.state.timing_status = "READY"
-            elif a_type == ArtifactType.DRAFT:
-                self.project_service.current_project.state.timing_status = "READY" 
-                self.project_service.current_project.state.text_status = "DRAFT"
-            else:
-                self.project_service.current_project.state.timing_status = "READY"
-                self.project_service.current_project.state.text_status = "READY"
-                
-            self.project_service.mark_dirty()
-            self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name} vào dữ liệu dự án.")
-        
-        if self.ai_panel.mode_combo.currentData() == "timing":
-            if srt_path and os.path.exists(srt_path):
-                if srt_path.endswith('.ai-subtitle-draft'):
-                    self.sub_editor.load_draft_file(srt_path)
+            project_dir = os.path.join(source_root, f"{safe_name}.ai-subtitle")
+            try:
+                if not os.path.exists(project_dir):
+                    self.project_service.create_project(
+                        project_dir, file_name, self.current_vid
+                    )
                 else:
-                    self.sub_editor.load_srt_file(srt_path)
-                self.video_player.sub_controller.load_srt(srt_path)
-            
-            self.switch_page(1)
-            self.bottom_tabs.setCurrentIndex(0)
-            self.process_finished("Đã tạo Timing Draft thành công!")
+                    self.project_service.open_project(project_dir)
+            except Exception as exc:
+                self.process_error(f"Lỗi khởi tạo Project tự động: {exc}")
+                return
+
+            duration_ms = self._queue_video_duration_ms(self.current_vid)
+            self.generation_panel.set_video_duration(duration_ms)
+            self.append_log(
+                "[ASR] Đang nạp Audio và phân bổ Time-Batching "
+                "(chống tràn VRAM)..."
+            )
+
+            self.subtitle_generation_service.on_progress = (
+                self._queue_update_progress
+            )
+            self.subtitle_generation_service.on_error = self.process_error
+            self.subtitle_generation_service.on_finish = (
+                self.on_queue_generation_finished
+            )
+            self.subtitle_generation_service.on_batch_complete = (
+                self._on_generation_batch_sync
+            )
+            self._queue_generation_active = True
+
+            project = self.project_service.current_project
+            settings = self.page_settings
+            request = SubtitleGenerationRequest(
+                request_id=str(uuid.uuid4()),
+                project_id=project.project_id,
+                source_fingerprint=project.source.fingerprint,
+                video_path=self.current_vid,
+                model_size=settings.model_combo.currentData(),
+                compute_type=settings.compute_combo.currentData(),
+                language=None,
+                use_vad=settings.chk_vad.isChecked(),
+                min_silence_ms=settings.silence_spin.value(),
+                word_timestamps=False,
+                batch_mode="time",
+                batch_size_value=5,
+                overlap_ms=2000,
+            )
+            try:
+                self.subtitle_generation_service.start_generation(
+                    request, duration_ms
+                )
+            except Exception as exc:
+                self.process_error(f"Lỗi khởi chạy Subtitle Generation: {exc}")
             return
-            
-        if not self.page_settings.chk_hardsub_enable.isChecked():
-            self.append_log("[HỆ THỐNG] Hardsub tự động đang tắt. Chuyển sang xử lý tiếp theo...")
+
+        if current_srt.endswith(".ai-subtitle-draft"):
+            self.append_log(
+                "❌ File Draft cần được lưu thành SRT trước khi Hardsub."
+            )
             self.process_next_batch_item()
             return
 
-        from ui.hardsub_confirm_dialog import HardsubConfirmDialog
-        dlg = HardsubConfirmDialog(self.current_vid, self)
-        dlg.exec()
-        if dlg.user_choice == HardsubConfirmDialog.HARDSUB:
-            out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
-            self.worker = HardsubWorker(
-                video_path=self.current_vid,
-                srt_path=srt_path,
-                output_dir=out_dir,
-                font_size=self.page_settings.size_spin.value(),
-                font_color="white",
-                font_name=self.page_settings.font_combo.currentText()
+        if not self.page_settings.chk_hardsub_enable.isChecked():
+            self.append_log(
+                "[HỆ THỐNG] Hardsub tự động đang tắt. "
+                "Bỏ qua Hardsub cho video hiện tại."
             )
-            self.worker.progress_signal.connect(self.update_progress)
-            self.worker.log_signal.connect(self.append_log)
-            self.worker.finished_signal.connect(self.on_hardsub_finished)
-            self.worker.error_signal.connect(self.process_error)
-            self.worker.start()
-        else:
             self.process_next_batch_item()
+            return
+
+        self.worker = HardsubWorker(
+            video_path=self.current_vid,
+            srt_path=current_srt,
+            output_dir=self.output_dir,
+            font_size=self.page_settings.size_spin.value(),
+            font_color="white",
+            font_name=self.page_settings.font_combo.currentText(),
+        )
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.finished_signal.connect(self.on_hardsub_finished)
+        self.worker.error_signal.connect(self.process_error)
+        self.worker.start()
+
+    def on_queue_generation_finished(self):
+        """Continue Queue processing using the canonical artifact's shadow SRT."""
+        self._queue_generation_active = False
+        self._restore_panel_callbacks()
+        project = self.project_service.current_project
+        artifact_id = (
+            getattr(project.state, "subtitle_artifact_id", None)
+            if project
+            else None
+        )
+        artifact = self.artifact_store.get(artifact_id) if artifact_id else None
+        if not artifact or not artifact.path:
+            self.process_error("Không tìm thấy Subtitle Artifact sau khi tạo.")
+            return
+
+        shadow_srt = artifact.path.replace(".sub.json", "_shadow.srt")
+        if not os.path.exists(shadow_srt):
+            self.process_error("Không tìm thấy Shadow SRT sau khi tạo phụ đề.")
+            return
+
+        self.append_log(f"[AI] Đã hoàn tất tạo phụ đề. File: {shadow_srt}")
+        self.queue_mgr.set_srt_for_video(self.current_vid, shadow_srt)
+
+        if not self.page_settings.chk_hardsub_enable.isChecked():
+            self.append_log(
+                "[HỆ THỐNG] Hardsub tự động đang tắt. "
+                "Chuyển sang video tiếp theo..."
+            )
+            self.process_next_batch_item()
+            return
+
+        out_dir = self.page_export.out_edit.text().strip() or self.output_dir
+        self.worker = HardsubWorker(
+            video_path=self.current_vid,
+            srt_path=shadow_srt,
+            output_dir=out_dir,
+            font_size=self.page_settings.size_spin.value(),
+            font_color="white",
+            font_name=self.page_settings.font_combo.currentText(),
+        )
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.finished_signal.connect(self.on_hardsub_finished)
+        self.worker.error_signal.connect(self.process_error)
+        self.worker.start()
+
+    # ==========================================================
+    # [SPRINT 9] REAL-TIME SUBTITLE GENERATION SYNC
+    # ==========================================================
+    def _start_timing_draft(self, batch_minutes: int, settings: dict):
+        """Start the legacy VAD-only draft pipeline from the new panel."""
+        try:
+            self.timing_service.start_timing(batch_minutes, settings)
+        except Exception as exc:
+            self._on_timing_error(str(exc))
+
+    def _on_timing_progress(self, percent: int, message: str):
+        percent = max(0, min(100, int(percent)))
+        self.generation_panel._update_progress(percent, message)
+        self.progress_bar.setValue(percent)
+        self.page_dashboard.quick_progress.setValue(percent)
+        if message:
+            self.lbl_speed_eta.setText(message)
+
+    def _on_timing_log(self, message: str):
+        self.append_log(f"[TIMING] {message}")
+
+    def _on_timing_error(self, message: str):
+        self.append_log(f"❌ [TIMING] {message}")
+        self.generation_panel._on_error(message)
+        self.page_dashboard.card_status_val.setText("FAILED")
+
+    def _on_timing_state_changed(self, status: str, message: str):
+        self.generation_panel.lbl_status.setText(message)
+        self.page_dashboard.card_status_val.setText(status)
+
+        if status in {"READY", "IDLE", "COMPLETED", "FAILED"}:
+            self.generation_panel._reset_ui_state()
+            if status != "FAILED":
+                self.generation_panel.progress_bar.setValue(
+                    100 if status == "COMPLETED" else 0
+                )
+        else:
+            self.generation_panel._set_ui_state_running()
+
+    def _on_timing_batch_completed(self, _added_count: int, _batch_size: int):
+        """Load the committed timing SRT immediately after a successful batch."""
+        project = self.project_service.current_project
+        if not project:
+            return
+        artifact_id = getattr(project.state.timing, "timing_artifact_id", None)
+        artifact = self.artifact_store.get(artifact_id) if artifact_id else None
+        if not artifact or not artifact.path or not os.path.exists(artifact.path):
+            return
+
+        try:
+            self.sub_editor.load_srt_file(artifact.path)
+            self.video_player.sub_controller.load_srt(artifact.path)
+            duration_ms = self.generation_panel.video_duration_ms
+            if duration_ms <= 0 and hasattr(self.video_player, "player"):
+                duration_ms = self.video_player.player.duration()
+            if duration_ms <= 0:
+                duration_ms = 3600000
+            self.timeline_data_provider.load_runtime_data(
+                self.sub_editor.all_segments, duration_ms
+            )
+            self.timeline_widget.load_project_data(
+                duration_ms, self.timeline_data_provider.get_all_segments()
+            )
+        except Exception as exc:
+            self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
+
+    def _on_generation_batch_sync(self, batch, segments):
+        """Refresh editor/player/timeline after each committed ASR batch."""
+        for segment in segments:
+            start_str = self.timing_service._ms_to_time_str(segment.start_ms)
+            end_str = self.timing_service._ms_to_time_str(segment.end_ms)
+            self.append_log(f"[{start_str} --> {end_str}] {segment.text}")
+
+        project = self.project_service.current_project
+        if not project or not project.state.subtitle_artifact_id:
+            return
+
+        artifact = self.project_service.artifact_store.get(
+            project.state.subtitle_artifact_id
+        )
+        if not artifact or not os.path.exists(artifact.path):
+            return
+
+        try:
+            import json
+
+            with open(artifact.path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            subtitles = [
+                (segment["start_ms"], segment["end_ms"], segment["text"])
+                for segment in data.get("segments", [])
+                if segment.get("text", "").strip()
+            ]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.append_log(f"[SYNC] Không đọc được Subtitle Artifact: {exc}")
+            return
+
+        shadow_srt_path = artifact.path.replace(".sub.json", "_shadow.srt")
+        temp_srt_path = f"{shadow_srt_path}.tmp"
+        try:
+            from core.subtitle_exporter import SubtitleExportService
+
+            SubtitleExportService.export_srt(subtitles, temp_srt_path)
+            os.replace(temp_srt_path, shadow_srt_path)
+        except Exception as exc:
+            if os.path.exists(temp_srt_path):
+                os.remove(temp_srt_path)
+            self.append_log(f"[SYNC] Không tạo được Shadow SRT: {exc}")
+            return
+
+        self.sub_editor.load_srt_file(shadow_srt_path)
+        self.video_player.sub_controller.load_srt(shadow_srt_path)
+
+        duration_ms = self.generation_panel.video_duration_ms
+        if duration_ms <= 0 and hasattr(self.video_player, "player"):
+            duration_ms = self.video_player.player.duration()
+        if duration_ms <= 0:
+            duration_ms = 3600000
+
+        self.timeline_data_provider.load_runtime_data(
+            self.sub_editor.all_segments, duration_ms
+        )
+        self.timeline_widget.load_project_data(
+            duration_ms, self.timeline_data_provider.get_all_segments()
+        )
+
+        last_index = self.sub_editor.table.rowCount() - 1
+        if last_index >= 0:
+            item = self.sub_editor.table.item(last_index, 0)
+            if item:
+                self.sub_editor.table.scrollToItem(item)
 
     def on_hardsub_finished(self, msg, out_video_path):
         from core.artifacts.artifact_types import ArtifactType
@@ -1099,10 +1363,18 @@ class MainWindow(QMainWindow):
     def cancel_processing(self):
         self.is_cancelled_flag = True
         self.batch_queue = []
+        if getattr(self, "_queue_generation_active", False):
+            self._queue_generation_active = False
+            # Prevent cancel_generation() from dispatching the Queue finish
+            # callback while the user is explicitly aborting the Queue.
+            self.subtitle_generation_service.on_finish = None
+            self.subtitle_generation_service.cancel_generation()
+            self._restore_panel_callbacks()
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.append_log("[HỆ THỐNG] Đang dừng an toàn...")
             self.cancel_btn.setEnabled(False)
+        self._cleanup_ui_after_task()
 
     def update_progress(self, val, msg):
         global_val = val
@@ -1114,10 +1386,8 @@ class MainWindow(QMainWindow):
         self.progress_anim.setEndValue(global_val)
         self.progress_anim.start()
         self.page_dashboard.quick_progress.setValue(global_val)
-        self.ai_panel.progress_bar.setValue(val)
         if msg:
             self.lbl_speed_eta.setText(msg)
-            self.ai_panel.lbl_step_info.setText(msg)
 
     def append_log(self, msg):
         self.log_box.append(msg)
@@ -1127,9 +1397,10 @@ class MainWindow(QMainWindow):
             self.lbl_speed_eta.setText(f"Speed: {speed_match.group(1)}")
 
     def process_finished(self, msg):
+        self._queue_generation_active = False
+        self._restore_panel_callbacks()
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.ai_panel.set_state("COMPLETED", msg)
         self.page_dashboard.card_status_val.setText("Idle")
         self.progress_anim.stop()
         self.progress_bar.setValue(0)
@@ -1142,9 +1413,18 @@ class MainWindow(QMainWindow):
         self._cleanup_ui_after_task()
 
     def process_error(self, err):
-        self.append_log(f"❌ [LỖI] {err}")
-        self.ai_panel.set_state("ERROR", str(err))
+        queue_generation_active = getattr(self, "_queue_generation_active", False)
+        self._queue_generation_active = False
+        self._restore_panel_callbacks()
 
+        if queue_generation_active:
+            # The service already reported the failure. Cancel only to make
+            # sure its worker exits, without invoking the Queue finish hook.
+            self.subtitle_generation_service.on_finish = None
+            self.subtitle_generation_service.cancel_generation()
+            self._restore_panel_callbacks()
+
+        self.append_log(f"❌ [LỖI] {err}")
         if getattr(self, "is_cancelled_flag", False):
             self._cleanup_ui_after_task()
             return
@@ -1165,7 +1445,6 @@ class MainWindow(QMainWindow):
             
         self.progress_bar.setValue(0)
         self.page_dashboard.quick_progress.setValue(0)
-        self.ai_panel.progress_bar.setValue(0)
         self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
         self.page_dashboard.card_status_val.setText("Idle")
 
@@ -1173,91 +1452,6 @@ class MainWindow(QMainWindow):
         out_d = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
-
-    def start_fill_text_worker(self, start_idx, count):
-        if not self.queue_mgr.active_vid:
-            Toast.show_info(self, "Vui lòng chọn video để điền chữ.")
-            return
-
-        actual_count = self.ai_panel.batch_spin.value()
-        target_segs = self.sub_editor.all_segments[start_idx : start_idx + actual_count]
-        segments_for_ai = []
-        for s in target_segs:
-            s_ms = self.sub_editor.time_str_to_ms(s['start'])
-            e_ms = self.sub_editor.time_str_to_ms(s['end'])
-            raw = s['text'] if s['text'] != "[ Chưa có nội dung ]" else ""
-            stt = int(s['stt']) if str(s['stt']).isdigit() else 0
-            segments_for_ai.append((s_ms, e_ms, raw, stt))
-
-        if not segments_for_ai:
-            Toast.show_info(self, "Không có đoạn nào cần điền chữ.")
-            return
-
-        self.append_log(f"\n==================================================")
-        self.append_log(f"🤖 BẮT ĐẦU ĐIỀN CHỮ AI [Câu {start_idx + 1} đến {start_idx + len(segments_for_ai)}]")
-        self.append_log(f"==================================================")
-        self.append_log(f"[AI] Đang nạp Audio và Model ({self.page_settings.model_combo.currentData()}) vào VRAM...")
-        self.append_log(f"[AI] Quá trình infer có thể mất vài giây im lặng, vui lòng không tắt ứng dụng...")
-        self.progress_bar.setValue(0)
-        self.ai_panel.progress_bar.setValue(0)
-        self.lbl_speed_eta.setText("Đang khởi động AI Batch...")
-        self.ai_panel.set_state("PROCESSING", f"Đang điền câu {start_idx + 1} - {start_idx + len(segments_for_ai)}...")
-
-        self.ai_panel.lbl_batch_stat.setText(f"Batch Progress: Đang xử lý {len(segments_for_ai)} segments...")
-
-        self.is_cancelled_flag = False
-        self.start_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
-
-        self.worker = FillTextWorker(
-            video_path=self.queue_mgr.active_vid,
-            segments_data=segments_for_ai,
-            initial_prompt=self.ai_panel.prompt_edit.text().strip(),
-            compute_type=self.page_settings.compute_combo.currentData(),
-            model_size=self.page_settings.model_combo.currentData()
-        )
-        self.worker.progress_signal.connect(self.update_progress)
-        self.worker.log_signal.connect(self.append_log)
-        self.worker.finished_signal.connect(self.on_fill_text_finished)
-        self.worker.error_signal.connect(self.process_error)
-        self.worker.start()
-
-    def on_fill_text_finished(self, filled_segments):
-        for start_ms, end_ms, text, stt in filled_segments:
-            for seg in self.sub_editor.all_segments:
-                if str(seg['stt']) == str(stt):
-                    seg['text'] = text
-                    seg['status'] = 'draft'
-                    break
-
-        self.sub_editor.render_page()
-        self.sub_editor.update_draft_progress()
-
-        draft_file = self.sub_editor.save_draft(silent=True)
-        if draft_file:
-            self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_file)
-
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-        self.ai_panel.set_state("COMPLETED", "Điền chữ hoàn tất!")
-
-        self.ai_panel.lbl_batch_stat.setText(f"Batch Progress: Hoàn tất {len(filled_segments)} segments")
-        
-        self.progress_bar.setValue(100)
-        self.ai_panel.progress_bar.setValue(100)
-        QTimer.singleShot(2500, self._reset_progress_state)
-        
-        Toast.show_success(self, "Đã điền chữ AI hoàn tất lượt Batch!")
-
-    def _reset_progress_state(self):
-        if not hasattr(self, 'worker') or not self.worker.isRunning():
-            self.progress_bar.setValue(0)
-            self.ai_panel.progress_bar.setValue(0)
-            self.page_dashboard.quick_progress.setValue(0) 
-            
-            self.lbl_speed_eta.setText("Speed: 0.0x | ETA: --")
-            if self.ai_panel.state == "COMPLETED":
-                self.ai_panel.set_state("READY", "Sẵn sàng cho tác vụ tiếp theo")   
 
     def closeEvent(self, event):
         if getattr(self, 'project_service', None) and self.project_service.current_project:
@@ -1287,9 +1481,7 @@ class MainWindow(QMainWindow):
             "min_silence_ms": self.page_settings.silence_spin.value(),
             "do_hardsub": self.page_settings.chk_hardsub_enable.isChecked(),
             "font_name": self.page_settings.font_combo.currentText(),
-            "font_size": self.page_settings.size_spin.value(),
-            "ai_mode": self.ai_panel.mode_combo.currentData(),
-            "prompt": self.ai_panel.prompt_edit.text().strip()
+            "font_size": self.page_settings.size_spin.value()
         })
         
         if hasattr(self, 'worker') and self.worker.isRunning():
@@ -1372,202 +1564,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             Toast.show_error(self, f"Lỗi trong quá trình ghi file: {str(e)}")
 
-    # ==========================================================
-    # [SPRINT 7.1] ĐIỀU PHỐI AI & TIMING BATCH UI
-    # ==========================================================
-    def _get_current_ai_settings(self):
-        return {
-            "model_size": self.page_settings.model_combo.currentData(),
-            "compute_type": self.page_settings.compute_combo.currentData(),
-            "use_vad": self.page_settings.chk_vad.isChecked(),
-            "min_silence_ms": self.page_settings.silence_spin.value()
-        }
-
-    def _find_first_empty_segment(self):
-        """Hàm phụ trợ: Quét tìm câu phụ đề trống đầu tiên để điền chữ"""
-        for i, seg in enumerate(self.sub_editor.all_segments):
-            text = str(seg.get('text', '')).strip()
-            if not text or text == "[ Chưa có nội dung ]":
-                return i
-        return None
-
-    def _on_ai_start_clicked(self):
-        self.setFocus() 
-        mode = self.ai_panel.mode_combo.currentData()
-        
-        # --- BẢO VỆ: CHẶN THAO TÁC KHI CHƯA NẠP VIDEO HOẶC CHƯA CÓ TIMING ---
-        if not self.queue_mgr.active_vid or not hasattr(self, 'sub_editor'):
-            Toast.show_info(self, "Vui lòng chọn Video từ Queue trước khi thao tác!")
-            return
-            
-        if mode == "fill_text" and not self.sub_editor.all_segments:
-            Toast.show_info(self, "Vui lòng chạy Timing (Tạo khối) trước khi điền chữ!")
-            return
-        # -------------------------------------------------------------------
-
-        if mode == "timing":
-            try:
-                batch_size = int(self.ai_panel.batch_combo.currentText())
-                self.timing_service.start_timing(batch_size, self._get_current_ai_settings())
-            except Exception as e:
-                Toast.show_error(self, str(e))
-                
-        elif mode == "fill_text":
-            start_idx = self._find_first_empty_segment()
-            if start_idx is not None:
-                self.start_fill_text_worker(start_idx, 0)
-            else:
-                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
-        else:
-            self.start_processing()
-
-    def _on_ai_continue_clicked(self):
-        self.setFocus()
-        mode = self.ai_panel.mode_combo.currentData()
-        
-        if not self.queue_mgr.active_vid or not hasattr(self, 'sub_editor'):
-            Toast.show_info(self, "Vui lòng chọn Video từ Queue trước khi thao tác!")
-            return
-
-        if mode == "fill_text" and not self.sub_editor.all_segments:
-            Toast.show_info(self, "Vui lòng chạy Timing (Tạo khối) trước khi điền chữ!")
-            return
-        
-        if mode == "timing":
-            try:
-                batch_size = int(self.ai_panel.batch_combo.currentText())
-                self.timing_service.continue_timing(batch_size, self._get_current_ai_settings())
-            except Exception as e:
-                Toast.show_error(self, str(e))
-                
-        elif mode == "fill_text":
-            start_idx = self._find_first_empty_segment()
-            if start_idx is not None:
-                self.start_fill_text_worker(start_idx, 0)
-            else:
-                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
-        else:
-            self.start_processing()
-
-    def _on_ai_cancel_clicked(self):
-        mode = self.ai_panel.mode_combo.currentData()
-        if mode == "timing":
-            self.timing_service.cancel_timing()
-        else:
-            # Dùng chung hàm cancel cho cả Fill Text và Transcribe
-            self.cancel_processing()
-
-    def _on_ai_retry_clicked(self):
-        mode = self.ai_panel.mode_combo.currentData()
-        if mode == "timing":
-            try:
-                batch_size = int(self.ai_panel.batch_combo.currentText())
-                self.timing_service.retry_timing(batch_size, self._get_current_ai_settings())
-            except Exception as e:
-                Toast.show_error(self, str(e))
-                
-        elif mode == "fill_text":
-            start_idx = self._find_first_empty_segment()
-            if start_idx is not None:
-                self.start_fill_text_worker(start_idx, 0)
-            else:
-                Toast.show_success(self, "Tất cả các câu đã được điền chữ!")
-                
-        else:
-            self._retry_current_task()
-
-    def _on_timing_state_changed(self, status, msg):
-        self.ai_panel.set_state("PROCESSING" if status == "RUNNING" else status, msg)
-        self.page_dashboard.card_status_val.setText(status)
-        
-        if status in ["READY", "IDLE", "COMPLETED", "FAILED"]:
-            self.start_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
-            self.progress_bar.setValue(0)
-            self.page_dashboard.quick_progress.setValue(0)
-        else:
-            self.start_btn.setEnabled(False)
-            self.cancel_btn.setEnabled(True)
-            
-        self.update_timing_ui_info()
-
-    def _on_timing_batch_completed(self, added_count, batch_size):
-        project = self.project_service.current_project
-        if project and project.state.active_artifact_id:
-            art = self.project_service.artifact_store.get(project.state.active_artifact_id)
-            if art and os.path.exists(art.path):
-                if art.path.endswith('.ai-subtitle-draft'):
-                    self.sub_editor.load_draft_file(art.path)
-                else:
-                    self.sub_editor.load_srt_file(art.path)
-                self.video_player.sub_controller.load_srt(art.path)
-                
-                last_idx = self.sub_editor.table.rowCount() - 1
-                if last_idx >= 0:
-                    item = self.sub_editor.table.item(last_idx, 0)
-                    if item:
-                        self.sub_editor.table.scrollToItem(item)
-                        self.sub_editor.table.selectRow(last_idx)
-
-        Toast.show_success(self, f"Đã hoàn thành Batch ({added_count} câu)!")
-        self.update_timing_ui_info()
-        
-        self.progress_bar.setValue(100)
-        self.ai_panel.progress_bar.setValue(100)
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(2500, self._reset_progress_state_timing)
-
-    def _reset_progress_state_timing(self):
-        project = self.project_service.current_project
-        if project and project.state.timing.status in ["IDLE", "READY", "COMPLETED"]:
-            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
-            
-            self._progress_anim_group = QParallelAnimationGroup(self)
-            
-            bars = [self.progress_bar, self.ai_panel.progress_bar, self.page_dashboard.quick_progress]
-            for bar in bars:
-                anim = QPropertyAnimation(bar, b"value")
-                anim.setDuration(800) 
-                anim.setStartValue(100)
-                anim.setEndValue(0)
-                anim.setEasingCurve(QEasingCurve.InOutQuad) 
-                self._progress_anim_group.addAnimation(anim)
-                
-            self._progress_anim_group.start()
-
-    def _on_timing_finished(self):
-        Toast.show_success(self, "Đã hoàn thành toàn bộ Video!")
-        self.update_timing_ui_info()
-
-    def _on_timing_error(self, err):
-        Toast.show_error(self, f"Lỗi Timing: {err}")
-        self.append_log(f"❌ [LỖI TIMING] {err}")
-        self.update_timing_ui_info()
-
-    def update_timing_ui_info(self):
-        project = self.project_service.current_project
-        if project:
-            t_state = project.state.timing
-            chk = self.project_service.load_timing_checkpoint()
-            last_ms = chk.last_completed_end_ms if chk else 0
-            time_str = self.timing_service._ms_to_time_str(last_ms)
-            
-            info = f"Đã xong: {t_state.completed_until} câu | Tiếp theo: {t_state.next_segment_index} | Trục T: {time_str}"
-            self.ai_panel.lbl_checkpoint_info.setText(info)
-            
-            idx = self.ai_panel.batch_combo.findText(str(t_state.batch_size))
-            if idx >= 0:
-                self.ai_panel.batch_combo.setCurrentIndex(idx)
-
-    def _retry_current_task(self):
-        self.ai_panel.set_state("READY", "Đang thử lại...")
-        if hasattr(self, 'current_batch_index') and self.current_batch_index > 0:
-            self.current_batch_index -= 1
-            self.batch_queue.insert(0, (self.current_vid, self.queue_mgr.get_items()[self.current_vid].get("srt_path")))
-            self.process_next_batch_item()
-        elif hasattr(self, 'queue_mgr') and self.queue_mgr.active_vid:
-            self.start_processing()
-
     def _continue_draft_from_center(self, draft_path):
         if not self._load_draft_from_center(draft_path, silent=True):
             return
@@ -1604,6 +1600,7 @@ class MainWindow(QMainWindow):
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 
                 self.workspace_service.restore_workspace()
+                self.generation_panel.check_resumable_state()
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
             except Exception as e:
@@ -1722,7 +1719,8 @@ class MainWindow(QMainWindow):
                 waveform_data
             )
 
-            self.update_timing_ui_info()
+            self.generation_panel.set_video_duration(dur_ms)
+            self.generation_panel.check_resumable_state()
             
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
