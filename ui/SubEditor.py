@@ -276,15 +276,15 @@ class SubtitleEditorWidget(QWidget):
         self.table.setRowCount(len(display_segments))
 
         for row, seg in enumerate(display_segments):
-            self.table.setItem(row, 0, QTableWidgetItem(str(seg['stt'])))
-            self.table.setItem(row, 1, QTableWidgetItem(seg['start']))
-            self.table.setItem(row, 2, QTableWidgetItem(seg['end']))
+            self._set_table_item(row, 0, str(seg['stt']))
+            self._set_table_item(row, 1, seg['start'])
+            self._set_table_item(row, 2, seg['end'])
             try:
                 duration_ms = self.time_str_to_ms(seg['end']) - self.time_str_to_ms(seg['start'])
-                duration_text = self.ms_to_time_str(max(0, duration_ms))
+                duration_text = f"{max(0, duration_ms) / 1000:.3f} s"
             except ValueError:
                 duration_text = "--"
-            self.table.setItem(row, 3, QTableWidgetItem(duration_text))
+            self._set_table_item(row, 3, duration_text, readonly=True)
             
             display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
@@ -300,6 +300,14 @@ class SubtitleEditorWidget(QWidget):
         self.table.blockSignals(False)
         self.is_rendering = False
         self.sync_to_controller()
+
+    def _set_table_item(self, row, col, text, readonly=False):
+        item = QTableWidgetItem(str(text))
+        if readonly or col in (0, 3):
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        if col in (0, 1, 2, 3):
+            item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, col, item)
 
     def sync_to_controller(self):
         data = []
@@ -375,8 +383,29 @@ class SubtitleEditorWidget(QWidget):
         self.current_editor.setEnabled(True)
         self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
         self.table.blockSignals(True)
-        self.table.selectRow(index)
+        row = index % self.group_size if self.group_size > 0 else index
+        self.table.selectRow(row)
         self.table.blockSignals(False)
+
+    def sync_playback_highlight(self, absolute_index: int):
+        """Select the subtitle currently playing without issuing a seek."""
+        if not (0 <= absolute_index < len(self.all_segments)):
+            return
+        self.current_index = absolute_index
+        items_per_page = self.group_size or len(self.all_segments)
+        if items_per_page > 0 and items_per_page != len(self.all_segments):
+            target_page = absolute_index // items_per_page
+            if target_page != self.current_page:
+                self.current_page = target_page
+                self.render_page()
+            row_in_table = absolute_index % items_per_page
+        else:
+            row_in_table = absolute_index
+        self._is_syncing_ui = True
+        self.table.selectRow(row_in_table)
+        self._load_current_editor()
+        self.update_empty_state()
+        self._is_syncing_ui = False
 
     def _load_current_editor(self):
         if 0 <= self.current_index < len(self.all_segments):

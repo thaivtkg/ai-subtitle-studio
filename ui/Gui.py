@@ -274,14 +274,14 @@ class MainWindow(QMainWindow):
         self.video_player.setMinimumHeight(200)
         self.top_horizontal_splitter.addWidget(self.sub_editor)
         self.top_horizontal_splitter.addWidget(self.video_player)
-        self.top_horizontal_splitter.setStretchFactor(0, 68)
-        self.top_horizontal_splitter.setStretchFactor(1, 32)
-        self.top_horizontal_splitter.setSizes([680, 320])
+        self.top_horizontal_splitter.setStretchFactor(0, 56)
+        self.top_horizontal_splitter.setStretchFactor(1, 44)
+        self.top_horizontal_splitter.setSizes([560, 440])
 
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
         self.video_player.sub_controller.subtitle_changed.connect(
-            lambda stt, start, text: self.sub_editor.highlight_row_by_stt(stt)
+            lambda stt, start, text: self.sub_editor.sync_playback_highlight(int(stt) - 1)
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
@@ -324,7 +324,8 @@ class MainWindow(QMainWindow):
         self.generation_dock.setFeatures(
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
         )
-        self.generation_dock.setMinimumWidth(330)
+        self.generation_dock.setMinimumWidth(350)
+        self.generation_dock.setMaximumWidth(390)
         self.generation_dock.setStyleSheet(f"""
             QDockWidget {{
                 color: {Theme.TEXT_PRIMARY};
