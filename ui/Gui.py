@@ -322,7 +322,7 @@ class MainWindow(QMainWindow):
         self.generation_dock = QDockWidget("AI Workspace", self)
         self.generation_dock.setObjectName("SubtitleGenerationDock")
         self.generation_dock.setAllowedAreas(
-            Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea
+            Qt.RightDockWidgetArea
         )
         self.generation_dock.setFeatures(
             QDockWidget.DockWidgetMovable
@@ -338,17 +338,6 @@ class MainWindow(QMainWindow):
                 background: {Theme.SURFACE};
                 padding: 6px 10px;
                 border-bottom: 1px solid {Theme.BORDER};
-            }}
-            QDockWidget::close-button,
-            QDockWidget::float-button {{
-                background: transparent;
-                border: none;
-                padding: 2px;
-            }}
-            QDockWidget::close-button:hover,
-            QDockWidget::float-button:hover {{
-                background: {Theme.SURFACE_SOFT};
-                border-radius: 4px;
             }}
         """)
         dock_tabs = QTabWidget()
@@ -555,7 +544,7 @@ class MainWindow(QMainWindow):
 
         bottom_layout.addLayout(prog_action_row)
         right_layout.addWidget(self.bottom_frame)
-        # Keep the central workspace expanding when a dock is floated/closed.
+        # Keep the central workspace expanding when the drawer is closed.
         root_layout.addWidget(right_area, stretch=1)
 
         self.stdout_redirector = StreamRedirector(sys.stdout)
@@ -685,7 +674,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "btn_drawer_toggle"):
             return
         y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
-        if self.generation_dock.isVisible() and not self.generation_dock.isFloating():
+        if self.generation_dock.isVisible():
             x = self.centralWidget().width() - self.btn_drawer_toggle.width()
         else:
             x = self.width() - self.btn_drawer_toggle.width()
