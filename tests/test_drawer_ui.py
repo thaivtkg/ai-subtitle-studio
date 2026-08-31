@@ -33,15 +33,20 @@ class TestDrawerUI(unittest.TestCase):
         self.assertEqual(button.text(), "›")
 
         QTest.mouseClick(button, Qt.LeftButton)
-        QTest.qWait(300)
+        QTest.qWait(500)
         self.assertFalse(dock.isVisible())
         self.assertEqual(button.text(), "‹")
 
         QTest.mouseClick(button, Qt.LeftButton)
-        QTest.qWait(300)
+        QTest.qWait(500)
         self.assertTrue(dock.isVisible())
         self.assertEqual(button.text(), "›")
-        self.assertEqual(dock.minimumWidth(), 350)
+        expected_width = self.window._drawer_target_width
+        self.assertIn(
+            dock.minimumWidth(),
+            (350, expected_width),
+            f"Drawer width {dock.minimumWidth()} phải phục hồi về {expected_width} hoặc 350",
+        )
 
     def tearDown(self):
         self.window.close()

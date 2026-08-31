@@ -118,6 +118,10 @@ class MainWindow(QMainWindow):
         self.shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
         self.shortcut_save.setContext(Qt.ApplicationShortcut)
         self.shortcut_save.activated.connect(self.action_save_project)
+
+        self.shortcut_play = QShortcut(QKeySequence("Space"), self)
+        self.shortcut_play.setContext(Qt.WindowShortcut)
+        self.shortcut_play.activated.connect(self._toggle_playback_shortcut)
         
         self.setWindowTitle("AI Subtitle Studio")
         
@@ -621,6 +625,13 @@ class MainWindow(QMainWindow):
         x = screen_geo.left() + (screen_geo.width() - self.width()) // 2
         y = screen_geo.top() + (screen_geo.height() - self.height()) // 2
         self.move(x, y)
+
+    def _toggle_playback_shortcut(self):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit)):
+            return
+        if hasattr(self.video_player, "toggle_playback"):
+            self.video_player.toggle_playback()
 
     @Slot()
     def _toggle_ai_drawer(self):

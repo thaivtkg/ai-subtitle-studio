@@ -2,8 +2,8 @@ import json
 import os
 import re
 
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -54,6 +54,9 @@ class CurrentSubtitleEditor(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self.lbl_title = QLabel("Current Subtitle: None")
+        self.lbl_title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self.lbl_title)
         times = QHBoxLayout()
         times.addWidget(QLabel("Start:"))
         self.start_edit = QLineEdit()
@@ -61,11 +64,23 @@ class CurrentSubtitleEditor(QWidget):
         times.addWidget(QLabel("End:"))
         self.end_edit = QLineEdit()
         times.addWidget(self.end_edit)
+        times.addWidget(QLabel("Duration:"))
+        self.lbl_duration = QLabel("0.000 s")
+        times.addWidget(self.lbl_duration)
         layout.addLayout(times)
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("Nội dung phụ đề hiện tại...")
         self.text_edit.setMaximumHeight(70)
         layout.addWidget(self.text_edit)
+        nav = QHBoxLayout()
+        self.btn_prev = QPushButton("◀ Previous")
+        self.btn_next = QPushButton("Next ▶")
+        self.btn_prev.clicked.connect(self._previous_requested)
+        self.btn_next.clicked.connect(self._next_requested)
+        nav.addWidget(self.btn_prev)
+        nav.addStretch()
+        nav.addWidget(self.btn_next)
+        layout.addLayout(nav)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -82,6 +97,18 @@ class CurrentSubtitleEditor(QWidget):
         self.text_edit.blockSignals(True)
         self.text_edit.setPlainText(text)
         self.text_edit.blockSignals(False)
+        start_ms = time_str_to_ms(start)
+        end_ms = time_str_to_ms(end)
+        self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
+
+    def setTitle(self, title: str):
+        self.lbl_title.setText(title)
+
+    def _previous_requested(self):
+        self.parent().select_previous() if self.parent() else None
+
+    def _next_requested(self):
+        self.parent().select_next() if self.parent() else None
 
     def _schedule_emit(self):
         self._debounce.start()
@@ -193,10 +220,27 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellClicked.connect(self._on_row_selected)
         left_layout.addWidget(self.table)
 
-        self.current_editor = CurrentSubtitleEditor()
+        self.current_editor = CurrentSubtitleEditor(self)
+        self.editor_group = self.current_editor
+        self.inp_start = self.current_editor.start_edit
+        self.inp_end = self.current_editor.end_edit
+        self.lbl_duration = self.current_editor.lbl_duration
+        self.txt_content = self.current_editor.text_edit
         self.current_editor.setEnabled(False)
         self.current_editor.changed.connect(self._apply_current_editor)
         left_layout.addWidget(self.current_editor)
+        for widget in (
+            self.current_editor.text_edit,
+            self.current_editor.start_edit,
+            self.current_editor.end_edit,
+        ):
+            if hasattr(widget, "setUndoRedoEnabled"):
+                widget.setUndoRedoEnabled(False)
+            elif hasattr(widget, "setUndoEnabled"):
+                widget.setUndoEnabled(False)
+            widget.installEventFilter(self)
+        QShortcut(QKeySequence("Alt+Left"), self).activated.connect(self.select_previous)
+        QShortcut(QKeySequence("Alt+Right"), self).activated.connect(self.select_next)
 
         # --- CỤM NÚT LƯU & DUYỆT BÊN DƯỚI ---
         btn_layout = QHBoxLayout()
@@ -226,6 +270,22 @@ class SubtitleEditorWidget(QWidget):
         main_layout.addWidget(splitter)
 
     # ================= LOGIC ĐIỀU HƯỚNG PHÂN TRANG =================
+    def update_empty_state(self):
+        has_selection = 0 <= self.current_index < len(self.all_segments)
+        self.editor_group.setEnabled(has_selection)
+        if not has_selection:
+            self.editor_group.setTitle("Current Subtitle: None")
+            self._is_syncing_ui = True
+            self.inp_start.clear()
+            self.inp_end.clear()
+            self.lbl_duration.setText("0.000 s")
+            self.txt_content.clear()
+            self._is_syncing_ui = False
+        self.current_editor.btn_prev.setEnabled(self.current_index > 0)
+        self.current_editor.btn_next.setEnabled(
+            self.current_index < len(self.all_segments) - 1 and has_selection
+        )
+
     def change_group_size(self):
         txt = self.group_combo.currentText()
         if "Tất cả" in txt:
@@ -299,6 +359,7 @@ class SubtitleEditorWidget(QWidget):
 
         self.table.blockSignals(False)
         self.is_rendering = False
+        self.update_empty_state()
         self.sync_to_controller()
 
     def _set_table_item(self, row, col, text, readonly=False):
@@ -381,6 +442,7 @@ class SubtitleEditorWidget(QWidget):
         self.current_index = index
         seg = self.all_segments[index]
         self.current_editor.setEnabled(True)
+        self.current_editor.setTitle(f"Current Subtitle: #{index + 1}")
         self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
         self.table.blockSignals(True)
         row = index % self.group_size if self.group_size > 0 else index
@@ -411,6 +473,7 @@ class SubtitleEditorWidget(QWidget):
         if 0 <= self.current_index < len(self.all_segments):
             seg = self.all_segments[self.current_index]
             self.current_editor.setEnabled(True)
+            self.current_editor.setTitle(f"Current Subtitle: #{self.current_index + 1}")
             self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
 
     def _apply_current_editor(self, values):
@@ -430,6 +493,31 @@ class SubtitleEditorWidget(QWidget):
             return
         self.all_segments[abs_idx].update(values)
         self.render_page()
+
+    def _undo_manager(self):
+        window = self.window()
+        timeline = getattr(window, "timeline_widget", None)
+        manager = getattr(timeline, "undo_manager", None)
+        if manager is None:
+            controller = getattr(window, "timeline_controller", None)
+            manager = getattr(controller, "undo_manager", None)
+        return manager
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and self.current_index >= 0:
+            modifiers = event.modifiers()
+            key = event.key()
+            if key in (Qt.Key_Return, Qt.Key_Enter) and modifiers & Qt.ControlModifier:
+                self.setFocus()
+                return True
+            manager = self._undo_manager()
+            if manager is not None and key == Qt.Key_Z and modifiers & Qt.ControlModifier:
+                (manager.redo if modifiers & Qt.ShiftModifier else manager.undo)()
+                return True
+            if manager is not None and key == Qt.Key_Y and modifiers & Qt.ControlModifier:
+                manager.redo()
+                return True
+        return super().eventFilter(obj, event)
 
     def highlight_row_by_stt(self, stt):
         target_idx = -1
