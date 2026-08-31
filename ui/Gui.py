@@ -6,9 +6,12 @@ import uuid
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QAbstractAnimation,
+    QEvent,
     QObject,
     QPoint,
     QPropertyAnimation,
+    QVariantAnimation,
     Qt,
     QTimer,
     QUrl,
@@ -322,7 +325,7 @@ class MainWindow(QMainWindow):
             Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea
         )
         self.generation_dock.setFeatures(
-            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
         )
         self.generation_dock.setMinimumWidth(350)
         self.generation_dock.setMaximumWidth(390)
@@ -384,16 +387,47 @@ class MainWindow(QMainWindow):
                 background: {Theme.SURFACE_SOFT};
             }}
         """)
-        dock_tabs.addTab(self.generation_panel, "✨ Generate Subtitle")
+        dock_tabs.addTab(self.generation_panel, "✨ Generate")
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
-        dock_tabs.addTab(self.inspector_panel, "🎨 Subtitle Style")
-        dock_tabs.addTab(self.log_box, "📜 Live Log")
+        dock_tabs.addTab(self.inspector_panel, "🎨 Style")
+        dock_tabs.addTab(self.log_box, "📜 Log")
         self.dock_tabs = dock_tabs
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
         self.inspector_panel.style_changed.connect(self._on_subtitle_style_changed)
         self.generation_dock.setWidget(dock_tabs)
         self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
+
+        self.btn_drawer_toggle = QPushButton("›", self)
+        self.btn_drawer_toggle.setFixedSize(20, 56)
+        self.btn_drawer_toggle.setCursor(Qt.PointingHandCursor)
+        self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
+        self.btn_drawer_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid {Theme.BORDER};
+                border-right: none;
+                border-top-left-radius: 5px;
+                border-bottom-left-radius: 5px;
+                color: {Theme.TEXT_MUTED};
+                font-weight: bold;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                background-color: {Theme.SURFACE_SOFT};
+                color: {Theme.TEXT_PRIMARY};
+            }}
+        """)
+        self.btn_drawer_toggle.clicked.connect(self._toggle_ai_drawer)
+        self.generation_dock.visibilityChanged.connect(self._sync_drawer_toggle_state)
+        self._drawer_target_width = 350
+        self.drawer_anim = QVariantAnimation(self)
+        self.drawer_anim.setDuration(250)
+        self.drawer_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.drawer_anim.valueChanged.connect(self._on_drawer_anim_step)
+        self.drawer_anim.finished.connect(self._on_drawer_anim_finished)
+        self.centralWidget().installEventFilter(self)
+        self._update_drawer_handle_position()
 
         # --- TẦNG 3: TIMELINE & WAVEFORM ---
         from ui.timeline.timeline_widget import TimelineWidget
@@ -598,6 +632,67 @@ class MainWindow(QMainWindow):
         x = screen_geo.left() + (screen_geo.width() - self.width()) // 2
         y = screen_geo.top() + (screen_geo.height() - self.height()) // 2
         self.move(x, y)
+
+    @Slot()
+    def _toggle_ai_drawer(self):
+        if self.drawer_anim.state() == QAbstractAnimation.Running:
+            return
+        if self.generation_dock.isVisible():
+            self._drawer_target_width = max(350, self.generation_dock.width())
+            self.drawer_anim.setStartValue(self._drawer_target_width)
+            self.drawer_anim.setEndValue(0)
+            self.btn_drawer_toggle.setText("‹")
+            self.btn_drawer_toggle.setToolTip("Hiện AI Workspace")
+        else:
+            self.generation_dock.show()
+            self.drawer_anim.setStartValue(0)
+            self.drawer_anim.setEndValue(self._drawer_target_width)
+            self.btn_drawer_toggle.setText("›")
+            self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
+        self.drawer_anim.start()
+
+    @Slot(object)
+    def _on_drawer_anim_step(self, current_width):
+        width = max(0, int(current_width))
+        self.generation_dock.setMinimumWidth(width)
+        self.generation_dock.setMaximumWidth(width)
+        self._update_drawer_handle_position()
+
+    @Slot()
+    def _on_drawer_anim_finished(self):
+        if self.drawer_anim.endValue() == 0:
+            self.generation_dock.hide()
+        self.generation_dock.setMinimumWidth(350)
+        self.generation_dock.setMaximumWidth(390)
+        self._update_drawer_handle_position()
+
+    @Slot(bool)
+    def _sync_drawer_toggle_state(self, is_visible: bool):
+        self.btn_drawer_toggle.setText("›" if is_visible else "‹")
+        self.btn_drawer_toggle.setToolTip(
+            "Ẩn AI Workspace" if is_visible else "Hiện AI Workspace"
+        )
+        self._update_drawer_handle_position()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_drawer_handle_position()
+
+    def _update_drawer_handle_position(self):
+        if not hasattr(self, "btn_drawer_toggle"):
+            return
+        y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
+        if self.generation_dock.isVisible() and not self.generation_dock.isFloating():
+            x = self.centralWidget().width() - self.btn_drawer_toggle.width()
+        else:
+            x = self.width() - self.btn_drawer_toggle.width()
+        self.btn_drawer_toggle.move(max(0, x), y)
+        self.btn_drawer_toggle.raise_()
+
+    def eventFilter(self, obj, event):
+        if obj == self.centralWidget() and event.type() == QEvent.Resize:
+            self._update_drawer_handle_position()
+        return super().eventFilter(obj, event)
 
     def create_nav_button(self, text, page_index):
         btn = QPushButton(text)
