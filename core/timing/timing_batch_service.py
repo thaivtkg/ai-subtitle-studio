@@ -216,13 +216,32 @@ class TimingBatchService(QObject):
         self.state_changed_signal.emit("FAILED", "Lỗi xử lý AI. Vui lòng Retry Batch.")
 
     def _on_worker_finished(self, new_segments: list, is_end_of_source: bool):
+        project = self.project_service.current_project
+        timing_state = project.state.timing
+
+        # A first Timing batch that finds no speech must not create an empty
+        # artifact and advertise it as completed. That state makes Segment
+        # mode fail later and leaves the Editor empty without an explanation.
+        if not new_segments and not timing_state.timing_artifact_id:
+            timing_state.status = "FAILED"
+            project.state.timing_status = "EMPTY"
+            checkpoint = self.project_service.load_timing_checkpoint()
+            if checkpoint and checkpoint.active_batch:
+                checkpoint.active_batch["status"] = "FAILED"
+                self.project_service.save_timing_checkpoint(checkpoint)
+            self.project_service.save_project()
+            message = (
+                "VAD không tìm thấy đoạn thoại sau 2 lần phân tích. "
+                "Mở Live Log để xem thông tin FFmpeg, thời lượng speech và threshold."
+            )
+            self.error_signal.emit(message)
+            self.state_changed_signal.emit("FAILED", message)
+            return
+
         if not new_segments and not is_end_of_source:
             self.state_changed_signal.emit("READY", "Không có dữ liệu mới.")
             return
 
-        project = self.project_service.current_project
-        timing_state = project.state.timing
-        
         existing_lines = []
         artifact_path = ""
         current_revision = 0
@@ -354,6 +373,7 @@ class TimingBatchService(QObject):
             "text_status": project.state.text_status,
             "export_status": project.state.export_status,
             "active_artifact_id": project.state.active_artifact_id,
+            "subtitle_artifact_id": project.state.subtitle_artifact_id,
             "selected_segment_id": project.state.selected_segment_id,
             "dirty": False,
             "timing": asdict(project.state.timing)

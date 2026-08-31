@@ -17,6 +17,44 @@ class TimingBatchWorker(QThread):
         self.request = request
         self.is_cancelled = False
 
+    def _transcribe_with_vad_retry(self, model, chunk_wav):
+        """Retry one empty VAD result at a lower, still-VAD threshold."""
+        info = None
+        for attempt, threshold in enumerate((0.5, 0.25), start=1):
+            vad_parameters = {
+                "min_silence_duration_ms": self.request.min_silence_ms,
+                "threshold": threshold,
+                "speech_pad_ms": 400,
+            }
+            segments_generator, info = model.transcribe(
+                chunk_wav,
+                vad_filter=True,
+                vad_parameters=vad_parameters,
+                word_timestamps=False,
+            )
+            raw_segments = list(segments_generator)
+            duration = float(getattr(info, "duration", 0.0) or 0.0)
+            duration_after_vad = float(
+                getattr(info, "duration_after_vad", 0.0) or 0.0
+            )
+            language = getattr(info, "language", "?")
+            probability = float(
+                getattr(info, "language_probability", 0.0) or 0.0
+            )
+            self.log_signal.emit(
+                "[Batch Worker] VAD "
+                f"attempt={attempt}, threshold={threshold:.2f}, "
+                f"audio={duration:.2f}s, speech={duration_after_vad:.2f}s, "
+                f"language={language} ({probability:.2f}), "
+                f"raw_segments={len(raw_segments)}."
+            )
+            if raw_segments or attempt == 2:
+                return raw_segments, info
+            self.log_signal.emit(
+                "[Batch Worker] VAD trả về 0 segment; retry với threshold 0.25."
+            )
+        return [], info
+
     def run(self):
         chunk_wav = None
         try:
@@ -41,7 +79,6 @@ class TimingBatchWorker(QThread):
             )
 
             vad_filter = self.request.use_vad
-            vad_parameters = dict(min_silence_duration_ms=self.request.min_silence_ms) if vad_filter else None
 
             all_final_segments = []
             current_start_ms = self.request.start_ms
@@ -73,8 +110,39 @@ class TimingBatchWorker(QThread):
                     chunk_wav
                 ]
                 
-                process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                process.communicate()
+                process = subprocess.run(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    errors="replace",
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                )
+
+                stderr_lines = [
+                    line.strip()
+                    for line in (process.stderr or "").splitlines()
+                    if any(
+                        marker in line.casefold()
+                        for marker in ("error", "invalid", "corrupt", "failed")
+                    )
+                ]
+                chunk_size = (
+                    os.path.getsize(chunk_wav) if os.path.exists(chunk_wav) else 0
+                )
+                self.log_signal.emit(
+                    "[Batch Worker] FFmpeg "
+                    f"exit={process.returncode}, wav_bytes={chunk_size}, "
+                    f"decode_warnings={len(stderr_lines)}."
+                )
+                for line in stderr_lines[:3]:
+                    self.log_signal.emit(f"[Batch Worker] FFmpeg warning: {line}")
+
+                if process.returncode != 0:
+                    detail = stderr_lines[-1] if stderr_lines else "unknown error"
+                    raise RuntimeError(
+                        f"FFmpeg không thể trích xuất audio (exit {process.returncode}): {detail}"
+                    )
 
                 if not os.path.exists(chunk_wav) or os.path.getsize(chunk_wav) < 1024:
                     self.log_signal.emit("[Batch Worker] Trích xuất trả về rỗng (Đã đến cuối video).")
@@ -83,26 +151,27 @@ class TimingBatchWorker(QThread):
 
                 self.log_signal.emit("[Batch Worker] Đang nhận diện (Infer) âm thanh...")
                 
-                segments_generator, info = model.transcribe(
-                    chunk_wav,
-                    vad_filter=vad_filter,
-                    vad_parameters=vad_parameters,
-                    word_timestamps=False
-                )
+                if vad_filter:
+                    raw_segments, info = self._transcribe_with_vad_retry(
+                        model, chunk_wav
+                    )
+                else:
+                    segments_generator, info = model.transcribe(
+                        chunk_wav,
+                        vad_filter=False,
+                        word_timestamps=False,
+                    )
+                    raw_segments = list(segments_generator)
 
-                chunk_end_of_source = info.duration < (duration_sec - 1.0)
-                raw_segments = []
-                
-                for seg in segments_generator:
+                # Decoder warnings can shorten a nominal 120s WAV slightly.
+                # Let the next extraction prove EOF instead of ending early.
+                chunk_end_of_source = info.duration < (duration_sec - 5.0)
+
+                for raw_index, seg in enumerate(raw_segments, start=1):
                     if self.is_cancelled:
                         return
-                    raw_segments.append(seg)
-                    
-                    prog = int((len(all_final_segments) + len(raw_segments)) / self.request.target_segment_count * 100)
-                    self.progress_signal.emit(min(99, prog), f"Đã tìm thấy {len(all_final_segments) + len(raw_segments)}/{self.request.target_segment_count} câu...")
-                    
-                    if len(all_final_segments) + len(raw_segments) >= self.request.target_segment_count:
-                        break 
+                    prog = int((len(all_final_segments) + raw_index) / self.request.target_segment_count * 100)
+                    self.progress_signal.emit(min(99, prog), f"Đã tìm thấy {len(all_final_segments) + raw_index}/{self.request.target_segment_count} câu...")
 
                 added_in_chunk = 0
                 last_end_ms_in_chunk = current_start_ms

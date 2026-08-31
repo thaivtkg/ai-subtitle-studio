@@ -23,6 +23,14 @@ class MetadataWorker(QThread):
 
 class VideoMetadataExtractor:
     @staticmethod
+    def _display_format(file_path, raw_format_name):
+        aliases = [name.strip().lower() for name in str(raw_format_name).split(",") if name.strip()]
+        extension = os.path.splitext(file_path)[1].lstrip(".").lower()
+        if extension and extension in aliases:
+            return extension.upper()
+        return aliases[0].upper() if aliases else "UNKNOWN"
+
+    @staticmethod
     def get_metadata(video_path):
         """
         Trích xuất thông tin video sử dụng ffprobe.
@@ -74,7 +82,10 @@ class VideoMetadataExtractor:
 
         # 2. Format
         fmt = data.get("format", {})
-        format_name = fmt.get("format_name", "Unknown").split(',')[0].upper()
+        format_name = VideoMetadataExtractor._display_format(
+            file_path,
+            fmt.get("format_name", "Unknown"),
+        )
         
         # 3. Duration
         duration_sec = float(fmt.get("duration", 0))
