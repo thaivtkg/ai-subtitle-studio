@@ -1,4 +1,3 @@
-````
 # 🎬 AI Subtitle Studio
 
 > **Hệ thống Tạo Phụ đề Tự động, Biên tập Dạng sóng âm (Waveform/Timeline) & Render Hardsub Video chuẩn NLE Chuyên nghiệp.**
@@ -84,8 +83,6 @@ Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo b�
 │          │ (Playhead Đồng bộ Kim thời gian)                            │
 └────────────────────────────────────────────────────────────────────────┘
 
-````
-
 ## ⌨️ Bảng Phím tắt Toàn cục (Shortcuts)
 
 | **Phím tắt**           | **Phạm vi**   | **Chức năng**                                          |
@@ -144,7 +141,7 @@ python -m venv venv
 pip install --upgrade pip
 pip install -r requirements.txt
 
-```
+
 
 ### Bước 4: Cấu hình FFmpeg
 
@@ -183,7 +180,7 @@ pyinstaller --noconfirm --onedir --windowed ^
 ## 📂 Cấu trúc thư mục dự án
 
 
-```text
+```
 ai-subtitle-studio/
 ├── bin/                          # Binary FFmpeg / FFprobe độc lập
 ├── core/                         # Tầng Logic Xử lý Cốt lõi
