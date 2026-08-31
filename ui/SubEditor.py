@@ -2,16 +2,15 @@ import json
 import os
 import re
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
-    QColorDialog,
     QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QLineEdit,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -20,6 +19,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -29,13 +29,73 @@ from ui.theme import Theme
 from ui.toast import Toast
 
 
+def ms_to_time_str(ms: int) -> str:
+    """Format milliseconds as the canonical SRT timestamp."""
+    s, ms = divmod(max(0, int(ms)), 1000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def time_str_to_ms(time_str: str) -> int:
+    """Parse a strict HH:MM:SS,mmm timestamp; return -1 when invalid."""
+    match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", str(time_str).strip())
+    if not match:
+        return -1
+    h, m, s, ms = map(int, match.groups())
+    if m >= 60 or s >= 60 or ms >= 1000:
+        return -1
+    return (h * 3600 + m * 60 + s) * 1000 + ms
+
+
+class CurrentSubtitleEditor(QWidget):
+    changed = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        times = QHBoxLayout()
+        times.addWidget(QLabel("Start:"))
+        self.start_edit = QLineEdit()
+        times.addWidget(self.start_edit)
+        times.addWidget(QLabel("End:"))
+        self.end_edit = QLineEdit()
+        times.addWidget(self.end_edit)
+        layout.addLayout(times)
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText("Nội dung phụ đề hiện tại...")
+        self.text_edit.setMaximumHeight(70)
+        layout.addWidget(self.text_edit)
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(250)
+        for widget in (self.start_edit, self.end_edit):
+            widget.textChanged.connect(self._schedule_emit)
+        self.text_edit.textChanged.connect(self._schedule_emit)
+        self._debounce.timeout.connect(self._emit_changed)
+
+    def set_values(self, start, end, text):
+        for widget, value in ((self.start_edit, start), (self.end_edit, end)):
+            widget.blockSignals(True)
+            widget.setText(value)
+            widget.blockSignals(False)
+        self.text_edit.blockSignals(True)
+        self.text_edit.setPlainText(text)
+        self.text_edit.blockSignals(False)
+
+    def _schedule_emit(self):
+        self._debounce.start()
+
+    def _emit_changed(self):
+        self.changed.emit({"start": self.start_edit.text(), "end": self.end_edit.text(), "text": self.text_edit.toPlainText()})
+
+
 class SubtitleEditorWidget(QWidget):
     seek_requested = Signal(int)
     srt_saved = Signal(str)
-    style_changed = Signal(dict)
-    preview_toggled = Signal(bool)
     live_edit_applied = Signal(list)
-    fill_text_requested = Signal(int, int)
+    save_requested = Signal(str)
+    timing_committed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,12 +103,10 @@ class SubtitleEditorWidget(QWidget):
         
         self.all_segments = []
         self.current_page = 0
+        self.current_index = -1
         self.group_size = 0     
         self.is_rendering = False
 
-        self.current_text_color = QColor("white")
-        self.current_outline_color = QColor("black")
-        
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -89,11 +147,12 @@ class SubtitleEditorWidget(QWidget):
         
         # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN) ---
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Nội dung"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Nội dung"])
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(1, 95)
         self.table.setColumnWidth(2, 95)
+        self.table.setColumnWidth(3, 85)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
@@ -131,82 +190,14 @@ class SubtitleEditorWidget(QWidget):
         """)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
+        self.table.cellClicked.connect(self._on_row_selected)
         left_layout.addWidget(self.table)
 
-        # =========================================================
-        # [S6-T6] KHU VỰC ĐIỀU KHIỂN AI RANGE & CONTINUE
-        # =========================================================
-        ai_frame = QFrame()
-        ai_frame.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 6px;")
-        ai_layout = QHBoxLayout(ai_frame)
-        ai_layout.setContentsMargins(12, 8, 12, 8)
-        ai_layout.setSpacing(10)
-        
-        self.lbl_progress = QLabel("Đã điền: 0 / 0")
-        self.lbl_progress.setStyleSheet(f"color: {Theme.CYAN}; font-weight: bold; font-size: 12px; border: none;")
-        ai_layout.addWidget(self.lbl_progress)
-        
-        ai_layout.addStretch()
-        
-        lbl_batch = QLabel("Batch AI:")
-        lbl_batch.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
-        ai_layout.addWidget(lbl_batch)
-        
-        self.spin_batch = QSpinBox()
-        self.spin_batch.setRange(1, 100)
-        self.spin_batch.setValue(5)
-        self.spin_batch.setFixedWidth(65)
-        self.spin_batch.setStyleSheet(f"""
-            QSpinBox {{
-                background-color: {Theme.BG_APP};
-                color: {Theme.TEXT_PRIMARY};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 4px;
-                padding-left: 6px;
-                padding-right: 20px;
-                min-height: 26px;
-                font-weight: bold;
-            }}
-            QSpinBox:focus {{ border: 1px solid {Theme.CYAN}; }}
-            QSpinBox::up-button {{
-                subcontrol-origin: border; subcontrol-position: top right;
-                width: 18px; border-left: 1px solid {Theme.BORDER};
-                border-bottom: 1px solid {Theme.BORDER}; background-color: {Theme.SURFACE}; border-top-right-radius: 3px;
-            }}
-            QSpinBox::up-button:hover {{ background-color: {Theme.BORDER}; }}
-            QSpinBox::down-button {{
-                subcontrol-origin: border; subcontrol-position: bottom right;
-                width: 18px; border-left: 1px solid {Theme.BORDER}; background-color: {Theme.SURFACE}; border-bottom-right-radius: 3px;
-            }}
-            QSpinBox::down-button:hover {{ background-color: {Theme.BORDER}; }}
-            QSpinBox::up-arrow {{
-                width: 0px; height: 0px;
-                border-left: 4px solid transparent; border-right: 4px solid transparent;
-                border-bottom: 5px solid {Theme.TEXT_MUTED}; margin-top: 1px;
-            }}
-            QSpinBox::up-arrow:hover {{ border-bottom: 5px solid #FFFFFF; }}
-            QSpinBox::down-arrow {{
-                width: 0px; height: 0px;
-                border-left: 4px solid transparent; border-right: 4px solid transparent;
-                border-top: 5px solid {Theme.TEXT_MUTED}; margin-bottom: 1px;
-            }}
-            QSpinBox::down-arrow:hover {{ border-top: 5px solid #FFFFFF; }}
-        """)
-        ai_layout.addWidget(self.spin_batch)
-        
-        self.btn_continue = QPushButton("▶ Tiếp tục từ câu...")
-        self.btn_continue.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 5px 16px; border: none; min-height: 20px;
-            }}
-            QPushButton:hover {{ background-color: {Theme.PRIMARY_PINK}; }}
-            QPushButton:disabled {{ background-color: {Theme.SURFACE}; color: {Theme.TEXT_DISABLED}; border: 1px solid {Theme.BORDER}; }}
-        """)
-        self.btn_continue.clicked.connect(self.trigger_ai_fill)
-        ai_layout.addWidget(self.btn_continue)
-        
-        left_layout.addWidget(ai_frame)
-        
+        self.current_editor = CurrentSubtitleEditor()
+        self.current_editor.setEnabled(False)
+        self.current_editor.changed.connect(self._apply_current_editor)
+        left_layout.addWidget(self.current_editor)
+
         # --- CỤM NÚT LƯU & DUYỆT BÊN DƯỚI ---
         btn_layout = QHBoxLayout()
         
@@ -221,6 +212,9 @@ class SubtitleEditorWidget(QWidget):
         self.save_btn = QPushButton("💾 Lưu SRT")
         self.save_btn.setObjectName("btn_secondary")
         self.save_btn.clicked.connect(self.save_srt)
+        self.save_draft_btn.clicked.connect(lambda: self.save_requested.emit("draft"))
+        self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
+        self.approve_btn.clicked.connect(self.timing_committed.emit)
         
         btn_layout.addWidget(self.approve_btn)
         btn_layout.addWidget(self.save_draft_btn)
@@ -229,80 +223,6 @@ class SubtitleEditorWidget(QWidget):
         
         splitter.addWidget(left_panel)
         
-        # ================= LỚP 2: RIGHT PANEL (INSPECTOR STYLE) =================
-        right_panel = QFrame()
-        right_panel.setStyleSheet(f"background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 6px;")
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(12, 12, 12, 12)
-        right_layout.setSpacing(12) 
-        
-        title_lbl = QLabel("🎨 Subtitle Inspector")
-        title_lbl.setStyleSheet(f"font-weight: bold; color: {Theme.TEXT_PRIMARY}; font-size: 14px; border: none;")
-        right_layout.addWidget(title_lbl)
-
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {Theme.BORDER}; border: none;")
-        right_layout.addWidget(sep)
-        
-        self.chk_preview = QCheckBox("Hiển thị Subtitle Overlay")
-        self.chk_preview.setChecked(True)
-        self.chk_preview.setStyleSheet("font-weight: bold; border: none;")
-        self.chk_preview.toggled.connect(self.on_preview_toggled)
-        right_layout.addWidget(self.chk_preview)
-        
-        font_layout = QHBoxLayout()
-        font_layout.addWidget(QLabel("Font:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
-        self.font_combo = QComboBox()
-        for f in ["Arial", "Noto Sans JP", "Segoe UI", "Tahoma"]:
-            self.font_combo.addItem(f, f)
-        self.font_combo.currentTextChanged.connect(self.emit_style)
-        font_layout.addWidget(self.font_combo, stretch=2)
-        right_layout.addLayout(font_layout)
-
-        size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Cỡ chữ:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
-        self.size_spin = QSpinBox()
-        self.size_spin.setRange(10, 100)
-        self.size_spin.setValue(28)
-        self.size_spin.setStyleSheet(f"QSpinBox {{ padding: 4px; min-height: 24px; }}")
-        self.size_spin.valueChanged.connect(self.emit_style)
-        size_layout.addWidget(self.size_spin, stretch=2)
-        right_layout.addLayout(size_layout)
-        
-        color_layout = QHBoxLayout()
-        self.btn_text_color = QPushButton("■ Màu chữ")
-        self.btn_text_color.setStyleSheet(f"color: {self.current_text_color.name()}; font-weight: bold; background: {Theme.BG_APP}; border: 1px solid {Theme.CYAN}; border-radius: 4px; padding: 6px;")
-        self.btn_text_color.clicked.connect(self.choose_text_color)
-        color_layout.addWidget(self.btn_text_color)
-        
-        self.btn_outline_color = QPushButton("■ Màu viền")
-        self.btn_outline_color.setStyleSheet(f"color: {self.current_outline_color.name()}; font-weight: bold; background: #FFFFFF; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px;")
-        self.btn_outline_color.clicked.connect(self.choose_outline_color)
-        color_layout.addWidget(self.btn_outline_color)
-        right_layout.addLayout(color_layout)
-        
-        outline_layout = QHBoxLayout()
-        outline_layout.addWidget(QLabel("Độ dày viền:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
-        self.outline_spin = QSpinBox()
-        self.outline_spin.setStyleSheet(f"QSpinBox {{ padding: 4px; min-height: 24px; }}")
-        self.outline_spin.setRange(0, 10)
-        self.outline_spin.setValue(2)
-        self.outline_spin.valueChanged.connect(self.emit_style)
-        outline_layout.addWidget(self.outline_spin, stretch=2)
-        right_layout.addLayout(outline_layout)
-        
-        pos_layout = QHBoxLayout()
-        pos_layout.addWidget(QLabel("Vị trí:", styleSheet=f"border: none; color: {Theme.TEXT_MUTED};"))
-        self.pos_combo = QComboBox()
-        self.pos_combo.addItems(["Bottom", "Top", "Center"])
-        self.pos_combo.currentTextChanged.connect(self.emit_style)
-        pos_layout.addWidget(self.pos_combo, stretch=2)
-        right_layout.addLayout(pos_layout)
-        
-        right_layout.addStretch()
-        splitter.addWidget(right_panel)
-        splitter.setSizes([750, 250])
         main_layout.addWidget(splitter)
 
     # ================= LOGIC ĐIỀU HƯỚNG PHÂN TRANG =================
@@ -359,6 +279,12 @@ class SubtitleEditorWidget(QWidget):
             self.table.setItem(row, 0, QTableWidgetItem(str(seg['stt'])))
             self.table.setItem(row, 1, QTableWidgetItem(seg['start']))
             self.table.setItem(row, 2, QTableWidgetItem(seg['end']))
+            try:
+                duration_ms = self.time_str_to_ms(seg['end']) - self.time_str_to_ms(seg['start'])
+                duration_text = self.ms_to_time_str(max(0, duration_ms))
+            except ValueError:
+                duration_text = "--"
+            self.table.setItem(row, 3, QTableWidgetItem(duration_text))
             
             display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
@@ -369,7 +295,7 @@ class SubtitleEditorWidget(QWidget):
                 font.setItalic(True)
                 text_item.setFont(font)
                 
-            self.table.setItem(row, 3, text_item)
+            self.table.setItem(row, 4, text_item)
 
         self.table.blockSignals(False)
         self.is_rendering = False
@@ -399,12 +325,15 @@ class SubtitleEditorWidget(QWidget):
         it_stt = self.table.item(row, 0)
         it_start = self.table.item(row, 1)
         it_end = self.table.item(row, 2)
-        it_text = self.table.item(row, 3)
+        it_text = self.table.item(row, 4)
 
         if it_stt and it_start and it_end and it_text:
             try:
                 self.time_str_to_ms(it_start.text())
-                self.time_str_to_ms(it_end.text())
+                start_ms = self.time_str_to_ms(it_start.text())
+                end_ms = self.time_str_to_ms(it_end.text())
+                if start_ms >= end_ms:
+                    raise ValueError("Start phải nhỏ hơn End")
             except ValueError:
                 # [S6-FIX] Dùng Toast Error thay cho QMessageBox
                 Toast.show_error(self.window(), "Timestamp không hợp lệ (Chuẩn: HH:MM:SS,mmm)")
@@ -424,6 +353,54 @@ class SubtitleEditorWidget(QWidget):
             
             self.sync_to_controller()
             self.update_draft_progress()
+
+    def _on_row_selected(self, row, _column):
+        abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
+        if 0 <= abs_idx < len(self.all_segments):
+            self.select_segment(abs_idx)
+
+    def select_previous(self):
+        if self.current_index > 0:
+            self.select_segment(self.current_index - 1)
+
+    def select_next(self):
+        if self.current_index < len(self.all_segments) - 1:
+            self.select_segment(self.current_index + 1)
+
+    def select_segment(self, index: int):
+        if not (0 <= index < len(self.all_segments)):
+            return
+        self.current_index = index
+        seg = self.all_segments[index]
+        self.current_editor.setEnabled(True)
+        self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
+        self.table.blockSignals(True)
+        self.table.selectRow(index)
+        self.table.blockSignals(False)
+
+    def _load_current_editor(self):
+        if 0 <= self.current_index < len(self.all_segments):
+            seg = self.all_segments[self.current_index]
+            self.current_editor.setEnabled(True)
+            self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
+
+    def _apply_current_editor(self, values):
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            return
+        row = rows[0].row()
+        abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
+        if not (0 <= abs_idx < len(self.all_segments)):
+            return
+        try:
+            start_ms = self.time_str_to_ms(values["start"])
+            end_ms = self.time_str_to_ms(values["end"])
+            if start_ms >= end_ms:
+                raise ValueError
+        except ValueError:
+            return
+        self.all_segments[abs_idx].update(values)
+        self.render_page()
 
     def highlight_row_by_stt(self, stt):
         target_idx = -1
@@ -456,18 +433,13 @@ class SubtitleEditorWidget(QWidget):
 
     # ================= LOGIC FILE I/O =================
     def ms_to_time_str(self, ms):
-        s, ms = divmod(int(ms), 1000)
-        m, s = divmod(s, 60)
-        h, m = divmod(m, 60)
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        return ms_to_time_str(ms)
 
     def time_str_to_ms(self, time_str):
-        time_str = time_str.strip()
-        parts = time_str.replace(',', ':').split(':')
-        if len(parts) == 4:
-            h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-            return (h * 3600 + m * 60 + s) * 1000 + ms
-        raise ValueError("Sai định dạng HH:MM:SS,mmm")
+        value = time_str_to_ms(time_str)
+        if value < 0:
+            raise ValueError("Sai định dạng HH:MM:SS,mmm")
+        return value
 
     def load_srt_file(self, srt_path):
         self.srt_path = srt_path
@@ -622,48 +594,6 @@ class SubtitleEditorWidget(QWidget):
             except ValueError:
                 pass
 
-    # ================= LOGIC PREVIEW STYLE =================
-    def _open_color_dialog(self, initial_color, title):
-        dialog = QColorDialog(initial_color, self)
-        dialog.setWindowTitle(title)
-        dialog.setStyleSheet(f"""
-            QDialog, QColorDialog {{ background-color: {Theme.SURFACE}; color: {Theme.TEXT_PRIMARY}; }}
-            QLabel {{ color: {Theme.TEXT_PRIMARY}; }}
-            QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY}; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px 12px; }}
-            QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; border: 1px solid {Theme.CYAN}; }}
-        """)
-        if dialog.exec(): return dialog.currentColor()
-        return QColor()
-
-    def choose_text_color(self):
-        color = self._open_color_dialog(self.current_text_color, "Chọn màu chữ")
-        if color.isValid():
-            self.current_text_color = color
-            self.btn_text_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: {Theme.BG_APP}; border: 1px solid {Theme.CYAN}; border-radius: 4px; padding: 6px;")
-            self.emit_style()
-
-    def choose_outline_color(self):
-        color = self._open_color_dialog(self.current_outline_color, "Chọn màu viền")
-        if color.isValid():
-            self.current_outline_color = color
-            self.btn_outline_color.setStyleSheet(f"color: {color.name()}; font-weight: bold; background: #FFFFFF; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 6px;")
-            self.emit_style()
-
-    def on_preview_toggled(self, checked):
-        self.preview_toggled.emit(checked)
-
-    def emit_style(self):
-        if not hasattr(self, 'font_combo'): return
-        current_pos = self.pos_combo.currentText() if hasattr(self, 'pos_combo') else "Bottom"
-        self.style_changed.emit({
-            "family": self.font_combo.currentText(),
-            "size": self.size_spin.value(),
-            "color": self.current_text_color.name(),
-            "out_color": self.current_outline_color.name(),
-            "out_width": self.outline_spin.value(),
-            "position": current_pos
-        })
-
     def approve_timing(self):
         if not self.all_segments:
             return
@@ -675,29 +605,11 @@ class SubtitleEditorWidget(QWidget):
 
     def update_draft_progress(self):
         if not self.all_segments:
-            self.lbl_progress.setText("Trống")
-            self.btn_continue.setEnabled(False)
+            self.next_empty_idx = -1
             return
-            
-        done_count = sum(1 for s in self.all_segments if s.get('text', '').strip())
-        total = len(self.all_segments)
-        self.lbl_progress.setText(f"Đã điền: {done_count} / {total}")
-        
+
         self.next_empty_idx = -1
         for i, seg in enumerate(self.all_segments):
             if not seg.get('text', '').strip() or seg.get('status') == 'timing_only':
                 self.next_empty_idx = i
                 break
-                
-        if self.next_empty_idx != -1:
-            stt = self.all_segments[self.next_empty_idx]['stt']
-            self.btn_continue.setText(f"▶ Tiếp tục từ câu {stt}")
-            self.btn_continue.setEnabled(True)
-        else:
-            self.btn_continue.setText("✨ Đã hoàn thành toàn bộ")
-            self.btn_continue.setEnabled(False)
-
-    def trigger_ai_fill(self):
-        if hasattr(self, 'next_empty_idx') and self.next_empty_idx != -1:
-            count = self.spin_batch.value()
-            self.fill_text_requested.emit(self.next_empty_idx, count)

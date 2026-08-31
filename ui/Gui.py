@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     QTimer,
     QUrl,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
@@ -49,6 +50,7 @@ from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
+from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
@@ -258,48 +260,38 @@ class MainWindow(QMainWindow):
         ws_layout.setContentsMargins(0, 0, 0, 0) # Gỡ viền thừa để tối đa hóa không gian
         ws_layout.setSpacing(0)
 
-        # Splitter dọc (Vertical) định hình 3 tầng cốt lõi
-        self.work_splitter = QSplitter(Qt.Vertical)
-        self.work_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 2px; }}")
+        # Splitter dọc: top workspace (Editor + Video) trên Timeline
+        self.workspace_vertical_splitter = QSplitter(Qt.Vertical)
+        self.workspace_vertical_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 2px; }}")
+        self.work_splitter = self.workspace_vertical_splitter
 
-        # --- TẦNG 1: VIDEO PREVIEW ---
+        # --- TOP WORKSPACE: EDITOR 68% / VIDEO 32% ---
+        self.top_horizontal_splitter = QSplitter(Qt.Horizontal)
+        self.top_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
+        self.top_splitter = self.top_horizontal_splitter
+        self.sub_editor = SubtitleEditorWidget()
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
-        self.work_splitter.addWidget(self.video_player)
+        self.top_horizontal_splitter.addWidget(self.sub_editor)
+        self.top_horizontal_splitter.addWidget(self.video_player)
+        self.top_horizontal_splitter.setStretchFactor(0, 68)
+        self.top_horizontal_splitter.setStretchFactor(1, 32)
+        self.top_horizontal_splitter.setSizes([680, 320])
 
-        # --- TẦNG 2: SUBTITLE EDITOR & AI SIDE-PANEL ---
-        self.editor_horizontal_splitter = QSplitter(Qt.Horizontal)
-        self.editor_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
-
-        # 2.1 Bảng Editor Chính (Bên trái)
-        self.sub_editor = SubtitleEditorWidget()
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
         self.video_player.sub_controller.subtitle_changed.connect(
             lambda stt, start, text: self.sub_editor.highlight_row_by_stt(stt)
         )
-        self.sub_editor.preview_toggled.connect(self.video_player.sub_controller.toggle_preview)
-        self.sub_editor.style_changed.connect(
-            lambda s: self.video_player.subtitle_overlay.update_style(
-                family=s.get("family"), size=s.get("size"), color=s.get("color"),
-                out_color=s.get("out_color"), out_width=s.get("out_width"), position=s.get("position")
-            )
-        )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
-        
-        self.editor_horizontal_splitter.addWidget(self.sub_editor)
 
-        # 2.2 Side-Panel cho AI & Live Log (Bên phải - Dễ dàng Collapse sau này)
+        self.workspace_vertical_splitter.addWidget(self.top_horizontal_splitter)
+
+        # Live log is hosted in the generation dock tab.
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setPlaceholderText("Nhật ký trạng thái...")
-
-        # The legacy panel is intentionally not added to the editor splitter.
-        # Đặt tỷ lệ: Editor chiếm 70% không gian ngang, AI Panel ép sang mép 30%
-        self.editor_horizontal_splitter.setSizes([1100])
-        
-        self.work_splitter.addWidget(self.editor_horizontal_splitter)
 
         # --- [SPRINT 9] RIGHT DOCK: SUBTITLE GENERATION + LIVE LOG ---
         self.generation_panel = SubtitleGenerationPanel(
@@ -324,7 +316,7 @@ class MainWindow(QMainWindow):
         )
         self.timing_service.error_signal.connect(self._on_timing_error)
         self._restore_panel_callbacks()
-        self.generation_dock = QDockWidget("AI Generation", self)
+        self.generation_dock = QDockWidget("AI Workspace", self)
         self.generation_dock.setObjectName("SubtitleGenerationDock")
         self.generation_dock.setAllowedAreas(
             Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea
@@ -333,14 +325,72 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
         )
         self.generation_dock.setMinimumWidth(330)
+        self.generation_dock.setStyleSheet(f"""
+            QDockWidget {{
+                color: {Theme.TEXT_PRIMARY};
+                font-weight: bold;
+            }}
+            QDockWidget::title {{
+                background: {Theme.SURFACE};
+                padding: 6px 10px;
+                border-bottom: 1px solid {Theme.BORDER};
+            }}
+            QDockWidget::close-button,
+            QDockWidget::float-button {{
+                background: transparent;
+                border: none;
+                padding: 2px;
+            }}
+            QDockWidget::close-button:hover,
+            QDockWidget::float-button:hover {{
+                background: {Theme.SURFACE_SOFT};
+                border-radius: 4px;
+            }}
+        """)
         dock_tabs = QTabWidget()
         dock_tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ border: 1px solid {Theme.BORDER}; background: {Theme.SURFACE}; }}
-            QTabBar::tab {{ background: {Theme.BG_APP}; color: {Theme.TEXT_MUTED}; padding: 6px 16px; border: 1px solid {Theme.BORDER}; border-bottom: none; font-weight: bold; }}
-            QTabBar::tab:selected {{ background: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; }}
+            QTabWidget::pane {{
+                border-top: 1px solid {Theme.BORDER};
+                background: transparent;
+            }}
+            QTabBar::tab {{
+                background: {Theme.BG_APP};
+                color: {Theme.TEXT_MUTED};
+                padding: 8px 16px;
+                border: none;
+                margin: 0px;
+                min-height: 22px;
+                font-weight: bold;
+            }}
+            QTabBar::tab:selected {{
+                background: {Theme.PRIMARY_PURPLE};
+                color: #FFFFFF;
+                font-weight: bold;
+                margin: 0px;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {Theme.SURFACE_SOFT};
+            }}
+            QTabBar::scroller {{
+                width: 28px;
+            }}
+            QTabBar QToolButton {{
+                background: {Theme.SURFACE};
+                border: none;
+                color: {Theme.TEXT_PRIMARY};
+            }}
+            QTabBar QToolButton:hover {{
+                background: {Theme.SURFACE_SOFT};
+            }}
         """)
         dock_tabs.addTab(self.generation_panel, "✨ Generate Subtitle")
+        self.inspector_panel = SubtitleInspectorPanel()
+        self.subtitle_inspector = self.inspector_panel
+        dock_tabs.addTab(self.inspector_panel, "🎨 Subtitle Style")
         dock_tabs.addTab(self.log_box, "📜 Live Log")
+        self.dock_tabs = dock_tabs
+        self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
+        self.inspector_panel.style_changed.connect(self._on_subtitle_style_changed)
         self.generation_dock.setWidget(dock_tabs)
         self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
 
@@ -352,7 +402,7 @@ class MainWindow(QMainWindow):
 
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.setMinimumHeight(160) # Timeline nay đã nằm dưới cùng, chiếm ưu thế
-        self.work_splitter.addWidget(self.timeline_widget)
+        self.workspace_vertical_splitter.addWidget(self.timeline_widget)
 
         self.timeline_data_provider = TimelineDataProvider()
         self.timeline_controller = TimelineController(self.project_service, self.timeline_widget, self.timeline_data_provider)
@@ -361,9 +411,11 @@ class MainWindow(QMainWindow):
         # Liên kết Cầu đồng bộ (Click Table -> Bôi đen Timeline)
         self.sub_editor.seek_requested.connect(self.timeline_controller.sync_from_editor)
 
-        # Chốt tỷ lệ 3 tầng dọc: Video (25%), Editor (55%), Timeline (20%)
-        self.work_splitter.setSizes([250, 550, 200])
-        ws_layout.addWidget(self.work_splitter)
+        # Chốt tỷ lệ: top workspace 68% / timeline 32%
+        self.workspace_vertical_splitter.setStretchFactor(0, 68)
+        self.workspace_vertical_splitter.setStretchFactor(1, 32)
+        self.workspace_vertical_splitter.setSizes([680, 320])
+        ws_layout.addWidget(self.workspace_vertical_splitter)
         
         self.stack.addWidget(self.page_workspace)
 
@@ -490,9 +542,37 @@ class MainWindow(QMainWindow):
         self.stats_timer.timeout.connect(self.update_hardware_info)
         self.stats_timer.timeout.connect(self.update_cpu_usage)
         self.stats_timer.start(1000)
-        self.sub_editor.emit_style()
+        self.inspector_panel.emit_current_style()
 
     # --- HÀM THỰC THI SIGNAL AN TOÀN TRÊN MAIN THREAD ---
+    @Slot(dict)
+    def _on_subtitle_style_changed(self, style: dict):
+        """Adapt inspector's public style schema to the overlay renderer."""
+        position = {"top": "Top", "center": "Middle", "bottom": "Bottom"}.get(
+            str(style.get("position", "bottom")).lower(), "Bottom"
+        )
+        self.video_player.subtitle_overlay.update_style(
+            family=style.get("font_name", style.get("family")),
+            size=style.get("font_size", style.get("size")),
+            color=style.get("font_color", style.get("color")),
+            out_color=style.get("outline_color", style.get("out_color")),
+            out_width=style.get("outline_width", style.get("out_width")),
+            position=position,
+        )
+
+    # Backwards-compatible name for callers from the first refactor pass.
+    _apply_subtitle_style = _on_subtitle_style_changed
+
+    @Slot(bool)
+    def _on_preview_toggled(self, is_visible: bool):
+        """Toggle overlay visibility without changing subtitle controller state."""
+        overlay = getattr(self.video_player, "subtitle_overlay", None)
+        if overlay is not None:
+            overlay.setVisible(bool(is_visible))
+        controller = getattr(self.video_player, "sub_controller", None)
+        if controller is not None and hasattr(controller, "toggle_preview"):
+            controller.toggle_preview(bool(is_visible))
+
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         if req_vid_path != self.queue_mgr.active_vid:
             print(f"[DEBUG-WAVEFORM] Bỏ qua kết quả cũ của worker do người dùng đã chuyển video: {req_vid_path}")
