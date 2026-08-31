@@ -325,7 +325,7 @@ class MainWindow(QMainWindow):
             Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea
         )
         self.generation_dock.setFeatures(
-            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
+            QDockWidget.DockWidgetMovable
         )
         self.generation_dock.setMinimumWidth(350)
         self.generation_dock.setMaximumWidth(390)
@@ -644,6 +644,9 @@ class MainWindow(QMainWindow):
             self.btn_drawer_toggle.setText("‹")
             self.btn_drawer_toggle.setToolTip("Hiện AI Workspace")
         else:
+            # Set the collapsed geometry before showing to prevent a one-frame flash.
+            self.generation_dock.setMinimumWidth(0)
+            self.generation_dock.setMaximumWidth(0)
             self.generation_dock.show()
             self.drawer_anim.setStartValue(0)
             self.drawer_anim.setEndValue(self._drawer_target_width)
