@@ -260,6 +260,7 @@ class SubtitleGenerationService(QObject):
                 raise RuntimeError("STALE_SUBTITLE: artifact identity changed.")
             if artifact.revision != self.current_checkpoint.artifact_revision:
                 raise RuntimeError("STALE_SUBTITLE: artifact revision changed.")
+            self._assert_live_artifact_hash(artifact)
 
             valid = SubtitleGenerationValidator.validate(
                 result.segments, batch.start_ms, batch.end_ms
@@ -450,6 +451,18 @@ class SubtitleGenerationService(QObject):
         ):
             return 0
         return max(0, min(int(checkpoint.timing_segment_cursor), total_ranges))
+
+    def _assert_live_artifact_hash(self, artifact) -> None:
+        """Reject a file edit made after the batch checkpoint was written."""
+        expected_hash = self.current_checkpoint.artifact_content_hash
+        if not expected_hash or not os.path.exists(artifact.path):
+            return
+        current_hash = self.artifact_service.content_hash(artifact.path)
+        if current_hash != expected_hash:
+            raise RuntimeError(
+                "STALE_SUBTITLE_FILE: subtitle artifact was edited externally "
+                "during inference."
+            )
 
     def _ensure_timing_rows(self, artifact, timing_ranges) -> None:
         """Seed missing subtitle rows from Timing without replacing unrelated data."""

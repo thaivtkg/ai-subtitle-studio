@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 from dataclasses import replace
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -492,6 +493,52 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         )
         self.assertEqual(request.batch_mode, "segments")
         self.assertEqual(request.batch_size_value, 10)
+
+    @patch(
+        "core.services.model_manager.ModelManager.get_model_path_for_inference",
+        return_value="local_fake_path",
+    )
+    def test_faster_whisper_loads_via_model_manager(self, mock_get_path):
+        """ASR must pass the offline-resolved path to Faster-Whisper."""
+        whisper_model = MagicMock()
+        fake_faster_whisper = types.ModuleType("faster_whisper")
+        fake_faster_whisper.WhisperModel = whisper_model
+        service = FasterWhisperService(device="cpu")
+
+        with patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper}):
+            service.load_model("large-v3-turbo", "int8")
+
+        mock_get_path.assert_called_once_with("large-v3-turbo")
+        self.assertEqual(whisper_model.call_args.args[0], "local_fake_path")
+        self.assertEqual(whisper_model.call_args.kwargs["device"], "cpu")
+        self.assertEqual(whisper_model.call_args.kwargs["compute_type"], "int8")
+
+    def test_commit_rejects_artifact_edited_during_inference(self):
+        """A batch commit must fail without overwriting an externally edited artifact."""
+        SubtitleGenerationWorker.start = lambda _worker: None
+        self.service.start_generation(self.request, 300000)
+        artifact = self.project_service.artifact_store.get("sub_123")
+        batch = self.service.current_batches[0]
+        before_data = self.service.artifact_service.load_data(artifact.path)
+
+        external_data = dict(before_data)
+        external_data["external_edit"] = True
+        self.service.artifact_service._save_atomic(artifact.path, external_data)
+
+        self.service._commit_batch(
+            batch,
+            SubtitleGenerationResult(
+                batch.batch_id,
+                [WhisperSegmentResult(100, 900, "must not be committed")],
+            ),
+        )
+
+        checkpoint = self.service.checkpoint_manager.load_checkpoint()
+        self.assertEqual(checkpoint.status, "FAILED")
+        self.assertEqual(batch.status, "STALE")
+        self.assertEqual(
+            self.service.artifact_service.load_data(artifact.path), external_data
+        )
 
     def test_11_planner_time_vs_segments_mode(self):
         """TC11: Planner hỗ trợ cả Time-based và Segment-based batching."""

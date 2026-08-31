@@ -11,6 +11,7 @@ from core.subtitle_generation.subtitle_generation_result import (
     WhisperSegmentResult,
 )
 from core.runtime.runtime_paths import RuntimePaths
+from core.services.model_manager import ModelManager
 
 
 class FasterWhisperService:
@@ -34,8 +35,12 @@ class FasterWhisperService:
         try:
             from faster_whisper import WhisperModel
 
+            model_path = ModelManager.get_model_path_for_inference(model_size)
             self.model = WhisperModel(
-                model_size, device=self.device, compute_type=compute_type
+                model_path,
+                device=self.device,
+                compute_type=compute_type,
+                download_root=str(RuntimePaths.get_models_dir()),
             )
             self.current_model_size = model_size
             self.current_compute_type = compute_type
