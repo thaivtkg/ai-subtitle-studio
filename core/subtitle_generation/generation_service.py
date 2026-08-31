@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -67,6 +68,10 @@ class SubtitleGenerationService(QObject):
         if video_duration_ms <= 0:
             raise ValueError("Video duration must be positive.")
 
+        segment_ranges = None
+        if request.batch_mode == "segments":
+            segment_ranges = self._load_timing_segment_ranges(project)
+
         artifact = self.artifact_service.get_or_create_artifact()
         if artifact is None:
             raise RuntimeError("Unable to create subtitle artifact.")
@@ -82,7 +87,9 @@ class SubtitleGenerationService(QObject):
             request.batch_mode,
             request.batch_size_value,
             request.overlap_ms,
+            segment_ranges=segment_ranges,
         )
+        artifact_hash = self.artifact_service.content_hash(artifact.path)
         self.current_checkpoint = SubtitleGenerationCheckpoint(
             project_id=project.project_id,
             source_fingerprint=project.source.fingerprint,
@@ -96,6 +103,7 @@ class SubtitleGenerationService(QObject):
             next_start_ms=0,
             detected_language=None,
             updated_at=self._now(),
+            artifact_content_hash=artifact_hash,
         )
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
         self.whisper_service.load_model(request.model_size, request.compute_type)
@@ -114,6 +122,12 @@ class SubtitleGenerationService(QObject):
             raise ValueError("Subtitle artifact does not match checkpoint.")
         if artifact.revision != checkpoint.artifact_revision:
             raise RuntimeError("STALE_SUBTITLE: subtitle artifact changed externally.")
+        if checkpoint.artifact_content_hash:
+            current_hash = self.artifact_service.content_hash(artifact.path)
+            if current_hash != checkpoint.artifact_content_hash:
+                raise RuntimeError(
+                    "STALE_SUBTITLE_FILE: subtitle artifact was edited externally."
+                )
 
         self._is_cancelled = False
         self._pending_dispatch = False
@@ -246,6 +260,9 @@ class SubtitleGenerationService(QObject):
             batch.updated_at = self._now()
             self.current_checkpoint.completed_batches.append(batch.batch_id)
             self.current_checkpoint.artifact_revision = artifact.revision
+            self.current_checkpoint.artifact_content_hash = (
+                self.artifact_service.content_hash(artifact.path)
+            )
             self.current_checkpoint.active_batch = None
             self.current_checkpoint.next_start_ms = batch.end_ms
             self.current_checkpoint.batches_data = [
@@ -347,6 +364,52 @@ class SubtitleGenerationService(QObject):
             raise ValueError("Sai Project ID: checkpoint belongs to another project.")
         if checkpoint.source_fingerprint != project.source.fingerprint:
             raise ValueError("Source đã thay đổi: checkpoint fingerprint does not match.")
+
+    def _load_timing_segment_ranges(self, project):
+        """Read real segment ranges from the project's Timing Artifact."""
+        timing_state = getattr(project.state, "timing", None)
+        timing_artifact_id = getattr(timing_state, "timing_artifact_id", None)
+        artifact = (
+            self.project_service.artifact_store.get(timing_artifact_id)
+            if timing_artifact_id
+            else None
+        )
+        if not artifact or not os.path.exists(artifact.path):
+            raise ValueError(
+                "Segment-based batching requires a completed Timing Artifact."
+            )
+
+        ranges = []
+        with open(artifact.path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        for line in lines:
+            if "-->" not in line:
+                continue
+            start_text, end_text = (part.strip() for part in line.split("-->", 1))
+            try:
+                start_ms = self._parse_srt_time_ms(start_text)
+                end_ms = self._parse_srt_time_ms(end_text)
+            except ValueError:
+                continue
+            if end_ms > start_ms:
+                ranges.append((start_ms, end_ms))
+
+        if not ranges:
+            raise ValueError("Timing Artifact does not contain valid subtitle ranges.")
+        return ranges
+
+    @staticmethod
+    def _parse_srt_time_ms(value: str) -> int:
+        match = re.fullmatch(r"(\d+):(\d{2}):(\d{2})[,.](\d{1,3})", value)
+        if not match:
+            raise ValueError(f"Invalid SRT timestamp: {value}")
+        hours, minutes, seconds, milliseconds = match.groups()
+        return (
+            int(hours) * 3600000
+            + int(minutes) * 60000
+            + int(seconds) * 1000
+            + int(milliseconds.ljust(3, "0"))
+        )
 
     def _notify_progress(self, percent: int, message: str) -> None:
         if self.on_progress:

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import uuid
 from datetime import datetime
@@ -73,12 +74,23 @@ class SubtitleArtifactService:
     @staticmethod
     def load_data(path: str) -> dict:
         if not os.path.exists(path):
-            return {"version": 1, "segments": []}
+            raise FileNotFoundError(f"Subtitle artifact was not found: {path}")
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             if not isinstance(data, dict) or not isinstance(data.get("segments"), list):
                 raise ValueError("Invalid subtitle artifact schema")
             return data
-        except (OSError, ValueError, json.JSONDecodeError):
-            return {"version": 1, "segments": []}
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # A corrupt artifact must stop generation instead of being treated
+            # as an empty document and accidentally overwritten.
+            raise ValueError(f"Subtitle artifact is corrupt: {path}") from exc
+
+    @staticmethod
+    def content_hash(path: str) -> str:
+        """Return a stable SHA-256 hash of the artifact bytes on disk."""
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()

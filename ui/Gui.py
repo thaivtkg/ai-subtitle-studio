@@ -1281,6 +1281,7 @@ class MainWindow(QMainWindow):
             self.timeline_widget.load_project_data(
                 duration_ms, self.timeline_data_provider.get_all_segments()
             )
+            self.generation_panel.refresh_batch_mode_availability()
         except Exception as exc:
             self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
 

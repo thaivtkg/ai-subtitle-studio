@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -79,6 +80,7 @@ from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult,
     WhisperSegmentResult,
 )
+from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
 from core.subtitle_generation.subtitle_generation_service import (
     SubtitleGenerationService,
 )
@@ -257,10 +259,19 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         self.assertEqual([segment.text for segment in valid], ["Nội dung hợp lệ."])
 
     def test_12_planner_supports_segment_based_batches(self):
-        batches = SubtitleGenerationPlanner.create_plan(60000, "segments", 10, 2000)
+        timing_ranges = [
+            (index * 5000, (index + 1) * 5000) for index in range(20)
+        ]
+        batches = SubtitleGenerationPlanner.create_plan(
+            100000,
+            "segments",
+            10,
+            2000,
+            segment_ranges=timing_ranges,
+        )
         self.assertEqual(len(batches), 2)
         self.assertEqual((batches[0].start_ms, batches[0].end_ms), (0, 52000))
-        self.assertEqual((batches[1].start_ms, batches[1].end_ms), (50000, 60000))
+        self.assertEqual((batches[1].start_ms, batches[1].end_ms), (48000, 100000))
 
     def test_13_request_preserves_segment_batch_configuration(self):
         request = SubtitleGenerationRequest(
@@ -300,10 +311,126 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
             batch_mode="segments",
             size_value=10,
             overlap_ms=2000,
+            segment_ranges=[
+                (index * 5000, (index + 1) * 5000) for index in range(120)
+            ],
         )
         self.assertGreater(len(batches_seg), 0)
         self.assertEqual(batches_seg[0].start_ms, 0)
         self.assertEqual(batches_seg[0].end_ms, 52000)
+
+    def test_14_faster_whisper_clip_timestamps_are_not_shifted_twice(self):
+        """A clipped source returns absolute timestamps from Faster-Whisper."""
+        class AbsoluteTimestampModel:
+            def __init__(self):
+                self.options = None
+
+            def transcribe(self, path, **options):
+                self.options = options
+                segment = types.SimpleNamespace(
+                    start=305.0,
+                    end=308.0,
+                    text="Absolute timestamp",
+                    words=None,
+                )
+                return [segment], types.SimpleNamespace(language="en")
+
+        request = replace(self.request, use_vad=False)
+        service = FasterWhisperService(device="cpu")
+        fake_model = AbsoluteTimestampModel()
+        service.model = fake_model
+        batch = SubtitleGenerationBatch(
+            batch_id="batch_2",
+            start_ms=300000,
+            end_ms=602000,
+            status="RUNNING",
+            revision=0,
+            created_at="now",
+            updated_at="now",
+        )
+
+        result = service.transcribe_batch(request, batch, lambda: False)
+
+        self.assertIsNone(result.error)
+        self.assertEqual(
+            (result.segments[0].start_ms, result.segments[0].end_ms),
+            (305000, 308000),
+        )
+        self.assertEqual(fake_model.options["clip_timestamps"], [300.0, 602.0])
+
+    def test_15_manual_subtitle_artifact_edit_is_detected_by_hash_guard(self):
+        self.service.start_generation(self.request, 300000)
+        artifact = self.project_service.artifact_store.get("sub_123")
+        with open(artifact.path, "a", encoding="utf-8") as handle:
+            handle.write("\n")
+
+        with self.assertRaisesRegex(RuntimeError, "STALE_SUBTITLE_FILE"):
+            self.service.resume_generation()
+
+    def test_16_vad_batch_uses_local_audio_timestamps_and_shifts_once(self):
+        class LocalTimestampModel:
+            def transcribe(self, path, **options):
+                self.path = path
+                self.options = options
+                segment = types.SimpleNamespace(
+                    start=5.0,
+                    end=8.0,
+                    text="Local timestamp",
+                    words=None,
+                )
+                return [segment], types.SimpleNamespace(language="en")
+
+        request = replace(self.request, use_vad=True)
+        service = FasterWhisperService(device="cpu")
+        fake_model = LocalTimestampModel()
+        service.model = fake_model
+        service._extract_batch_audio = lambda _request, _batch: ("batch.wav", "")
+        batch = SubtitleGenerationBatch(
+            batch_id="batch_2",
+            start_ms=300000,
+            end_ms=602000,
+            status="RUNNING",
+            revision=0,
+            created_at="now",
+            updated_at="now",
+        )
+
+        result = service.transcribe_batch(request, batch, lambda: False)
+
+        self.assertIsNone(result.error)
+        self.assertEqual(
+            (result.segments[0].start_ms, result.segments[0].end_ms),
+            (305000, 308000),
+        )
+        self.assertNotIn("clip_timestamps", fake_model.options)
+        self.assertTrue(fake_model.options["vad_filter"])
+
+    def test_17_service_segment_mode_reads_timing_artifact_ranges(self):
+        timing_path = os.path.join(self.test_dir, "timing.srt")
+        with open(timing_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "1\n00:00:00,000 --> 00:00:10,000\n[empty]\n\n"
+                "2\n00:00:10,000 --> 00:00:20,000\n[empty]\n"
+            )
+        self.project_service.current_project.state.timing = types.SimpleNamespace(
+            timing_artifact_id="timing_1"
+        )
+        self.project_service.artifact_store.register(
+            types.SimpleNamespace(artifact_id="timing_1", path=timing_path)
+        )
+        request = replace(self.request, batch_mode="segments", batch_size_value=1)
+
+        self.service.start_generation(request, 30000)
+
+        self.assertEqual(len(self.service.current_batches), 2)
+        self.assertEqual(
+            (self.service.current_batches[0].start_ms, self.service.current_batches[0].end_ms),
+            (0, 12000),
+        )
+        self.assertEqual(
+            (self.service.current_batches[1].start_ms, self.service.current_batches[1].end_ms),
+            (8000, 22000),
+        )
 
 
 if __name__ == "__main__":
