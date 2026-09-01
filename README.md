@@ -108,6 +108,13 @@ Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo b�
 | **CUDA / cuDNN**     | CUDA 11.8 hoặc 12.x       | cuDNN tương thích với phiên bản PyTorch   |
 | **Dung lượng trống** | 5 GB SSD                  | 15 GB SSD                                 |
 
+### Dependency profiles
+
+- `requirements.txt`: dependency chính cho môi trường phát triển.
+- `requirements-runtime.txt`: bộ dependency đã ghim phiên bản cho runtime/CI reproducible.
+
+Python 3.11 được khuyến nghị. FFmpeg/FFprobe cần có trong `ffmpeg/` hoặc trên `PATH`.
+
 ## 📦 Hướng dẫn cài đặt & Chạy mã nguồn
 
 ### Bước 1: Tải mã nguồn
@@ -140,6 +147,12 @@ python -m venv venv
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+Để cài đúng bộ runtime đã ghim phiên bản:
+
+```bash
+pip install -r requirements-runtime.txt
 
 
 
@@ -212,6 +225,18 @@ Chạy bộ kiểm thử tích hợp (bao gồm kiểm tra Time/Segment Planner,
 ```bash
 python -m unittest tests/test_subtitle_generation.py -v
 python -m unittest tests/test_timeline.py -v
+```
+
+Chạy toàn bộ test suite:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Trên Linux CI/headless, dùng:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
 
 ```
 

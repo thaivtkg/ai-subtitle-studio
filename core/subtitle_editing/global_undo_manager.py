@@ -12,23 +12,36 @@ class GlobalUndoManager(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._transitioning = False
         self.undo_stack = QUndoStack(self)
         self.undo_stack.cleanChanged.connect(self.clean_changed.emit)
 
     def push(self, command: SubtitleCommand):
-        self.undo_stack.push(command)
+        self._transitioning = True
+        try:
+            self.undo_stack.push(command)
+        finally:
+            self._transitioning = False
         self.state_changed.emit()
 
     def undo(self):
         if self.undo_stack.canUndo():
-            self.undo_stack.undo()
+            self._transitioning = True
+            try:
+                self.undo_stack.undo()
+            finally:
+                self._transitioning = False
             self.state_changed.emit()
             return True
         return False
 
     def redo(self):
         if self.undo_stack.canRedo():
-            self.undo_stack.redo()
+            self._transitioning = True
+            try:
+                self.undo_stack.redo()
+            finally:
+                self._transitioning = False
             self.state_changed.emit()
             return True
         return False

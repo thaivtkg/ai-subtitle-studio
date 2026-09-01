@@ -3,6 +3,7 @@ import re
 import subprocess
 import sys
 import uuid
+import copy
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -46,6 +47,13 @@ from core.queue_manager import QueueManager
 from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
+from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
+from core.recovery.recovery_manager import RecoveryManager
+from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
+from core.recovery.recovery_validator import RecoveryValidator
+from core.recovery.revision_tracker import RevisionTracker
+from core.runtime.runtime_paths import RuntimePaths
+from core.runtime.single_instance_guard import IpcAction, IpcRequest
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
@@ -87,18 +95,36 @@ class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None, parent=None):
+        super().__init__(parent)
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
 
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
-        self.project_service = ProjectService(self.artifact_store)
-        self.workspace_service = WorkspaceService(self, self.project_service)
-        self.undo_manager = GlobalUndoManager(self)
+        self.undo_manager = undo_manager or GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
+        self.revision_tracker = revision_tracker or RevisionTracker(self.undo_manager, self)
+        self.project_service = ProjectService(self.artifact_store)
+        self.project_service.revision_tracker = self.revision_tracker
+        self.recovery_manager = recovery_manager or RecoveryManager(
+            RuntimePaths.get_recovery_sessions_dir(),
+            RuntimePaths.get_recovery_quarantine_dir(),
+            self.revision_tracker,
+            AtomicSnapshotStore(),
+            RecoveryValidator(),
+            self,
+        )
+        self.workspace_service = WorkspaceService(self, self.project_service)
+        self.revision_tracker.dirty_changed.connect(self._update_window_title_dirty_marker)
+        self.revision_tracker.clean_point_reached.connect(
+            self.recovery_manager.invalidate_snapshot_at_clean_point
+        )
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setInterval(30_000)
+        self.autosave_timer.timeout.connect(self._on_autosave_timeout)
+        self.autosave_timer.start()
         self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
@@ -123,6 +149,9 @@ class MainWindow(QMainWindow):
         self.shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
         self.shortcut_save.setContext(Qt.ApplicationShortcut)
         self.shortcut_save.activated.connect(self.action_save_project)
+        self.shortcut_export = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
+        self.shortcut_export.setContext(Qt.ApplicationShortcut)
+        self.shortcut_export.activated.connect(self._trigger_export_softsub)
 
         self.setWindowTitle("AI Subtitle Studio")
         
@@ -1216,7 +1245,6 @@ class MainWindow(QMainWindow):
         self._register_artifact(path, ArtifactType.HARDSUB, {"mode": "manual_hardsub"})
         if getattr(self, 'project_service', None) and self.project_service.current_project:
             self.project_service.current_project.state.export_status = "READY"
-            self.project_service.mark_dirty()
 
         Toast.show_success(self, f"Render Hardsub xong: {path}")
         self.progress_bar.setValue(100)
@@ -1630,7 +1658,6 @@ class MainWindow(QMainWindow):
         self._register_artifact(out_video_path, ArtifactType.HARDSUB, {"mode": "auto_queue_hardsub"})
         if getattr(self, 'project_service', None) and self.project_service.current_project:
             self.project_service.current_project.state.export_status = "READY"
-            self.project_service.mark_dirty()
 
         self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
         self.process_next_batch_item()
@@ -1728,11 +1755,52 @@ class MainWindow(QMainWindow):
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
+    def capture_recovery_working_state(self) -> RecoveryWorkingState:
+        workspace = self.workspace_service.capture_workspace() or {}
+        project = self.project_service.current_project
+        source = getattr(project, "source", None)
+        session = getattr(self.recovery_manager, "_active_session", None)
+        return RecoveryWorkingState(
+            schema_version=2.0,
+            session_id=session.session_id if session else "",
+            project_id=getattr(project, "project_id", None),
+            project_file_path=self.project_service.project_dir or "",
+            video_path=getattr(source, "path", "") if source else "",
+            source_fingerprint=getattr(source, "fingerprint", "") if source else "",
+            edit_revision=self.revision_tracker.edit_revision,
+            segments=copy.deepcopy(getattr(self.sub_editor, "all_segments", [])),
+            workspace_state=copy.deepcopy(workspace),
+        )
+
+    def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
+        self.sub_editor.all_segments = copy.deepcopy(state.segments)
+        if hasattr(self.sub_editor, "render_page"):
+            self.sub_editor.render_page()
+        if hasattr(self, "timeline_data_provider"):
+            self.timeline_data_provider.load_runtime_data(state.segments, 0)
+        if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "load_project_data"):
+            self.timeline_widget.load_project_data(0, state.segments, None)
+        if state.workspace_state and getattr(self.project_service, "current_project", None):
+            self.workspace_service.apply_workspace(state.workspace_state)
+        self.global_undo_manager.clear()
+        manifest = getattr(getattr(self.recovery_manager, "_active_session", None), "manifest", None)
+        self.revision_tracker.restore_from_snapshot(
+            state.edit_revision,
+            getattr(manifest, "last_saved_revision", 0),
+            getattr(manifest, "last_clean_revision", 0),
+        )
+        self._update_window_title_dirty_marker(True)
+
+    def _on_autosave_timeout(self):
+        if self.revision_tracker.is_dirty and self.revision_tracker.edit_revision > self.revision_tracker.snapshot_revision:
+            self.recovery_manager.write_snapshot(self.capture_recovery_working_state())
+
+    def _update_window_title_dirty_marker(self, is_dirty: bool):
+        title = self.windowTitle().replace(" *", "")
+        self.setWindowTitle(title + (" *" if is_dirty else ""))
+
     def closeEvent(self, event):
-        if getattr(self, 'project_service', None) and self.project_service.current_project:
-            self.workspace_service.capture_workspace()
-            
-            if self.project_service.current_project.state.dirty:
+        if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
                 from PySide6.QtWidgets import QMessageBox
                 reply = QMessageBox.question(
                     self, 
@@ -1743,10 +1811,20 @@ class MainWindow(QMainWindow):
                 )
                 
                 if reply == QMessageBox.Save:
-                    self.action_save_project()
+                    if self.action_save_project():
+                        self.recovery_manager.finalize_clean_shutdown()
+                    else:
+                        event.ignore()
+                        return
+                elif reply == QMessageBox.Discard:
+                    session = getattr(self.recovery_manager, "_active_session", None)
+                    if session:
+                        self.recovery_manager.discard_session(session.session_id)
                 elif reply == QMessageBox.Cancel:
                     event.ignore()  
                     return
+        elif getattr(self, "recovery_manager", None):
+            self.recovery_manager.finalize_clean_shutdown()
 
         save_settings({
             "output_dir": self.out_input.text().strip(),
@@ -1832,7 +1910,6 @@ class MainWindow(QMainWindow):
             if exported:
                 if getattr(self, 'project_service', None) and self.project_service.current_project:
                     self.project_service.current_project.state.export_status = "READY"
-                    self.project_service.mark_dirty()
                 Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
             else:
                 Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
@@ -1862,6 +1939,24 @@ class MainWindow(QMainWindow):
 
         Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
+    def _switch_recovery_session(self):
+        project = self.project_service.current_project
+        proj_id = getattr(self.project_service, "current_project_id", None) or getattr(project, "project_id", None)
+        proj_path = getattr(self.project_service, "current_project_path", None) or self.project_service.project_dir or ""
+        active = getattr(self.recovery_manager, "_active_session", None)
+        if active and active.manifest.project_id == proj_id and active.manifest.project_file_path == proj_path:
+            return active
+        if active:
+            self.recovery_manager.finalize_clean_shutdown()
+        source = getattr(project, "source", None)
+        return self.recovery_manager.create_session(RecoveryContext(
+            proj_id,
+            proj_path,
+            getattr(source, "path", "") if source else "",
+            getattr(source, "fingerprint", "") if source else "",
+            getattr(source, "modified_at", 0.0) if source else 0.0,
+        ))
+
     def action_new_project(self):
         dialog = NewProjectDialog(self)
         if dialog.exec():
@@ -1873,6 +1968,8 @@ class MainWindow(QMainWindow):
             
             try:
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
+                self.revision_tracker.reset_for_new_document()
+                self._switch_recovery_session()
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
@@ -1884,7 +1981,7 @@ class MainWindow(QMainWindow):
     def action_save_project(self):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:
             Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
-            return
+            return False
             
         try:
             # 1. Chụp lại trạng thái giao diện
@@ -1921,6 +2018,7 @@ class MainWindow(QMainWindow):
                                 print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact.path}")
                             except Exception as ex:
                                 print(f"[LỖI XUẤT SRT] {ex}")
+                                raise
                                 
                         # TRƯỜNG HỢP 2: File đang mở là Draft (.json) -> Dùng hàm lưu Draft
                         else:
@@ -1931,13 +2029,21 @@ class MainWindow(QMainWindow):
                                 print(f"[DEBUG-SAVE] Đã cập nhật đường dẫn Artifact sang Draft mới: {draft_path}")
             
             # 3. Lưu toàn bộ nhật ký Project xuống đĩa
-            self.project_service.save_project()
+            result = self.project_service.save_project()
+            if result is False:
+                return False
+            self.recovery_manager.record_explicit_save()
+            self.revision_tracker.record_explicit_save_success()
+            self.global_undo_manager.mark_saved()
+            self._update_window_title_dirty_marker(False)
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            return True
             
         except Exception as e:
             Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
             import traceback
             print(traceback.format_exc())
+            return False
 
     def action_open_project(self):
         """Mở một dự án đã có (Tối ưu UX chống giật/co giãn Layout)"""
@@ -1955,6 +2061,8 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(False)
 
             self.project_service.open_project(project_dir)
+            self.revision_tracker.reset_for_new_document()
+            self._switch_recovery_session()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
@@ -2007,6 +2115,23 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(True)
             if getattr(self.project_service, 'current_project', None):
                 Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
+
+    def handle_ipc_request(self, request: IpcRequest) -> None:
+        if request.action is IpcAction.ACTIVATE_WINDOW:
+            if self.isMinimized():
+                self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        elif request.action is IpcAction.OPEN_PROJECT and request.path:
+            self.project_service.open_project(request.path)
+            self.workspace_service.restore_workspace()
+            self.activateWindow()
+        elif request.action is IpcAction.OPEN_MEDIA and request.path:
+            if hasattr(self, "queue_mgr"):
+                self.queue_mgr.add_video(request.path)
+            if hasattr(self, "video_player") and hasattr(self.video_player, "load_video"):
+                self.video_player.load_video(request.path)
+            self.activateWindow()
 
     def action_open_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog

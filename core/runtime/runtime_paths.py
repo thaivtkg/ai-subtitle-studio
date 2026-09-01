@@ -87,9 +87,24 @@ class RuntimePaths:
     def get_settings_file() -> Path:
         return RuntimePaths.get_user_data_dir() / "settings.json"
 
+    @staticmethod
+    def get_recovery_dir() -> Path:
+        return RuntimePaths.get_user_data_dir() / "recovery"
+
+    @staticmethod
+    def get_recovery_sessions_dir() -> Path:
+        return RuntimePaths.get_recovery_dir() / "sessions"
+
+    @staticmethod
+    def get_recovery_quarantine_dir() -> Path:
+        return RuntimePaths.get_recovery_dir() / "quarantine"
+
     @classmethod
-    def ensure_user_data_dirs(cls):
+    def ensure_user_data_dirs(cls) -> None:
         """[S7.2-T18] Khởi tạo các thư mục dữ liệu cần thiết lúc khởi động ứng dụng"""
         cls.get_user_data_dir().mkdir(parents=True, exist_ok=True)
         cls.get_models_dir().mkdir(exist_ok=True)
         cls.get_logs_dir().mkdir(exist_ok=True)
+        cls.get_recovery_dir().mkdir(parents=True, exist_ok=True)
+        cls.get_recovery_sessions_dir().mkdir(parents=True, exist_ok=True)
+        cls.get_recovery_quarantine_dir().mkdir(parents=True, exist_ok=True)
