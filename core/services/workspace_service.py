@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from core.services.project_service import ProjectService
 from PySide6.QtCore import QTimer
 
@@ -47,6 +48,16 @@ class WorkspaceService:
                 workspace.subtitle_preview_enabled = getattr(self.ui.video_player.sub_controller, 'is_enabled', True)
         except Exception as e:
             print(f"Lỗi capture subtitle toggle: {e}")
+        return asdict(workspace)
+
+    def apply_workspace(self, workspace_data: dict) -> None:
+        project = self.project_service.current_project
+        if not project:
+            return
+        for key in ("active_page", "active_tab", "selected_segment_id", "playback_position_ms", "subtitle_preview_enabled", "splitter_sizes"):
+            if key in workspace_data:
+                setattr(project.state.workspace, key, workspace_data[key])
+        self.restore_workspace()
 
 
     def restore_workspace(self) -> None:

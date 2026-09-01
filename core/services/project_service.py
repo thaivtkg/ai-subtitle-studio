@@ -138,6 +138,7 @@ class ProjectService:
         atomic_save_json(manifest_path, self.artifact_store.to_dict(self.project_dir))
         
         self.current_project.state.dirty = False
+        return True
 
     def open_project(self, project_dir: str) -> Project:
         """Đọc và khôi phục Project từ thư mục"""
