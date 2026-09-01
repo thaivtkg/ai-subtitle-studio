@@ -9,18 +9,18 @@
 
 Sprint 12 restores and strengthens contextual transcription while adding secure URL-based video import without creating a second media-processing pipeline.
 
-The sprint introduces two coordinated capabilities:
+Two coordinated capabilities are introduced:
 
-1. **Contextual Transcription** — project-owned Context + Glossary data is compiled deterministically into a bounded Whisper `initial_prompt` for each new generation transaction.
-2. **Media Import from URL** — external URLs are resolved/downloaded into validated local project-owned media first; only then are the existing Project, VideoPlayer, Timing Draft, Full Subtitle, Recovery, and Artifact workflows reused.
+1. **Contextual Transcription** — Project-owned Context + Glossary is compiled deterministically into a bounded Whisper `initial_prompt` for each new generation transaction.
+2. **Media Import from URL** — external URLs are resolved/downloaded into validated local media first; only then are existing Project, Queue, VideoPlayer, Timing Draft, Full Subtitle, Recovery, and Artifact workflows reused.
 
-The central rules are:
+Core rules:
 
 > Audio remains the source of truth. Context only biases transcription.
 
-> URLs are import sources, never canonical project media. Canonical media is always a validated local file.
+> URLs are import sources, never canonical media identities. Canonical media is always a validated local file.
 
-> Failed or cancelled URL import must leave zero Project side effects.
+> Failed or cancelled URL import must leave zero canonical Project side effects.
 
 ---
 
@@ -30,18 +30,17 @@ Sprint 12 does **not** include:
 
 - Local LLM post-processing or translation.
 - Rewriting subtitle text according to lore/style.
-- Replacing the source video of an existing project.
+- Replacing the source video of an existing Project.
 - Playlist/batch playlist download.
 - Livestream recording.
 - DRM bypass.
 - Authentication/cookies UI.
-- Browser-cookie extraction.
-- Credential storage.
+- Browser-cookie extraction or credential storage.
 - Downloading remote subtitle tracks.
 - Direct URL playback in VideoPlayer.
 - Direct URL transcription in Whisper.
 - A second URL-specific Timing/ASR pipeline.
-- Arbitrary yt-dlp command arguments or user-defined postprocessors.
+- Arbitrary yt-dlp arguments, output templates, custom downloaders, or shell postprocessors.
 - Media transcoding solely for import compatibility.
 - A chip/tag-heavy glossary editor.
 
@@ -49,18 +48,18 @@ Sprint 12 does **not** include:
 
 # 3. Existing Architecture Constraints
 
-Sprint 12 extends the existing architecture rather than replacing it:
+Sprint 12 extends current boundaries:
 
-- `ProjectService` owns canonical Project lifecycle and project persistence.
-- `Project.source.path` and source fingerprint remain the canonical media identity.
-- `QueueManager.add_video()` accepts existing local filesystem paths.
-- `SubtitleGenerationRequest.video_path` remains a local file path.
-- `FasterWhisperService` consumes local media through FFmpeg batch extraction.
-- Timing Draft and Full Subtitle already share existing project/source workflows.
-- `RevisionTracker` remains the source of truth for working-state dirtiness.
+- `ProjectService` owns canonical Project lifecycle/persistence.
+- `Project.source.path` + fingerprint remain canonical media identity.
+- `QueueManager.add_video()` receives existing local filesystem paths.
+- `SubtitleGenerationRequest.video_path` remains local-path-only.
+- `FasterWhisperService` consumes local media through the existing FFmpeg batch-extraction path.
+- Timing Draft and Full Subtitle reuse current project/source workflows.
+- `RevisionTracker` remains dirty-state source of truth.
 - `RecoveryManager` protects unsaved canonical working state.
-- Workers execute; Services own domain transactions; MainWindow orchestrates UI/application workflows.
-- `Gui.py` is already large and must not absorb media downloader or prompt compilation internals.
+- Workers execute; Services own domain transactions; MainWindow orchestrates application/UI flow.
+- `Gui.py` must not absorb downloader, media-probe, or prompt-compilation internals.
 
 No new subtitle domain model is introduced.
 
@@ -68,66 +67,55 @@ No new subtitle domain model is introduced.
 
 # 4. Locked Invariants
 
-## 4.1 Local-media-first invariant
-
-Every imported URL must become a validated local media file before any Project/Queue/Player/Timing/ASR workflow begins.
+## 4.1 Local-media-first
 
 ```text
 URL
 → resolve/download
-→ local staging media
-→ validate media
+→ staging media
+→ media validation
 → atomic finalize
-→ local canonical media
+→ canonical local media
 → existing application pipeline
 ```
 
-Forbidden production APIs include conceptual equivalents of:
+No production equivalents of `load_url_video()`, `generate_from_url()`, or `timing_from_url()` are allowed.
 
-```text
-load_url_video()
-generate_from_url()
-timing_from_url()
-```
-
-## 4.2 No source replacement invariant
-
-Sprint 12 never replaces the source video of an existing Project.
+## 4.2 No source replacement
 
 URL import may only:
 
 - create a **New Project**, or
-- download a local file and **Add to Queue**.
+- create durable local media and **Add to Queue**.
 
-This avoids invalidating existing timing, subtitle artifacts, source fingerprints, and recovery provenance.
+It never replaces an existing Project source.
 
-## 4.3 Failed import side-effect invariant
+## 4.3 Zero canonical side effects before finalize
 
-Before a URL import reaches successful atomic finalization:
+Before media finalization succeeds:
 
 ```text
 ProjectService untouched
 QueueManager untouched
 VideoPlayer untouched
 Recovery untouched
+ArtifactStore untouched
 ```
 
-A failed/cancelled import may create staging files/directories only. Those staging artifacts must be cleaned.
+Only staging directories/files may exist.
 
-## 4.4 Context domain invariant
+## 4.4 Context domain data
 
-Project persistence stores only user-authored domain data:
+Project persistence stores only:
 
 ```text
-context
-glossary[]
+context: str
+glossary: list[str]
 ```
 
-Project persistence never stores model-specific compiled prompt text.
+Compiled/model-specific prompt text is never Project metadata.
 
-## 4.5 Derived prompt invariant
-
-`prompt_context` is derived per **new generation transaction** by `PromptContextBuilder`.
+## 4.5 Derived immutable generation prompt
 
 ```text
 Project.transcription_context
@@ -136,104 +124,56 @@ Project.transcription_context
 → SubtitleGenerationRequest.prompt_context
 ```
 
-The compiled prompt is immutable for the lifetime of that generation request/checkpoint.
+Once a generation transaction starts, its compiled prompt is immutable and is preserved by checkpoint/resume.
 
-## 4.6 Resume prompt invariant
+## 4.6 Glossary priority
 
-If a generation starts with prompt `P`, then Project Context changes to `P2`, resuming the original generation still uses `P`.
+Within the configured budget:
 
-Only a new generation transaction may use `P2`.
+1. accepted Glossary terms are allocated first in stable order;
+2. remaining budget goes to Context;
+3. Context truncates before accepted Glossary terms;
+4. a Glossary item is never partially cut;
+5. if Glossary alone exceeds budget, deterministic first-N retention applies.
 
-## 4.7 Glossary priority invariant
+## 4.7 Audio truth
 
-Within the configured prompt token budget:
+Context is passed only as Whisper `initial_prompt`; it never becomes an LLM rewrite stage. Timing Draft is VAD-only and does not consume Context.
 
-1. Glossary terms are allocated first.
-2. Remaining budget is used for Context.
-3. Context is truncated before already-accepted glossary items.
-4. A glossary item is never partially cut.
-5. If the glossary alone exceeds budget, deterministic first-N retention is used.
+## 4.8 Recovery coverage
 
-## 4.8 Audio truth invariant
+Unsaved Context/Glossary edits are canonical working-state changes and must:
 
-Context never invents dialogue or rewrites recognized speech.
+- increment one logical external revision;
+- mark the session dirty;
+- be included in recovery snapshots;
+- restore after crash;
+- remain dirty after recovery until explicit Save.
 
-Whisper receives Context only through `initial_prompt`.
-
-No Local LLM is introduced in Sprint 12.
-
-## 4.9 Recovery coverage invariant
-
-Unsaved edits to Context or Glossary are canonical working-state edits and therefore must:
-
-- mark `RevisionTracker` dirty;
-- be eligible for recovery autosave;
-- survive crash restore;
-- remain dirty after restore until explicit Save.
-
-## 4.10 Atomic media invariant
-
-Downloaded media becomes canonical only after:
+## 4.9 Atomic media acceptance
 
 ```text
-download into staging
-→ completed adapter output
-→ MediaProbe validation
-→ os.replace(..., canonical_media_path)
+adapter output in staging
+→ MediaProbe validates
+→ app-controlled os.replace(..., canonical_path)
+→ only now return MediaImportResult
 ```
 
-Partial/fragments created by adapters are implementation details, not the application's durability contract.
+Adapter-specific `.part`, fragments, or merge temporaries are not the application's durability contract.
 
-## 4.11 Worker/service boundary invariant
+## 4.10 Worker/service boundary
 
-`MediaImportWorker` may execute `MediaImportService`, but must not create Projects or mutate Queue/Workspace directly.
+`MediaImportWorker` executes `MediaImportService` only. `MediaImportService` has no dependency on Project, Queue, MainWindow, VideoPlayer, Whisper, Timing, or ArtifactStore.
 
-`MediaImportService` must not depend on:
+## 4.11 Network security boundary
 
-- `ProjectService`
-- `QueueManager`
-- `MainWindow`
-- `VideoPlayer`
-- `FasterWhisperService`
-- `TimingBatchWorker`
-- `ArtifactStore`
+Only `http://` and `https://` are accepted. URL validation must reject local/non-network schemes and must also prevent connections to loopback, link-local, private, multicast, unspecified, and other non-public address ranges unless a future explicit trusted-local-source feature is designed separately.
 
-## 4.12 Security boundary invariant
-
-Only `http://` and `https://` URLs are accepted.
-
-Rejected schemes include:
-
-```text
-file://
-ftp://
-smb://
-data:
-javascript:
-custom schemes
-```
-
-TLS verification remains enabled. External filenames/titles never control filesystem confinement.
+DNS resolution and **every redirect target** must be revalidated so a public-looking hostname cannot redirect or re-resolve into a blocked local/private address.
 
 ---
 
 # 5. Project Schema v2
-
-Sprint 12 upgrades the Project model from schema v1 to v2 by adding project-owned transcription metadata.
-
-```text
-Project
-├── project_id
-├── name
-├── created_at
-├── updated_at
-├── source
-├── transcription_context
-│   ├── context: str
-│   └── glossary: list[str]
-├── state
-└── schema_version = 2
-```
 
 New domain model:
 
@@ -244,22 +184,32 @@ class TranscriptionContext:
     glossary: list[str] = field(default_factory=list)
 ```
 
-`project.json` shape:
+Project shape:
+
+```text
+Project
+├── project_id
+├── name
+├── created_at
+├── updated_at
+├── source
+├── transcription_context
+│   ├── context
+│   └── glossary[]
+├── state
+└── schema_version = 2
+```
+
+`project.json` persists `transcription_context`; `state.json` and `workspace.json` do not.
+
+Example:
 
 ```json
 {
   "schema_version": 2,
   "project_id": "uuid",
   "name": "Example",
-  "created_at": "ISO-8601",
-  "updated_at": "ISO-8601",
-  "source": {
-    "path": "...",
-    "filename": "source.webm",
-    "size_bytes": 0,
-    "modified_at": 0.0,
-    "fingerprint": "..."
-  },
+  "source": {"path": "...", "fingerprint": "..."},
   "transcription_context": {
     "context": "Trận chiến tại Demacia...",
     "glossary": ["Demacia", "Garen", "Lux", "Petricite"]
@@ -267,35 +217,29 @@ class TranscriptionContext:
 }
 ```
 
-`state.json` and `workspace.json` do not own Context/Glossary.
-
 ---
 
 # 6. Project v1 → v2 Migration
 
-Opening a v1 Project with no `transcription_context` yields in-memory defaults:
+Opening a v1 Project with no transcription context produces in-memory defaults:
 
 ```text
 context = ""
 glossary = []
 ```
 
-Opening/migrating does **not** automatically rewrite canonical Project files.
-
-The v2 structure is written only on explicit Project Save.
-
-This preserves the Sprint 11 rule that loading/migrating state in RAM is not an implicit user commit.
+Opening/migrating does **not** rewrite canonical files. The v2 shape is persisted only on explicit Save.
 
 ---
 
 # 7. Glossary Normalization
 
-Before canonical commit, Glossary is normalized deterministically:
+Canonical normalization:
 
-1. trim leading/trailing whitespace;
+1. trim whitespace;
 2. remove empty entries;
-3. deduplicate using `casefold()`;
-4. preserve the first occurrence's visible spelling;
+3. deduplicate by `casefold()`;
+4. keep visible spelling of first occurrence;
 5. preserve stable input order.
 
 Example:
@@ -306,65 +250,44 @@ demacia
  DEMACIA
 ```
 
-becomes:
+becomes exactly one visible entry:
 
 ```text
 Demacia
 ```
 
-No hidden alphabetical sorting is performed.
+No hidden alphabetical sort.
 
 ---
 
 # 8. Context Edit Semantics
 
-Context/Glossary are canonical Project working state.
-
-UI editing follows:
-
 ```text
 user edits
-→ debounced commit or focus-out commit
+→ 300–500 ms debounce or focus-out commit
 → Project.transcription_context updated
 → ProjectService.mark_dirty()
 → RevisionTracker.record_external_change()
 → Recovery autosave eligible
 ```
 
-Recommended debounce window: **300–500 ms**.
+Continuous typing must not increment revision once per keystroke.
 
-The implementation must avoid one revision increment per keystroke during continuous typing.
-
-There is no separate “Save Context” action. `Ctrl+S` remains canonical Project/Draft Save according to current application save routing.
+There is no separate Save Context button. Existing canonical Save/Ctrl+S semantics apply.
 
 ---
 
 # 9. Recovery Schema Extension
 
-`RecoveryWorkingState` is extended to include unsaved transcription context:
+`RecoveryWorkingState` gains:
 
 ```text
-RecoveryWorkingState
-├── existing canonical segments[]
-├── existing workspace_state
-└── transcription_context
-    ├── context
-    └── glossary[]
+transcription_context
+├── context
+└── glossary[]
 ```
 
-Recovery snapshot behavior:
-
-```text
-edit Context/Glossary
-→ dirty revision
-→ recovery timer
-→ snapshot includes transcription_context
-→ crash
-→ restore Context/Glossary
-→ recovered_dirty_baseline = true
-```
-
-Explicit Save clears the recovered dirty baseline under existing Sprint 11 semantics.
+Recovery snapshots continue to contain canonical working state only; compiled prompt strings are not separately duplicated into recovery state unless they already belong to an active generation checkpoint owned by the generation subsystem.
 
 ---
 
@@ -378,7 +301,7 @@ core/transcription/
 └── token_counter.py
 ```
 
-Primary contract:
+Contract:
 
 ```python
 PromptContextBuilder.build(
@@ -387,79 +310,57 @@ PromptContextBuilder.build(
 ) -> CompiledPromptContext
 ```
 
-The Builder receives a token-counter dependency implementing a small protocol such as:
+A token-counter dependency is injected through a small protocol:
 
 ```python
 class TokenCounterProtocol(Protocol):
     def count(self, text: str) -> int: ...
 ```
 
-The Project model never hardcodes model token limits.
-
-Default production budget for Sprint 12:
-
-```text
-DEFAULT_PROMPT_BUDGET = 180
-```
-
-This is a conservative runtime policy, not a persisted domain invariant.
+`DEFAULT_PROMPT_BUDGET = 180` is a conservative runtime policy, not persisted Project data and not a claim that every Whisper/model version has an identical hard limit.
 
 ---
 
 # 11. CompiledPromptContext
 
-Recommended immutable output model:
+Recommended immutable model:
 
 ```text
 CompiledPromptContext
-├── text: str
-├── token_count: int
-├── max_tokens: int
-├── glossary_items_used: int
-├── glossary_items_dropped: int
-├── context_truncated: bool
-└── truncated: bool
+├── text
+├── token_count
+├── max_tokens
+├── glossary_items_used
+├── glossary_items_dropped
+├── context_truncated
+└── truncated
 ```
 
-The UI may use this model for diagnostics, but users cannot directly edit `CompiledPromptContext.text`.
+The UI may display diagnostics but cannot edit compiled text directly.
 
 ---
 
 # 12. Prompt Compilation Algorithm
 
-Conceptual deterministic algorithm:
-
 ```text
 normalize glossary
-→ add glossary terms in stable order while they fit
-→ reserve all accepted glossary terms
-→ use remaining budget for Context
-→ truncate Context at semantic boundary
-→ return compiled text + diagnostics
+→ append terms in stable order while each complete item fits
+→ reserve accepted terminology
+→ append Context using remaining budget
+→ truncate Context at sentence boundary if possible
+→ else whitespace boundary
+→ hard boundary only as last resort
+→ return text + diagnostics
 ```
 
-Recommended compiled shape:
+Recommended representation:
 
 ```text
 Terminology: Demacia, Noxus, Garen, Lux, Petricite.
 Context: Trận chiến tại Demacia. Garen đang nói chuyện với Lux.
 ```
 
-Context truncation preference:
-
-```text
-sentence boundary
-→ whitespace boundary
-→ final hard boundary only if unavoidable
-```
-
-No accepted glossary term is split.
-
-If no Context and no Glossary exist:
-
-```text
-CompiledPromptContext.text == ""
-```
+If both inputs are empty, compiled text is `""`.
 
 ---
 
@@ -471,47 +372,40 @@ CompiledPromptContext.text == ""
 prompt_context: str = ""
 ```
 
-The request contains only the **compiled prompt snapshot**, not raw Project Context/Glossary.
-
-Generation flow:
+New generation:
 
 ```text
-Generate clicked
-→ Project.transcription_context
-→ PromptContextBuilder.build(...)
-→ SubtitleGenerationRequest(prompt_context=compiled.text)
-→ SubtitleGenerationService
-→ FasterWhisperService.transcribe_batch()
-→ model.transcribe(..., initial_prompt=request.prompt_context)
+Generate
+→ read Project.transcription_context
+→ compile once
+→ put compiled text into request
+→ generation/checkpoint owns that request snapshot
+→ FasterWhisperService
+→ model.transcribe(..., initial_prompt=request.prompt_context or None)
 ```
 
-If the prompt is empty, `initial_prompt` should be omitted or passed as `None` according to the Faster-Whisper API contract.
-
-Timing Draft does not consume transcription Context because it is VAD-only.
+The request does not carry raw Context/Glossary.
 
 ---
 
-# 14. Generation Checkpoint/Resume
-
-Checkpoint serialization must preserve the original request's `prompt_context` so that resume remains transactionally deterministic.
+# 14. Checkpoint / Resume Transaction
 
 ```text
-start generation using P
-→ checkpoint stores request containing P
-→ user edits Project Context to P2
-→ resume old checkpoint
-→ continue using P
+start with compiled prompt P
+→ checkpoint persists request containing P
+→ Project context changes to P2
+→ Resume old run
+→ uses P
+→ only a new run compiles/uses P2
 ```
 
-A newly started generation after the edit compiles and uses P2.
+This invariant is mandatory for deterministic batch output and debugging.
 
 ---
 
 # 15. Context UI/UX
 
-Context belongs to the active Project and therefore appears in the Right Inspector rather than Global Settings.
-
-Recommended tab/panel:
+Context belongs to the active Project and appears in the Right Inspector:
 
 ```text
 Right Inspector
@@ -520,7 +414,7 @@ Right Inspector
 └── Context
 ```
 
-Context panel contains:
+Context panel:
 
 ```text
 Transcription Context
@@ -536,46 +430,36 @@ Prompt usage
 ✓ All terminology included
 ```
 
-If truncated:
+When necessary:
 
 ```text
 ⚠ 8/14 glossary terms included
 ⚠ Context truncated
 ```
 
-Optional read-only action:
+Optional `Preview compiled prompt` is read-only.
 
-```text
-Preview compiled prompt
-```
-
-The compiled prompt is never user-editable.
+`SubtitleGenerationPanel` only shows compact Context status and an `Edit Context` navigation action. It never duplicates the editor.
 
 ---
 
-# 16. Generate Panel Integration
-
-`SubtitleGenerationPanel` does not duplicate Context/Glossary editors.
-
-It may show compact diagnostics:
+# 16. Media Import Architecture
 
 ```text
-Context
-✓ 6 glossary terms
-✓ Context enabled
-~72/180 prompt tokens
-[Edit Context]
+UI
+→ MediaImportWorker
+→ MediaImportService
+→ URLClassifier
+→ DirectHTTPAdapter / YtDlpAdapter
+→ staging output
+→ MediaProbe
+→ atomic finalize
+→ MediaImportResult
+→ MainWindow orchestration
+→ ProjectService or QueueManager
 ```
 
-Full Subtitle uses Context.
-
-Timing Draft explicitly does not.
-
----
-
-# 17. Media Import Architecture
-
-New subsystem:
+New core structure:
 
 ```text
 core/media_import/
@@ -590,27 +474,9 @@ core/media_import/
     └── direct_http_adapter.py
 ```
 
-Execution flow:
-
-```text
-UI
-→ MediaImportWorker
-→ MediaImportService
-→ URLClassifier
-→ DownloaderAdapter
-→ staging output
-→ MediaProbe
-→ atomic finalize
-→ MediaImportResult
-→ MainWindow orchestration
-→ ProjectService / QueueManager
-```
-
-`MediaImportService` ends responsibility when it returns a valid finalized local file.
-
 ---
 
-# 18. MediaImportResult
+# 17. MediaImportResult / Progress
 
 Recommended immutable result:
 
@@ -624,24 +490,9 @@ MediaImportResult
 └── metadata
 ```
 
-Metadata may include:
+Metadata may include duration, width, height, codec, container, and fps.
 
-```text
-duration_ms
-width
-height
-codec
-container
-fps
-```
-
-No Project object is returned by `MediaImportService`.
-
----
-
-# 19. Media Import Progress Contract
-
-Progress model stages:
+Progress stages:
 
 ```text
 RESOLVING
@@ -650,7 +501,7 @@ VALIDATING
 FINALIZING
 ```
 
-Recommended progress payload:
+Progress payload:
 
 ```text
 MediaImportProgress
@@ -662,107 +513,62 @@ MediaImportProgress
 └── percent | None
 ```
 
-`total_bytes=None` and `percent=None` are valid for chunked/unknown-length sources.
-
-Cancellation is not an error.
+Unknown total size is a valid indeterminate-progress case.
 
 ---
 
-# 20. Media Import Worker Boundary
-
-New worker:
-
-```text
-workers/media_import_worker.py
-```
-
-Responsibilities:
-
-- execute `MediaImportService` outside the Qt UI thread;
-- bridge progress/status/cancel/finished/error signals;
-- never mutate Project, Queue, Workspace, VideoPlayer, or artifacts.
-
-MainWindow remains the orchestration layer that handles `MediaImportResult`.
-
----
-
-# 21. URL Adapter Selection Policy
-
-Supported strategies:
-
-1. `DirectHTTPAdapter`
-2. `YtDlpAdapter`
-
-Routing policy:
+# 18. Adapter Selection Policy
 
 ```text
 URL
+→ validate public HTTP(S) target
 → classify
 
 obvious direct media?
 ├─ yes
 │  → DirectHTTPAdapter
-│  → if genuine HTTP/network/media failure: STOP
-│  → if response is actually non-media/page: yt-dlp may be attempted
+│  → genuine HTTP/network/media failure: STOP
+│  → response is actually page/non-media: yt-dlp may be tried
 │
 └─ no
    → YtDlpAdapter
-   → if UnsupportedURL / no extractor: DirectHTTP fallback allowed
-   → auth/network/geo/DRM/etc.: propagate original error
+   → UnsupportedURL/no extractor: DirectHTTP fallback allowed
+   → auth/network/geo/DRM/etc.: propagate classified original failure
 ```
 
-DirectHTTP must **not** become a blind fallback for all yt-dlp failures.
+DirectHTTP is never a blind fallback for arbitrary yt-dlp failures.
 
-Possible direct-media hints include:
-
-```text
-.mp4
-.webm
-.mov
-.mkv
-.m4v
-Content-Type: video/*
-```
-
-These are routing hints only, not final trust.
+Extension/Content-Type are routing hints, not final media trust.
 
 ---
 
-# 22. DirectHTTPAdapter
+# 19. DirectHTTPAdapter
 
-Sprint 12 uses synchronous streaming via `requests` inside the media worker thread rather than adding an asyncio runtime.
-
-Conceptual implementation:
-
-```python
-with session.get(url, stream=True, timeout=...) as response:
-    for chunk in response.iter_content(chunk_size=...):
-        cancellation_token.throw_if_cancelled()
-        write(chunk)
-        report_progress(...)
-```
+Sprint 12 uses `requests` streaming in the worker thread rather than adding an asyncio runtime.
 
 Requirements:
 
-- streaming writes; never buffer full media in RAM;
-- finite connect/read timeouts;
+- stream chunks to disk;
+- never load whole media into RAM;
+- finite connect/read timeout;
 - finite redirect count;
-- TLS certificate verification enabled;
+- TLS verification ON;
+- URL/IP policy rechecked after DNS resolution and redirects;
 - cancellation checked during streaming;
-- proper file/socket close before cleanup;
-- HTTP error mapping into the domain error taxonomy.
+- HTTP failures mapped into the domain taxonomy;
+- no Authorization/cookie injection from browser state.
 
 ---
 
-# 23. YtDlpAdapter
+# 20. YtDlpAdapter
 
-Sprint 12 integrates **yt-dlp through its Python API**, not shell CLI concatenation.
+Use yt-dlp **Python API**, not shell command concatenation:
 
 ```text
 yt_dlp.YoutubeDL(options)
 ```
 
-Required policy:
+Locked policy:
 
 ```text
 noplaylist = True
@@ -770,26 +576,44 @@ single video only
 no cookies
 no browser cookie extraction
 no credentials
-no custom downloader executable
-no arbitrary output template from user
+no arbitrary user output template
+no custom external downloader
 no arbitrary postprocessor command
 ```
 
-Recommended format policy:
+Recommended format:
 
 ```text
 bestvideo*+bestaudio/best
 ```
 
-FFmpeg may be used by yt-dlp to merge streams.
+FFmpeg may merge streams. Sprint 12 does not mandate transcoding every source to MP4.
 
-Sprint 12 does not require transcoding every source into MP4.
+The final resolved media/network requests used by the adapter must remain subject to the same public-network security policy; redirects/resolved endpoints must not be allowed to pivot into blocked local/private destinations.
 
 ---
 
-# 24. Project-Owned Media Storage
+# 21. Media Validation Gate
 
-For URL-created Projects, canonical downloaded media lives inside the intended Project bundle:
+Before finalization, `MediaProbe` requires:
+
+```text
+file exists
+size > 0
+ffprobe succeeds
+has video stream
+duration > 0
+```
+
+Audio-only results fail with `NO_VIDEO_STREAM`.
+
+The final trust boundary is ffprobe/media structure, not extension or HTTP Content-Type.
+
+---
+
+# 22. Project-Owned Media Storage
+
+For **New Project from URL**:
 
 ```text
 <Project>.ai-subtitle/
@@ -801,131 +625,99 @@ For URL-created Projects, canonical downloaded media lives inside the intended P
 └── artifacts/
 ```
 
-Import staging:
+During import only staging exists:
 
 ```text
-<Project>.ai-subtitle/
-└── media/
-    └── .staging/
-        └── <download-id>/
-            ├── *.partial
-            ├── *.part
-            └── adapter fragments/temp files
+<Project>.ai-subtitle/media/.staging/<download-id>/...
 ```
 
-Only app-controlled finalization creates:
-
-```text
-media/source.<ext>
-```
+Canonical Project files are not created until media has been successfully finalized.
 
 ---
 
-# 25. Precomputed Bundle Path Rule
-
-For **New Project from URL**, the application must not create a canonical Project before download success.
-
-Flow:
+# 23. Precomputed Bundle Path Rule
 
 ```text
-user chooses project root + name
-→ derive intended bundle path
-→ create staging directory only
+user chooses root + Project name
+→ derive intended <Project>.ai-subtitle path
+→ create media/.staging/<id> only
 → download
 → validate
-→ atomic finalize media
+→ atomic media finalize
 → ProjectService.create_project(...)
 → recovery session
-→ player/workspace
+→ existing Player/Workspace
 ```
 
-On failure/cancel:
-
-```text
-remove staging session
-remove empty staging/media/bundle directories where safe
-```
-
-There must be no:
-
-```text
-project.json
-state.json
-artifact manifest
-active recovery session
-```
-
-from a failed URL import.
+Failure/cancel removes staging and empty directories where safe. It must leave no `project.json`, `state.json`, Artifact manifest, or Recovery session.
 
 ---
 
-# 26. Atomic Finalization
+# 24. Queue-Only URL Storage
 
-The application's atomic durability boundary is independent of adapter-specific temporary formats.
+To remove lifecycle ambiguity, **Add to Queue from URL uses a durable app-owned import cache**, not `%TEMP%` and not a fake Project bundle.
+
+`RuntimePaths` gains an app-data location conceptually equivalent to:
+
+```text
+%LOCALAPPDATA%/AI Subtitle Studio/media_imports/
+└── <import-id>/
+    ├── .staging/
+    └── source.<validated-ext>
+```
+
+Exact OS path construction remains owned by `RuntimePaths`; no media-import component hardcodes `%LOCALAPPDATA%`.
+
+Queue-only workflow:
+
+```text
+URL
+→ RuntimePaths media-import staging
+→ download + validate + atomic finalize
+→ QueueManager.add_video(finalized_local_path)
+```
+
+Lifecycle rule for Sprint 12:
+
+- a successfully finalized queue-only media file remains durable for the app session and future Project creation/use;
+- removing a Queue item does **not** automatically delete the underlying file in Sprint 12 because ownership may already have escaped to downstream workflows;
+- automatic cache garbage collection is a non-goal for Sprint 12 and may be designed later.
+
+This intentionally prefers data safety over aggressive disk cleanup.
+
+---
+
+# 25. Atomic Finalization
+
+For Project media and queue-only media alike:
 
 ```text
 adapter completes staged media
-→ MediaProbe validates staged media
-→ determine safe canonical extension
-→ os.replace(staged_completed_media, media/source.ext)
-→ fsync parent directory where practical/supported
-→ emit MediaImportResult
+→ MediaProbe validates
+→ choose app-controlled canonical filename/extension
+→ os.replace(staged_completed_media, canonical_path)
+→ fsync parent directory where supported/practical
+→ return MediaImportResult
 ```
 
-If `os.replace` fails:
-
-- no Project is created;
-- canonical target is not considered valid;
-- staging is cleaned or left only according to safe failure-cleanup policy;
-- error is surfaced as `FINALIZE_FAILED`.
+If `os.replace` fails, no canonical media is accepted and no downstream Project/Queue mutation occurs.
 
 ---
 
-# 27. Media Validation Gate
-
-Before canonical finalize, `MediaProbe` must verify at minimum:
-
-```text
-file exists
-size > 0
-ffprobe succeeds
-has video stream
-duration > 0
-```
-
-Optional extracted metadata:
-
-```text
-duration
-resolution
-codec
-container
-fps
-```
-
-Neither file extension nor HTTP Content-Type is the final trust boundary.
-
-A downloaded audio-only result fails with `NO_VIDEO_STREAM`.
-
----
-
-# 28. New Project Import Workflow
-
-Exact application flow:
+# 26. New Project Import Workflow
 
 ```text
 Import Video from URL
-→ validate URL
-→ precompute bundle/media staging path
-→ MediaImportWorker.start()
-→ MediaImportService.import_url()
+→ URL/public-network validation
+→ precompute Project bundle staging path
+→ MediaImportWorker
 → RESOLVING
 → DOWNLOADING
 → VALIDATING
 → FINALIZING
 → MediaImportResult(local_path)
-→ ProjectService.create_project(bundle, name, local_path)
-→ create/switch Recovery session
+→ ProjectService.create_project(...)
+→ switch/create Recovery session
 → existing metadata loader
 → existing VideoPlayer
 → existing Workspace
@@ -933,194 +725,197 @@ Import Video from URL
 → Full Subtitle available
 ```
 
-No URL-specific Project variant exists.
+No URL-specific Project type exists.
 
 ---
 
-# 29. Add-to-Queue Import Workflow
-
-Exact flow:
+# 27. Add-to-Queue Workflow
 
 ```text
 Import Video from URL
 → choose Add to Queue
-→ choose/derive safe local target storage
+→ RuntimePaths media_imports/<id> staging
 → MediaImportWorker
 → MediaImportResult(local_path)
 → QueueManager.add_video(local_path)
-→ existing queue metadata/player workflow
+→ existing Queue metadata/player workflow
 ```
 
-`QueueManager` contract remains local-path-only.
-
-The implementation plan must choose a durable app-controlled location for URL-downloaded queue-only files that does not pretend they belong to an existing Project. This location must still use staging + atomic finalize and must not be `%TEMP%` if queue persistence/session lifetime requires the file to survive normal temp cleanup.
+`QueueManager` remains local-path-only.
 
 ---
 
-# 30. URL Import UI
+# 28. URL Import UI
 
-Entry points may include both:
-
-```text
-File
-└── Import
-    ├── Video File...
-    └── Video from URL...
-```
-
-and Queue actions:
-
-```text
-[ + Video ] [ URL ]
-```
-
-Both URL entry points use one dialog implementation:
+Shared dialog:
 
 ```text
 ui/dialogs/media_import_dialog.py
 ```
 
-No duplicate import workflow is permitted.
+Entry points may include:
+
+```text
+File > Import > Video from URL...
+Queue > URL
+```
+
+Both open the same implementation.
+
+Initial state:
+
+```text
+URL [................................]
+Import as:
+● New Project
+○ Add to Queue
+
+Project Location [Browse...]   # New Project only
+Project Name     [...]         # New Project only
+
+[Cancel] [Import]
+```
+
+Running states:
+
+```text
+RESOLVING → DOWNLOADING → VALIDATING → FINALIZING → SUCCEEDED
+```
+
+Failure goes to `FAILED`; cancel goes through `CANCELLING → CANCELLED`.
+
+Closing a running dialog triggers cooperative cancellation/cleanup instead of abandoning a worker.
 
 ---
 
-# 31. Media Import Dialog State Machine
+# 29. MainWindow / Module Boundaries
 
-Required states:
-
-```text
-IDLE
-→ RESOLVING
-→ DOWNLOADING
-→ VALIDATING
-→ FINALIZING
-→ SUCCEEDED
-```
-
-Failure:
+New UI/worker files:
 
 ```text
-any running stage → FAILED
+ui/components/transcription_context_panel.py
+ui/dialogs/media_import_dialog.py
+workers/media_import_worker.py
 ```
 
-Cancellation:
-
-```text
-running stage → CANCELLING → CANCELLED
-```
-
-While running:
-
-- Import cannot be started again;
-- Cancel remains available where safely cooperative;
-- closing the dialog triggers cancellation/cleanup rather than abandoning a live worker.
-
-Unknown download size uses an indeterminate progress bar plus downloaded byte count where available.
-
----
-
-# 32. Context + Import UI Module Boundaries
-
-Recommended new UI files:
-
-```text
-ui/
-├── components/
-│   └── transcription_context_panel.py
-├── dialogs/
-│   └── media_import_dialog.py
-├── subtitle_generation_panel.py       # context status only
-└── Gui.py                             # orchestration only
-```
-
-`Gui.py` may:
+MainWindow may:
 
 ```text
 open dialog
 start worker
-receive MediaImportResult
-invoke ProjectService / QueueManager
+receive result
+call ProjectService / QueueManager
 switch active workspace
 ```
 
-`Gui.py` may not own:
+MainWindow may not own:
 
 ```text
 HTTP requests
-yt-dlp options
+yt-dlp configuration
 ffprobe invocation
 staging mechanics
-prompt truncation/token algorithms
+prompt token/truncation internals
 ```
+
+This is a targeted responsibility cleanup, not a broad unrelated refactor.
 
 ---
 
-# 33. Proposed Directory Structure
+# 30. Security — URL, DNS, Redirects, SSRF
+
+Accepted schemes:
 
 ```text
-core/
-├── project/
-│   ├── project.py                         MODIFY
-│   ├── project_state.py                   existing
-│   └── transcription_context.py           NEW
-│
-├── transcription/
-│   ├── __init__.py                        NEW
-│   ├── prompt_context_builder.py          NEW
-│   └── token_counter.py                   NEW
-│
-├── media_import/
-│   ├── __init__.py                        NEW
-│   ├── media_import_service.py            NEW
-│   ├── media_import_models.py             NEW
-│   ├── media_import_errors.py             NEW
-│   ├── media_probe.py                     NEW
-│   ├── url_classifier.py                  NEW
-│   └── adapters/
-│       ├── __init__.py                    NEW
-│       ├── downloader_adapter.py           NEW
-│       ├── yt_dlp_adapter.py               NEW
-│       └── direct_http_adapter.py          NEW
-│
-├── subtitle_generation/
-│   ├── subtitle_generation_request.py      MODIFY
-│   ├── faster_whisper_service.py           MODIFY
-│   └── checkpoint-related serialization    MODIFY as required
-│
-└── recovery/
-    ├── recovery_models.py                  MODIFY
-    ├── recovery_validator.py               MODIFY
-    └── recovery_manager.py                 minimal integration only
-
-ui/
-├── components/
-│   └── transcription_context_panel.py      NEW
-├── dialogs/
-│   └── media_import_dialog.py              NEW
-├── subtitle_generation_panel.py            MODIFY
-└── Gui.py                                  orchestration changes only
-
-workers/
-└── media_import_worker.py                  NEW
-
-tests/
-├── test_transcription_context.py           NEW
-├── test_prompt_context_builder.py          NEW
-├── test_contextual_whisper.py              NEW
-├── test_media_import_service.py            NEW
-├── test_media_import_adapters.py           NEW
-├── test_media_import_ui.py                 NEW
-└── test_sprint12_end_to_end.py              NEW
+http
+https
 ```
+
+Rejected before adapters:
+
+```text
+file
+ftp
+smb
+data
+javascript
+custom schemes
+```
+
+For HTTP(S), the importer must reject targets resolving to blocked address classes, including at minimum:
+
+```text
+loopback
+private RFC1918 / equivalent IPv6 private ranges
+link-local
+unspecified
+multicast
+reserved/non-public ranges where appropriate
+```
+
+Requirements:
+
+1. resolve hostname before connection where the adapter permits;
+2. validate all resolved candidate addresses;
+3. validate every redirect destination;
+4. protect against DNS rebinding/time-of-check-time-of-use by validating the actual connected/resolved target as close to connection time as the HTTP/adapter API allows;
+5. never weaken TLS verification.
+
+This rule applies conceptually to both DirectHTTP and yt-dlp-mediated network access.
+
+---
+
+# 31. Security — Path Confinement
+
+Never trust remote title, URL basename, Content-Disposition, or extractor title as a filesystem path.
+
+Canonical filenames are app-controlled, e.g.:
+
+```text
+source.mp4
+source.webm
+source.mkv
+```
+
+Before write/finalize:
+
+```text
+resolved output path MUST be a descendant of the configured target directory
+```
+
+Any traversal/confinement violation is a security failure.
+
+---
+
+# 32. Security — Shell Execution
+
+FFmpeg/ffprobe use argument arrays and `shell=False`.
+
+Forbidden:
+
+```python
+subprocess.run(f"ffprobe {user_input}", shell=True)
+```
+
+The URL is never interpolated into shell commands.
+
+---
+
+# 33. Security — Logs
+
+Logs may contain adapter, stage, redacted hostname/path, HTTP status, and exception type.
+
+Logs must not contain cookies, Authorization headers, credentials, browser session data, or full signed/auth query strings.
+
+Default URL logging removes query and fragment components.
 
 ---
 
 # 34. Error Taxonomy
 
-Recommended domain error codes:
-
 ```text
 INVALID_URL
+UNSAFE_URL
 UNSUPPORTED_URL
 NETWORK_ERROR
 TIMEOUT
@@ -1137,528 +932,291 @@ FINALIZE_FAILED
 UNKNOWN
 ```
 
-Errors are mapped to user-friendly UI messages while technical diagnostics stay in logs.
+`UNSAFE_URL` covers blocked schemes, private/local address targets, unsafe redirects, and related network-boundary violations.
 
-Cancellation is not displayed as an error dialog.
-
----
-
-# 35. Security — Protocol & Redirects
-
-Input accepts only HTTP(S).
-
-DirectHTTP requirements:
-
-- TLS verification ON;
-- finite redirects;
-- every redirect target revalidated as allowed network scheme;
-- finite connection/read timeouts;
-- no silent fallback to insecure certificate behavior.
-
-No local filesystem/custom protocol URL is passed into download adapters.
+Cancellation is not shown as an error dialog.
 
 ---
 
-# 36. Security — Path Confinement
+# 35. Resource Protection / Cancellation
 
-Never trust remote metadata as a filesystem path:
+Downloads stream to disk; no whole-media buffering.
 
-```text
-video title
-URL basename
-Content-Disposition filename
-yt-dlp extractor title
-```
+If expected size is known, available disk space may be preflighted. Runtime `ENOSPC` maps to `DISK_FULL`.
 
-Canonical target is app-generated, e.g.:
+No arbitrary fixed video-size cap is imposed in Sprint 12.
 
-```text
-source.mp4
-source.webm
-source.mkv
-```
-
-or a sanitized app-generated name.
-
-Before any write/finalize:
-
-```text
-resolved target path MUST be descendant of target_media_dir
-```
-
-Any confinement violation is treated as a security failure.
-
----
-
-# 37. Security — Shell Execution
-
-FFmpeg/ffprobe invocation uses argument arrays and `shell=False`.
-
-Forbidden:
-
-```python
-subprocess.run(f"ffprobe {user_input}", shell=True)
-```
-
-Required conceptual form:
-
-```python
-subprocess.run([
-    ffprobe_path,
-    "-v", "error",
-    ...,
-    staged_media_path,
-], shell=False)
-```
-
-The original URL is never interpolated into a shell command.
-
----
-
-# 38. Security — yt-dlp Capability Boundary
-
-Sprint 12 must not enable:
-
-- user-supplied arbitrary yt-dlp CLI switches;
-- custom external downloader executable;
-- custom postprocessor shell commands;
-- arbitrary output templates supplied by users;
-- automatic browser-cookie extraction;
-- credential harvesting/storage;
-- DRM bypass behavior.
-
-Authentication/private/DRM-protected sources return an explicit unsupported/auth/protected error.
-
----
-
-# 39. Security — Logs & Sensitive URLs
-
-Logs may contain:
-
-```text
-adapter name
-stage
-URL hostname/path in redacted form
-HTTP status
-exception type
-```
-
-Logs must not contain:
-
-```text
-cookies
-Authorization headers
-credentials
-full signed/auth URL query strings
-browser session data
-```
-
-Default logging should redact query and fragment components from external URLs unless an explicitly safe diagnostic whitelist is later introduced.
-
----
-
-# 40. Resource Protection
-
-Downloads are streamed to disk.
-
-No complete media file is loaded into memory.
-
-When `Content-Length`/estimated size is available, the importer may preflight available disk space.
-
-Runtime write failures such as `ENOSPC` map to `DISK_FULL` and trigger staging cleanup.
-
-Sprint 12 does not impose an arbitrary fixed maximum media size.
-
----
-
-# 41. Cancellation Semantics
-
-Cancellation is cooperative:
+Cancellation:
 
 ```text
 UI Cancel
-→ worker cancellation token/flag
-→ adapter observes cancellation
-→ stop network/yt-dlp operation safely
-→ close handles/process resources
+→ worker cancellation token
+→ adapter stops cooperatively
+→ close handles/resources
 → delete staging session
 → emit cancelled
 ```
 
-No Project, Queue, Player, Recovery, or Artifact mutation occurs as a result of cancellation.
+No downstream canonical mutation occurs.
 
 ---
 
-# 42. Acceptance Tests — Contextual Transcription
-
-## TC107 — Project v1 migration
+# 36. Proposed Directory Structure
 
 ```text
-load Project v1
-→ empty TranscriptionContext in RAM
-→ no canonical file rewrite
-```
+core/
+├── project/
+│   ├── project.py                         MODIFY
+│   └── transcription_context.py           NEW
+├── transcription/
+│   ├── __init__.py                        NEW
+│   ├── prompt_context_builder.py          NEW
+│   └── token_counter.py                   NEW
+├── media_import/
+│   ├── __init__.py                        NEW
+│   ├── media_import_service.py            NEW
+│   ├── media_import_models.py             NEW
+│   ├── media_import_errors.py             NEW
+│   ├── media_probe.py                     NEW
+│   ├── url_classifier.py                  NEW
+│   └── adapters/
+│       ├── __init__.py                    NEW
+│       ├── downloader_adapter.py           NEW
+│       ├── yt_dlp_adapter.py               NEW
+│       └── direct_http_adapter.py          NEW
+├── runtime/
+│   └── runtime_paths.py                    MODIFY for queue-only import cache
+├── subtitle_generation/
+│   ├── subtitle_generation_request.py      MODIFY
+│   ├── faster_whisper_service.py           MODIFY
+│   └── checkpoint serialization            MODIFY as required
+└── recovery/
+    ├── recovery_models.py                  MODIFY
+    └── recovery_validator.py               MODIFY
 
-## TC108 — Project v2 round-trip
+ui/
+├── components/
+│   └── transcription_context_panel.py      NEW
+├── dialogs/
+│   └── media_import_dialog.py              NEW
+├── subtitle_generation_panel.py            MODIFY
+└── Gui.py                                  orchestration only
 
-```text
-save/open Project v2
-→ context + glossary preserved exactly after normalization rules
-```
+workers/
+└── media_import_worker.py                  NEW
 
-## TC109 — Glossary priority
-
-```text
-prompt exceeds budget
-→ Context truncates before accepted glossary items
-```
-
-## TC110 — Glossary over budget
-
-```text
-glossary alone exceeds budget
-→ deterministic first-N retention
-→ no partial glossary item
-```
-
-## TC111 — Empty context
-
-```text
-Context + Glossary empty
-→ prompt_context == ""
-→ FasterWhisper receives no effective initial prompt
-```
-
-## TC112 — Context passed to Whisper
-
-```text
-Context/Glossary present
-→ exact compiled request.prompt_context
-→ exact initial_prompt forwarded to FasterWhisper
-```
-
-## TC113 — Resume uses immutable original prompt
-
-```text
-start generation with P
-→ checkpoint
-→ edit Project Context to P2
-→ resume
-→ still uses P
-```
-
-## TC114 — Context edit participates in revision/recovery
-
-```text
-edit context/glossary
-→ one logical external revision transition
-→ dirty true
-→ recovery snapshot includes unsaved context
-```
-
-## TC115 — Crash restore preserves context
-
-```text
-unsaved context edit
-→ durable recovery snapshot
-→ crash/restore
-→ context + glossary restored
-→ dirty until explicit Save
+tests/
+├── test_transcription_context.py
+├── test_prompt_context_builder.py
+├── test_contextual_whisper.py
+├── test_media_import_service.py
+├── test_media_import_adapters.py
+├── test_media_import_ui.py
+└── test_sprint12_end_to_end.py
 ```
 
 ---
 
-# 43. Acceptance Tests — Media Import
+# 37. Acceptance Tests — Contextual Transcription
 
-## TC116 — Direct MP4 import
+**TC107 — Project v1 migration**  
+Load v1 → empty `TranscriptionContext` in RAM → no canonical rewrite.
 
-```text
-direct media URL
-→ DirectHTTPAdapter
-→ validated atomic local file
-```
+**TC108 — Project v2 round-trip**  
+Save/open v2 → Context preserved; Glossary preserved in its canonical normalized form and stable order.
 
-## TC117 — Supported website import
+**TC109 — Glossary priority**  
+Budget exceeded → Context truncates before accepted Glossary terms.
 
-```text
-supported webpage URL
-→ YtDlpAdapter
-→ validated atomic local media
-```
+**TC110 — Glossary over budget**  
+First-N deterministic retention; no partial term.
 
-## TC118 — Unsupported extractor fallback
+**TC111 — Empty context**  
+Compiled prompt empty → no effective Whisper initial prompt.
 
-```text
-yt-dlp UnsupportedURL/no extractor
-→ DirectHTTP fallback allowed
-```
+**TC112 — Context passed to Whisper**  
+Exact compiled `request.prompt_context` reaches `initial_prompt`.
 
-## TC119 — No masking of real yt-dlp failures
+**TC113 — Immutable resume prompt**  
+Start P → checkpoint → Project changes to P2 → resume still uses P.
 
-```text
-yt-dlp auth/network/DRM/etc. error
-→ original classified failure
-→ no blind DirectHTTP fallback
-```
+**TC114 — Revision/recovery participation**  
+Logical Context/Glossary commit → one revision transition → dirty → recovery snapshot contains edit.
 
-## TC120 — Cancel mid-download
-
-```text
-cancel during download
-→ worker/service cancellation
-→ staging removed
-→ no Project created
-```
-
-## TC121 — Network failure cleanup
-
-```text
-network failure
-→ staging removed
-→ canonical target absent
-→ no Project mutation
-```
-
-## TC122 — Invalid media payload
-
-```text
-download completes
-→ ffprobe/media validation fails
-→ no canonical Project
-```
-
-## TC123 — Atomic finalize failure
-
-```text
-os.replace fails
-→ no canonical media accepted
-→ no Project mutation
-```
-
-## TC124 — Successful URL import creates canonical SourceInfo
-
-```text
-URL import succeeds
-→ Project.source.path == finalized local media
-→ source fingerprint generated from local media
-```
-
-## TC125 — Player reuse
-
-```text
-successful import
-→ existing VideoPlayer receives finalized local path
-```
-
-## TC126 — Timing Draft reuse
-
-```text
-successful import
-→ existing Timing Draft operates on same Project.source.path
-```
-
-## TC127 — Full Subtitle reuse
-
-```text
-successful import
-→ SubtitleGenerationRequest.video_path == Project.source.path
-```
-
-## TC128 — Source guard survives reopen
-
-```text
-URL import
-→ save/close/reopen Project
-→ source path/fingerprint guard remains valid
-```
-
-## TC129 — Full Sprint 12 URL E2E
-
-```text
-URL
-→ adapter
-→ staging
-→ validation
-→ atomic finalize
-→ create Project
-→ VideoPlayer
-→ Timing Draft
-→ Full Subtitle
-→ Save
-→ close
-→ reopen
-→ same valid source fingerprint
-```
-
-CI must use injectable fakes/mocks for network adapters and media probes where appropriate. Internet availability is not required for acceptance tests.
+**TC115 — Crash restore**  
+Unsaved Context/Glossary survives recovery and remains dirty until explicit Save.
 
 ---
 
-# 44. Regression Gates
+# 38. Acceptance Tests — Media Import
 
-Sprint 12 must not regress:
+**TC116 — Direct media**  
+Direct MP4/compatible URL → DirectHTTP → validated atomic local file.
 
-- Sprint 9 robust generation/checkpoint behavior.
-- Sprint 10 canonical segment schema/editing/undo behavior.
-- Sprint 11 dirty state, recovery snapshot, source mismatch guard, handoff, close matrix, single-instance IPC, explicit Save semantics, and Export != Save semantics.
+**TC117 — Supported webpage**  
+Supported site URL → yt-dlp → validated atomic local media.
 
-Required final verification remains:
+**TC118 — Unsupported extractor fallback**  
+yt-dlp UnsupportedURL/no extractor → DirectHTTP fallback allowed.
+
+**TC119 — No masked real failure**  
+Auth/network/DRM/geo failure → classified original error → no blind fallback.
+
+**TC120 — Cancel**  
+Cancel mid-download → staging removed → no Project/Queue mutation.
+
+**TC121 — Network failure**  
+Failure → staging removed → canonical target absent.
+
+**TC122 — Invalid media**  
+Download completes → ffprobe invalid/no video → no downstream mutation.
+
+**TC123 — Finalize failure**  
+`os.replace` failure → no canonical media accepted → no Project/Queue mutation.
+
+**TC124 — New Project SourceInfo**  
+Successful import → Project source points to finalized local media → fingerprint generated locally.
+
+**TC125 — Player reuse**  
+Existing VideoPlayer receives same finalized local path.
+
+**TC126 — Timing reuse**  
+Existing Timing Draft operates on `Project.source.path`.
+
+**TC127 — Full Subtitle reuse**  
+Generation request `video_path == Project.source.path`.
+
+**TC128 — Reopen source guard**  
+Save/close/reopen → same valid local source fingerprint.
+
+**TC129 — Full URL E2E**  
+URL → adapter → staging → validate → finalize → Project → Player → Timing Draft → Full Subtitle → Save → reopen → valid source guard.
+
+**TC130 — Queue-only durable storage**  
+URL → app-owned `media_imports/<id>` → atomic finalize → Queue receives local path → no fake Project created.
+
+**TC131 — SSRF/redirect guard**  
+Loopback/private/link-local target or redirect is rejected as `UNSAFE_URL` before canonical download acceptance.
+
+CI uses injectable fake adapters/resolvers/probes; Internet access is not required.
+
+---
+
+# 39. Regression Gates
+
+Must not regress:
+
+- Sprint 9 generation/checkpoint behavior.
+- Sprint 10 canonical segments/editing/undo.
+- Sprint 11 Recovery, source guard, handoff, dirty semantics, single-instance IPC, explicit Save, and Export != Save.
+
+Final verification:
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall core ui workers tests main.py
 ```
 
-CI workflow only changes if existing test discovery/dependencies cannot discover the new test modules or required runtime dependency installation.
+CI changes only if current discovery/dependency installation cannot cover Sprint 12.
 
 ---
 
-# 45. Dependencies
+# 40. Dependencies
 
-Expected new Python dependencies:
+Production direct dependencies added explicitly if not already direct:
 
 ```text
 yt-dlp
 requests
 ```
 
-If `requests` is already transitively available, it must still be declared explicitly if production code imports it directly.
+FFmpeg/ffprobe continue through existing runtime-path/tooling conventions.
 
-FFmpeg/ffprobe remain runtime dependencies through existing runtime-path/tooling conventions.
-
-No asyncio-specific HTTP dependency is added in Sprint 12.
+No asyncio HTTP dependency is added.
 
 ---
 
-# 46. Implementation Boundaries Summary
+# 41. Locked Design Rulings
 
-```text
-TranscriptionContext
-→ user-owned domain metadata
-
-PromptContextBuilder
-→ deterministic derived prompt compiler
-
-SubtitleGenerationRequest
-→ immutable generation transaction snapshot
-
-FasterWhisperService
-→ ASR adapter; consumes initial_prompt only
-
-MediaImportDialog
-→ presentation/state display
-
-MediaImportWorker
-→ background execution bridge
-
-MediaImportService
-→ URL-to-local-media transaction
-
-URLClassifier
-→ adapter routing
-
-YtDlpAdapter / DirectHTTPAdapter
-→ download mechanics
-
-MediaProbe
-→ media trust/validation boundary
-
-MainWindow
-→ application orchestration only
-
-ProjectService
-→ canonical Project lifecycle
-
-QueueManager
-→ queue lifecycle
-
-RecoveryManager / RevisionTracker
-→ unchanged ownership of durability/dirty truth, extended to cover transcription context
-```
+1. Contextual Whisper = `initial_prompt` only; no Local LLM.
+2. Project persists Context + Glossary, never compiled prompt.
+3. Prompt budget is runtime policy; default 180.
+4. Glossary priority over Context.
+5. Resume preserves original compiled prompt.
+6. URL import is download-first/local-file-first.
+7. MediaImportService is isolated from Project/UI/Whisper/Timing.
+8. yt-dlp + Direct HTTP live behind adapters.
+9. DirectHTTP is not a blind fallback.
+10. ffprobe validation is mandatory before canonical acceptance.
+11. URL import never replaces an existing Project source.
+12. New Project is created only after media finalize succeeds.
+13. Failed/cancelled import creates zero canonical Project/Queue side effects.
+14. Queue-only media uses durable app-owned `RuntimePaths` storage, not `%TEMP%` and not a Project bundle.
+15. MainWindow remains orchestration-only.
+16. Only public HTTP(S) destinations are supported; private/local SSRF targets and unsafe redirects are rejected.
+17. TLS verification, path confinement, shell-free subprocess execution, and log redaction are mandatory.
+18. No cookies, credentials, browser-cookie extraction, DRM bypass, or arbitrary yt-dlp/shell hooks.
+19. Context/Glossary participates in RevisionTracker + Recovery.
+20. Timing Draft does not consume Context.
+21. Existing local Player/Timing/Full Subtitle pipelines are reused after finalization.
+22. Automatic cleanup/garbage collection of successfully imported queue-only media is deferred to a future design to avoid accidental data loss.
 
 ---
 
-# 47. Design Rulings Locked for Sprint 12
-
-1. **Contextual Whisper uses Option A only:** `initial_prompt`; no Local LLM.
-2. **Project stores Context + Glossary, never compiled prompt.**
-3. **Default prompt budget is runtime policy (180), not persisted schema.**
-4. **Glossary has priority over Context.**
-5. **Generation resume preserves original compiled prompt.**
-6. **URL import is download-first/local-file-first.**
-7. **MediaImportService is isolated from Project/Queue/Player/Whisper.**
-8. **yt-dlp + Direct HTTP are hidden behind adapters.**
-9. **DirectHTTP is not a blind fallback for every yt-dlp error.**
-10. **Project media is validated with ffprobe before canonical acceptance.**
-11. **URL import never replaces an existing Project source.**
-12. **New Project is created only after successful media finalization.**
-13. **Failed/cancelled imports create zero canonical Project side effects.**
-14. **MainWindow remains orchestration-only; downloader/prompt internals stay outside `Gui.py`.**
-15. **Only HTTP(S) external URLs are supported.**
-16. **No cookies, browser credentials, DRM bypass, arbitrary shell hooks, or arbitrary yt-dlp arguments.**
-17. **Path confinement and shell-free subprocess execution are mandatory.**
-18. **Context/Glossary edits participate in RevisionTracker and Recovery.**
-19. **Timing Draft does not consume Context.**
-20. **Existing local Project/Player/Timing/Full Subtitle pipeline is reused after URL finalization.**
-
----
-
-# 48. Definition of Done
-
-Sprint 12 is complete when all of the following are true:
+# 42. Definition of Done
 
 ### Contextual Transcription
 
 ```text
-✅ Project v2 persists Context + Glossary
-✅ Project v1 opens with backward-compatible defaults
-✅ Context/Glossary edits are revision tracked
-✅ Recovery protects unsaved Context/Glossary
-✅ Prompt compilation is deterministic and bounded
-✅ Glossary priority is enforced
-✅ Faster-Whisper receives initial_prompt
-✅ Empty context produces no effective prompt
-✅ Checkpoint/resume keeps the original prompt transaction
+✅ Project v2 persistence
+✅ v1 backward-compatible load
+✅ revision tracking
+✅ recovery coverage
+✅ deterministic bounded prompt
+✅ glossary priority
+✅ Whisper initial_prompt wiring
+✅ immutable checkpoint/resume prompt
 ```
 
 ### Media Import
 
 ```text
-✅ URL dialog supports New Project / Add to Queue
-✅ yt-dlp adapter works through Python API
-✅ Direct HTTP adapter streams downloads
-✅ adapter routing/fallback policy is classified
-✅ progress + cancellation are non-blocking
-✅ staging is isolated
-✅ media is ffprobe validated
-✅ atomic finalization is app-controlled
-✅ failed/cancelled import leaves zero Project side effects
-✅ successful import creates a local source fingerprint
-✅ existing VideoPlayer is reused
-✅ existing Timing Draft is reused
-✅ existing Full Subtitle is reused
-✅ source guard works after save/reopen
+✅ shared URL import dialog
+✅ New Project + Add to Queue
+✅ yt-dlp Python adapter
+✅ Direct HTTP streaming adapter
+✅ progress/cancel
+✅ classified fallback policy
+✅ public-network/SSRF guard
+✅ isolated staging
+✅ ffprobe validation
+✅ atomic finalize
+✅ Project-owned media for New Project
+✅ RuntimePaths-owned durable media for Queue-only import
+✅ existing Player/Timing/Full Subtitle reuse
+✅ valid source fingerprint after reopen
 ```
 
 ### Security / Architecture
 
 ```text
-✅ HTTP(S)-only URL boundary
-✅ TLS verification enabled
-✅ path traversal prevented
-✅ shell=False subprocess usage
-✅ no credential/cookie/DRM bypass surface
-✅ sensitive URL query data redacted from logs
-✅ MediaImportService has no Project/UI/Whisper dependencies
-✅ MainWindow remains orchestration-only
+✅ HTTP(S)-only + public destination validation
+✅ DNS/redirect revalidation
+✅ TLS verification ON
+✅ path traversal prevention
+✅ shell=False
+✅ no auth/cookie/DRM bypass surface
+✅ sensitive URL redaction
+✅ service boundaries preserved
+✅ MainWindow orchestration-only
 ```
 
 ### Verification
 
 ```text
-✅ TC107–TC129 pass
+✅ TC107–TC131 pass
 ✅ full regression suite passes
 ✅ compileall passes
 ✅ worktree clean
-✅ PR review finds no unresolved Critical/Important issues
+✅ PR review has no unresolved Critical/Important findings
 ```
