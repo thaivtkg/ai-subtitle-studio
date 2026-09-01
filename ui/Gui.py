@@ -103,11 +103,11 @@ class MainWindow(QMainWindow):
 
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
-        self.project_service = ProjectService(self.artifact_store)
-        self.workspace_service = WorkspaceService(self, self.project_service)
         self.undo_manager = GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
         self.revision_tracker = RevisionTracker(self.undo_manager, self)
+        self.project_service = ProjectService(self.artifact_store)
+        self.project_service.revision_tracker = self.revision_tracker
         self.recovery_manager = RecoveryManager(
             RuntimePaths.get_recovery_sessions_dir(),
             RuntimePaths.get_recovery_quarantine_dir(),
@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
             RecoveryValidator(),
             self,
         )
+        self.workspace_service = WorkspaceService(self, self.project_service)
         self.revision_tracker.dirty_changed.connect(self._update_window_title_dirty_marker)
         self.revision_tracker.clean_point_reached.connect(
             self.recovery_manager.invalidate_snapshot_at_clean_point

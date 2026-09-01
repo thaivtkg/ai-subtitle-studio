@@ -237,6 +237,9 @@ class ProjectService:
     def mark_dirty(self) -> None:
         if self.current_project:
             self.current_project.state.dirty = True
+            tracker = getattr(self, "revision_tracker", None)
+            if tracker is not None and not tracker.is_transitioning:
+                tracker.record_external_change()
 
     # ========================================================
     # [SPRINT 7.1] TIMING CHECKPOINT I/O

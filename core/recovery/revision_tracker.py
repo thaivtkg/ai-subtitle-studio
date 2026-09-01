@@ -18,6 +18,7 @@ class RevisionTracker(QObject):
         self._last_saved_revision = 0
         self._last_clean_revision = 0
         self._recovered_dirty_baseline = False
+        self._external_dirty = False
         self._last_dirty = False
         self._undo_manager.state_changed.connect(self.record_state_transition)
 
@@ -43,7 +44,18 @@ class RevisionTracker(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        return self._recovered_dirty_baseline or not self._undo_manager.undo_stack.isClean()
+        return self._recovered_dirty_baseline or self._external_dirty or not self._undo_manager.undo_stack.isClean()
+
+    @property
+    def is_transitioning(self) -> bool:
+        return bool(getattr(self._undo_manager, "_transitioning", False))
+
+    def record_external_change(self) -> int:
+        self._external_dirty = True
+        self._edit_revision += 1
+        self.revision_changed.emit(self._edit_revision)
+        self._emit_dirty_change()
+        return self._edit_revision
 
     def record_state_transition(self) -> int:
         """Record exactly one successful push, undo, or redo transition."""
@@ -63,6 +75,7 @@ class RevisionTracker(QObject):
         self._last_saved_revision = self._edit_revision
         self._last_clean_revision = self._edit_revision
         self._recovered_dirty_baseline = False
+        self._external_dirty = False
         self._emit_dirty_change()
 
     def restore_from_snapshot(
@@ -76,6 +89,7 @@ class RevisionTracker(QObject):
         self._last_saved_revision = last_saved_revision
         self._last_clean_revision = last_clean_revision
         self._recovered_dirty_baseline = True
+        self._external_dirty = False
         self._emit_dirty_change()
 
     def reset_for_new_document(self) -> None:
@@ -84,6 +98,7 @@ class RevisionTracker(QObject):
         self._last_saved_revision = 0
         self._last_clean_revision = 0
         self._recovered_dirty_baseline = False
+        self._external_dirty = False
         self._emit_dirty_change()
 
     def _emit_dirty_change(self) -> None:
