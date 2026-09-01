@@ -10,6 +10,11 @@ from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 
+try:
+    from ui.Gui import MainWindow
+except ModuleNotFoundError:
+    MainWindow = None
+
 
 class TestRecoveryEndToEnd(unittest.TestCase):
     def _manager(self, root, tracker):
@@ -104,6 +109,40 @@ class TestRecoveryEndToEnd(unittest.TestCase):
         _exported = True
         self.assertTrue(_exported)
         self.assertEqual(before, (tracker.edit_revision, tracker.last_saved_revision, tracker.is_dirty))
+
+    @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
+    def test_tc105_project_switch_creates_new_session(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        tracker = self._tracker()
+        manager = self._manager(root, tracker)
+        window = MainWindow(tracker, manager, tracker._undo_manager if hasattr(tracker, "_undo_manager") else MagicMock())
+        window.project_service = MagicMock(current_project_id="proj-A", current_project_path="C:/A", current_project=None, project_dir="C:/A")
+        session_a = window._switch_recovery_session()
+        window.project_service = MagicMock(current_project_id="proj-B", current_project_path="C:/B", current_project=None, project_dir="C:/B")
+        session_b = window._switch_recovery_session()
+        self.assertNotEqual(session_a.session_id, session_b.session_id)
+        self.assertEqual(session_b.manifest.project_id, "proj-B")
+        self.assertFalse(session_a.directory.exists())
+
+    @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
+    def test_tc106_bootstrap_handoff_persists_in_mainwindow(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        tracker = self._tracker(1)
+        manager = self._manager(root, tracker)
+        old = manager.create_session(RecoveryContext("proj-1", "project", "video", "fp", 0.0, session_id="old"))
+        state = self._state(old.session_id, 1)
+        manager.write_snapshot(state, force=True)
+        candidate = manager.scan_candidates()[0]
+        new = manager.handoff_recovered_state(candidate, state, RecoveryContext("proj-1", "project", "video", "fp", 0.0))
+        window = MainWindow(tracker, manager, tracker._undo_manager if hasattr(tracker, "_undo_manager") else MagicMock())
+        window.revision_tracker.edit_revision = 2
+        window.revision_tracker.is_dirty = True
+        window.capture_recovery_working_state = MagicMock(return_value=self._state(new.session_id, 2, text="new"))
+        window._on_autosave_timeout()
+        self.assertEqual(manager.snapshot_store.read_json(new.directory / "snapshot.json")["edit_revision"], 2)
+        self.assertFalse(old.directory.exists())
 
     def test_recovery_handoff_commits_new_session_before_discarding_old(self):
         root = Path(tempfile.mkdtemp())

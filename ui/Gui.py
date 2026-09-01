@@ -1939,14 +1939,19 @@ class MainWindow(QMainWindow):
 
         Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
-    def _ensure_recovery_session_exists(self):
-        if getattr(self.recovery_manager, "_active_session", None):
-            return
+    def _switch_recovery_session(self):
         project = self.project_service.current_project
+        proj_id = getattr(self.project_service, "current_project_id", None) or getattr(project, "project_id", None)
+        proj_path = getattr(self.project_service, "current_project_path", None) or self.project_service.project_dir or ""
+        active = getattr(self.recovery_manager, "_active_session", None)
+        if active and active.manifest.project_id == proj_id and active.manifest.project_file_path == proj_path:
+            return active
+        if active:
+            self.recovery_manager.finalize_clean_shutdown()
         source = getattr(project, "source", None)
-        self.recovery_manager.create_session(RecoveryContext(
-            getattr(project, "project_id", None),
-            self.project_service.project_dir or "",
+        return self.recovery_manager.create_session(RecoveryContext(
+            proj_id,
+            proj_path,
             getattr(source, "path", "") if source else "",
             getattr(source, "fingerprint", "") if source else "",
             getattr(source, "modified_at", 0.0) if source else 0.0,
@@ -1964,7 +1969,7 @@ class MainWindow(QMainWindow):
             try:
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 self.revision_tracker.reset_for_new_document()
-                self._ensure_recovery_session_exists()
+                self._switch_recovery_session()
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
@@ -2057,7 +2062,7 @@ class MainWindow(QMainWindow):
 
             self.project_service.open_project(project_dir)
             self.revision_tracker.reset_for_new_document()
-            self._ensure_recovery_session_exists()
+            self._switch_recovery_session()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
