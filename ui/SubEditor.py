@@ -35,6 +35,7 @@ from core.subtitle_editing.commands.merge_command import MergeCommand
 from core.subtitle_editing.commands.split_command import SplitCommand
 from core.subtitle_validation.subtitle_validator import SubtitleValidator
 from core.subtitle_validation.validation_issue import Severity
+from core.subtitle_editing.selection_controller import SelectionSource
 
 
 def ms_to_time_str(ms: int) -> str:
@@ -490,6 +491,23 @@ class SubtitleEditorWidget(QWidget):
     def select_segment(self, index: int):
         if not (0 <= index < len(self.all_segments)):
             return
+        if self.selection_controller and not self._is_syncing_ui:
+            self.selection_controller.select(
+                index, self.all_segments[index].get("stt"), SelectionSource.EDITOR
+            )
+            return
+        self._select_segment_ui(index)
+
+    def sync_selection(self, index, segment_id, source=None):
+        if 0 <= index < len(self.all_segments):
+            self._is_syncing_ui = True
+            self._select_segment_ui(index)
+            self._is_syncing_ui = False
+        else:
+            self.current_index = -1
+            self.update_empty_state()
+
+    def _select_segment_ui(self, index: int):
         self.current_index = index
         seg = self.all_segments[index]
         self.current_editor.setEnabled(True)
@@ -503,6 +521,11 @@ class SubtitleEditorWidget(QWidget):
     def sync_playback_highlight(self, absolute_index: int):
         """Select the subtitle currently playing without issuing a seek."""
         if not (0 <= absolute_index < len(self.all_segments)):
+            return
+        if self.selection_controller and not self._is_syncing_ui:
+            self.selection_controller.select(
+                absolute_index, self.all_segments[absolute_index].get("stt"), SelectionSource.PLAYBACK
+            )
             return
         self.current_index = absolute_index
         items_per_page = self.group_size or len(self.all_segments)

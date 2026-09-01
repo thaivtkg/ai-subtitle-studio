@@ -46,6 +46,7 @@ from core.queue_manager import QueueManager
 from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
+from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
@@ -98,6 +99,7 @@ class MainWindow(QMainWindow):
         self.workspace_service = WorkspaceService(self, self.project_service)
         self.undo_manager = GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
+        self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
         from core.subtitle_generation.faster_whisper_service import FasterWhisperService
@@ -277,6 +279,8 @@ class MainWindow(QMainWindow):
         self.top_splitter = self.top_horizontal_splitter
         self.sub_editor = SubtitleEditorWidget()
         self.sub_editor.undo_manager = self.undo_manager
+        self.sub_editor.selection_controller = self.selection_controller
+        self.selection_controller.selection_changed.connect(self.sub_editor.sync_selection)
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
@@ -436,7 +440,11 @@ class MainWindow(QMainWindow):
         self.workspace_vertical_splitter.addWidget(self.timeline_widget)
 
         self.timeline_data_provider = TimelineDataProvider()
-        self.timeline_controller = TimelineController(self.project_service, self.timeline_widget, self.timeline_data_provider)
+        self.timeline_controller = TimelineController(
+            self.project_service, self.timeline_widget, self.timeline_data_provider,
+            undo_manager=self.undo_manager, selection_controller=self.selection_controller,
+        )
+        self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
         
         # Liên kết Cầu đồng bộ (Click Table -> Bôi đen Timeline)

@@ -10,6 +10,7 @@ from core.timeline.timeline_commands import (
 )
 from core.timeline.timeline_state import TimelineState, TimelineStateManager
 from core.timeline.timeline_undo_manager import UndoRedoManager
+from core.subtitle_editing.commands.timeline_adapter import TimelineCommandAdapter
 from ui.timeline.subtitle_track import EditMode
 from ui.toast import Toast
 
@@ -17,13 +18,14 @@ from ui.toast import Toast
 class TimelineController(QObject):
     """Điều phối Tương tác UI -> Cập nhật State Machine -> Đẩy lệnh vào Artifact Store"""
     
-    def __init__(self, project_service, ui_widget, data_provider):
+    def __init__(self, project_service, ui_widget, data_provider, undo_manager=None, selection_controller=None):
         super().__init__()
         self.project = project_service
         self.ui = ui_widget
         self.data_provider = data_provider 
         self.state_manager = TimelineStateManager()
-        self.undo_manager = UndoRedoManager()
+        self.undo_manager = undo_manager or UndoRedoManager()
+        self.selection_controller = selection_controller
 
         self.ui.setFocusPolicy(Qt.StrongFocus)
         if hasattr(self.ui.container, 'waveform'):
@@ -39,6 +41,17 @@ class TimelineController(QObject):
         if hasattr(self.ui.container, 'waveform'):
             self.ui.container.waveform.installEventFilter(self)
         self.ui.container.track.installEventFilter(self)
+
+        if self.selection_controller:
+            self.selection_controller.selection_changed.connect(self.sync_selection)
+
+    def sync_selection(self, index, segment_id, source=None):
+        track = self.ui.container.track
+        ids = {segment_id} if segment_id and any(s.segment_id == segment_id for s in track.segments) else set()
+        if not ids and 0 <= index < len(track.segments):
+            ids = {track.segments[index].segment_id}
+        track.selected_ids = ids
+        track.update()
 
     # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
     def sync_from_editor(self, ms: int):
@@ -180,7 +193,7 @@ class TimelineController(QObject):
             elif mode == EditMode.RESIZE_RIGHT: command = ResizeEndCommand(self.project, self.data_provider, segment_id, delta_ms)
 
             if command and command.can_execute(None):
-                if self.undo_manager.execute_command(command, self.state_manager):
+                if self._push_command(command):
                     self._refresh_ui()
                 else:
                     self.ui.container.track.update()
@@ -195,7 +208,7 @@ class TimelineController(QObject):
             
         self.state_manager.transition_to(TimelineState.COMMITTING)
         try:
-            if self.undo_manager.undo(): 
+            if self.undo_manager.undo():
                 self._refresh_ui()
         except Exception as e:
             import traceback
@@ -211,7 +224,7 @@ class TimelineController(QObject):
             
         self.state_manager.transition_to(TimelineState.COMMITTING)
         try:
-            if self.undo_manager.redo(): 
+            if self.undo_manager.redo():
                 self._refresh_ui()
         except Exception as e:
             import traceback
@@ -225,10 +238,18 @@ class TimelineController(QObject):
         if not self.state_manager.can_transition(TimelineState.COMMITTING): return
         self.state_manager.transition_to(TimelineState.COMMITTING)
         try:
-            if self.undo_manager.execute_command(command, self.state_manager):
+            if self._push_command(command):
                 self._refresh_ui()
         finally:
             self.state_manager.transition_to(TimelineState.IDLE)
+
+    def _push_command(self, command):
+        if not command.can_execute(None):
+            return False
+        if hasattr(self.undo_manager, "push"):
+            self.undo_manager.push(TimelineCommandAdapter(command))
+            return True
+        return self.undo_manager.execute_command(command, self.state_manager)
 
     def _refresh_ui(self):
         # 1. ĐỒNG BỘ DATA & SẮP XẾP TRƯỚC

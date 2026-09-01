@@ -23,11 +23,15 @@ class GlobalUndoManager(QObject):
         if self.undo_stack.canUndo():
             self.undo_stack.undo()
             self.state_changed.emit()
+            return True
+        return False
 
     def redo(self):
         if self.undo_stack.canRedo():
             self.undo_stack.redo()
             self.state_changed.emit()
+            return True
+        return False
 
     def clear(self):
         self.undo_stack.clear()

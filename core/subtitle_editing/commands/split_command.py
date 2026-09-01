@@ -1,4 +1,5 @@
 from core.subtitle_editing.commands.base_command import SubtitleCommand
+from core.subtitle_editing.segment_factory import SubtitleSegmentFactory
 
 
 class SplitCommand(SubtitleCommand):
@@ -7,6 +8,7 @@ class SplitCommand(SubtitleCommand):
         self.segment_index = segment_index
         self.split_time_ms = split_time_ms
         self.original_seg = None
+        self.new_segment = None
 
     def _split_text_at_midpoint(self, text: str) -> tuple[str, str]:
         if not text or " " not in text:
@@ -17,14 +19,16 @@ class SplitCommand(SubtitleCommand):
         return text[:best_space].strip(), text[best_space:].strip()
 
     def redo(self):
-        self.original_seg = self.data_provider[self.segment_index].copy()
+        if self.original_seg is None:
+            self.original_seg = self.data_provider[self.segment_index].copy()
         text1, text2 = self._split_text_at_midpoint(self.original_seg["text"])
         self.data_provider[self.segment_index]["end"] = self.split_time_ms
         self.data_provider[self.segment_index]["text"] = text1
-        self.data_provider.insert(
-            self.segment_index + 1,
-            {"start": self.split_time_ms, "end": self.original_seg["end"], "text": text2},
-        )
+        if self.new_segment is None:
+            self.new_segment = SubtitleSegmentFactory.create_segment(
+                self.split_time_ms, self.original_seg["end"], text2
+            )
+        self.data_provider.insert(self.segment_index + 1, self.new_segment)
 
     def undo(self):
         self.data_provider.pop(self.segment_index + 1)
