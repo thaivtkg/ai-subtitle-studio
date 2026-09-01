@@ -14,9 +14,37 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from core.runtime.runtime_paths import RuntimePaths
+from core.runtime.single_instance_guard import IpcAction, IpcRequest, SingleInstanceGuard
+from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
+from core.recovery.recovery_manager import RecoveryManager
+from core.recovery.recovery_validator import RecoveryValidator
+from core.recovery.revision_tracker import RevisionTracker
+from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 # Import MainWindow từ thư mục ui
-from ui.Gui import MainWindow
-#from utils import resource_path    
+Gui = None
+def build_ipc_request(argv: list[str]) -> IpcRequest:
+    if len(argv) < 2:
+        return IpcRequest(IpcAction.ACTIVATE_WINDOW)
+    path = os.path.abspath(argv[1])
+    if os.path.isdir(path) and path.endswith(".ai-subtitle"):
+        return IpcRequest(IpcAction.OPEN_PROJECT, path)
+    return IpcRequest(IpcAction.OPEN_MEDIA, path)
+
+
+def run_secondary_instance(guard: SingleInstanceGuard, argv: list[str]) -> int:
+    return 0 if guard.relay_to_primary(build_ipc_request(argv)) else 1
+
+
+def build_recovery_manager():
+    undo_manager = GlobalUndoManager()
+    tracker = RevisionTracker(undo_manager)
+    return RecoveryManager(
+        RuntimePaths.get_recovery_sessions_dir(),
+        RuntimePaths.get_recovery_quarantine_dir(),
+        tracker,
+        AtomicSnapshotStore(),
+        RecoveryValidator(),
+    )
 
 
 def main():
@@ -34,6 +62,29 @@ def main():
         myappid = 'aisubtitlestudio.v0.1.alpha' 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
+
+    guard = SingleInstanceGuard()
+    if not guard.try_acquire_primary():
+        result = run_secondary_instance(guard, sys.argv)
+        guard.close()
+        return result
+    guard.start_listening()
+    recovery_manager = build_recovery_manager()
+    recovery_candidates = recovery_manager.scan_candidates()
+    selected_candidate = recovery_candidates[0] if recovery_candidates else None
+    if selected_candidate is not None:
+        from ui.dialogs.recovery_dialog import RecoveryDialog
+
+        candidate = selected_candidate
+        dialog = RecoveryDialog(
+            candidate.manifest.session_id,
+            candidate.manifest.project_id or candidate.manifest.project_file_path,
+            candidate.manifest.created_at,
+        )
+        if dialog.exec() == 0:
+            recovery_manager.discard_session(candidate.manifest.session_id)
+            selected_candidate = None
+    from ui import Gui as gui_module
 
     # --- CHỈNH SỬA TẠI ĐÂY: Sử dụng RuntimePaths load icon ---
     icon_path = str(RuntimePaths.get_resources_dir() / "app_icon.ico")
@@ -140,11 +191,13 @@ def main():
 
 
     # Khởi tạo và hiển thị giao diện chính
-    window = MainWindow()
+    window = gui_module.MainWindow()
+    if selected_candidate is not None and hasattr(window, "apply_recovery_state"):
+        window.apply_recovery_state(selected_candidate.snapshot)
     window.show()
 
     # Chạy vòng lặp sự kiện
-    sys.exit(app.exec())
+    return app.exec()
 
 def suppress_qt_warnings(mode, context, message):
     # Nếu log là cảnh báo (Warning) và chứa dòng chữ QFont::setPointSize, lờ nó đi
@@ -155,4 +208,4 @@ def suppress_qt_warnings(mode, context, message):
 
 if __name__ == "__main__":
     qInstallMessageHandler(suppress_qt_warnings)
-    main()
+    raise SystemExit(main())
