@@ -37,6 +37,7 @@ from core.subtitle_editing.commands.split_command import SplitCommand
 from core.subtitle_validation.subtitle_validator import SubtitleValidator
 from core.subtitle_validation.validation_issue import Severity
 from core.subtitle_editing.selection_controller import SelectionSource
+from core.export.subtitle_parser import parse_srt_content
 
 
 def ms_to_time_str(ms: int) -> str:
@@ -709,40 +710,17 @@ class SubtitleEditorWidget(QWidget):
         return value
 
     def load_srt_file(self, srt_path):
-        self.srt_path = srt_path
-        self.all_segments.clear()
-
-        if not srt_path or not os.path.exists(srt_path): 
-            self.render_page()
+        if not srt_path or not os.path.exists(srt_path):
             return
-
-        with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read().replace('\r\n', '\n')
-
-        blocks = re.split(r'\n{2,}', content.strip())
-        
-        for block in blocks:
-            lines = block.strip().split("\n")
-            if len(lines) >= 2 and "-->" in lines[1]:
-                idx = lines[0].strip()
-                time_range = lines[1].strip()
-                text = "\n".join(lines[2:]) if len(lines) > 2 else ""
-                
-                times = time_range.split(" --> ")
-                start = times[0].strip() if len(times) > 0 else ""
-                end = times[1].strip() if len(times) > 1 else ""
-                
-                self.all_segments.append({
-                    "stt": idx,
-                    "start": start,
-                    "end": end,
-                    "text": text,
-                    "status": "draft",
-                    "metadata": {"type": "normal"}
-                })
-
+        with open(srt_path, "r", encoding="utf-8", errors="ignore") as handle:
+            self.all_segments = parse_srt_content(handle.read())
+        self.srt_path = srt_path
         self.current_page = 0
         self.render_page()
+        if self.undo_manager:
+            self.undo_manager.clear()
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
         self.update_draft_progress()
 
     def save_srt(self):
@@ -778,14 +756,15 @@ class SubtitleEditorWidget(QWidget):
         except Exception as e:
             Toast.show_error(self.window(), f"Lỗi lưu SRT: {str(e)}")
 
-    def save_draft(self, silent=False):
+    def save_draft(self, filepath=None, silent=False):
         import json
         import os
         from PySide6.QtWidgets import QFileDialog
         
-        path = self.srt_path
+        explicit_path = bool(filepath)
+        path = filepath or self.srt_path
         
-        if silent:
+        if silent and not explicit_path:
             if not path:
                 path = "Project.ai-subtitle-draft"
             elif not path.endswith('.ai-subtitle-draft'):
@@ -798,27 +777,12 @@ class SubtitleEditorWidget(QWidget):
             
         if not path: return
         
-        draft_data = {"version": 1.0, "segments": []}
-        for seg in self.all_segments:
-            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
-            current_status = seg.get('status', 'timing_only')
-            
-            if current_status != 'final':
-                current_status = "draft" if raw_text.strip() else "timing_only"
-                
-            draft_data["segments"].append({
-                "id": seg.get('id'),
-                "stt": seg.get('stt', ''),
-                "start_ms": self.time_str_to_ms(seg['start']),
-                "end_ms": self.time_str_to_ms(seg['end']),
-                "text": raw_text,
-                "status": current_status,
-                "metadata": seg.get('metadata', {"type": "normal"})
-            })
-            
         try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(draft_data, f, ensure_ascii=False, indent=4)
+            if not getattr(self, "project_service", None):
+                return
+            self.project_service.save_draft(path, self.all_segments)
+            if self.undo_manager:
+                self.undo_manager.mark_saved()
                 
             self.srt_path = path
             
@@ -830,32 +794,17 @@ class SubtitleEditorWidget(QWidget):
                 Toast.show_error(self.window(), f"Lỗi lưu Draft: {str(e)}")
 
     def load_draft_file(self, draft_path):
-        import json
-        import os
-        
-        self.srt_path = draft_path 
-        self.all_segments.clear()
-        
-        if not draft_path or not os.path.exists(draft_path):
-            self.render_page()
+        if not getattr(self, "project_service", None) or not draft_path:
             return
-            
-        with open(draft_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        for seg in data.get("segments", []):
-            self.all_segments.append({
-                "id": seg.get("id", uuid.uuid4().hex),
-                "stt": str(seg.get("stt", "")),
-                "start": self.ms_to_time_str(seg.get("start_ms", 0)),
-                "end": self.ms_to_time_str(seg.get("end_ms", 0)),
-                "text": seg.get("text", ""),
-                "status": seg.get("status", "timing_only"),
-                "metadata": seg.get("metadata", {"type": "normal"})
-            })
-            
+        data = self.project_service.load_draft(draft_path)
+        self.srt_path = draft_path
+        self.all_segments = data.get("segments", [])
         self.current_page = 0
         self.render_page()
+        if self.undo_manager:
+            self.undo_manager.clear()
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
         self.update_draft_progress()
 
     def on_row_double_clicked(self, row, column):

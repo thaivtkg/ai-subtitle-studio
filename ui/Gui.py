@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
         self.top_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
         self.top_splitter = self.top_horizontal_splitter
         self.sub_editor = SubtitleEditorWidget()
+        self.sub_editor.project_service = self.project_service
         self.sub_editor.undo_manager = self.undo_manager
         self.sub_editor.selection_controller = self.selection_controller
         self.selection_controller.selection_changed.connect(self.sub_editor.sync_selection)

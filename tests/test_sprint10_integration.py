@@ -110,6 +110,5 @@ class TestSprint10Integration(unittest.TestCase):
         finally:
             os.remove(path)
 
-
 if __name__ == "__main__":
     unittest.main()
