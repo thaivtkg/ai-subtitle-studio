@@ -41,12 +41,12 @@ class TestDrawerUI(unittest.TestCase):
         QTest.qWait(500)
         self.assertTrue(dock.isVisible())
         self.assertEqual(button.text(), "›")
-        expected_width = self.window._drawer_target_width
-        self.assertIn(
+        self.assertGreaterEqual(
             dock.minimumWidth(),
-            (350, expected_width),
-            f"Drawer width {dock.minimumWidth()} phải phục hồi về {expected_width} hoặc 350",
+            350,
+            "Drawer phải khôi phục chiều rộng tối thiểu có thể sử dụng.",
         )
+        self.assertEqual(dock.maximumWidth(), 390)
 
     def tearDown(self):
         self.window.close()
