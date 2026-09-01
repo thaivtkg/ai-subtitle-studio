@@ -25,11 +25,16 @@ class IpcRequest:
 
     @classmethod
     def from_dict(cls, payload: dict):
+        if not isinstance(payload, dict) or set(payload) - {"action", "path"}:
+            raise ValueError("invalid IPC payload")
         try:
             action = IpcAction(payload["action"])
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("invalid IPC action") from error
-        return cls(action, payload.get("path"))
+        path = payload.get("path")
+        if path is not None and not isinstance(path, str):
+            raise ValueError("invalid IPC path")
+        return cls(action, path)
 
     def to_dict(self) -> dict:
         payload = {"action": self.action.value}
@@ -45,6 +50,7 @@ class SingleInstanceGuard(QObject):
         super().__init__(parent)
         self.server_name = server_name
         self.server = QLocalServer(self)
+        self._buffers = {}
         self.server.newConnection.connect(self._accept)
 
     def try_acquire_primary(self) -> bool:
@@ -90,17 +96,22 @@ class SingleInstanceGuard(QObject):
         socket = self.server.nextPendingConnection()
         if socket is None:
             return
+        self._buffers[socket] = bytearray()
+        socket.disconnected.connect(lambda: self._buffers.pop(socket, None))
         socket.readyRead.connect(lambda: self._read(socket))
 
     def _read(self, socket: QLocalSocket) -> None:
-        if socket.bytesAvailable() > 65536:
+        buffer = self._buffers.setdefault(socket, bytearray())
+        buffer.extend(bytes(socket.readAll()))
+        if len(buffer) > 65536:
             socket.disconnectFromServer()
             return
         try:
-            request = IpcRequest.from_dict(json.loads(bytes(socket.readAll()).decode("utf-8")))
+            request = IpcRequest.from_dict(json.loads(bytes(buffer).decode("utf-8")))
         except (ValueError, KeyError, TypeError, UnicodeDecodeError):
-            socket.write(b'{"ok":false}')
-            socket.flush()
+            if bytes(buffer).startswith(b"{") and not bytes(buffer).rstrip().endswith(b"}"):
+                return
+            socket.disconnectFromServer()
             return
         self.request_received.emit(request)
         socket.write(b'{"ok":true}')

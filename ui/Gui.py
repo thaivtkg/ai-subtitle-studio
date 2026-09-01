@@ -1245,7 +1245,6 @@ class MainWindow(QMainWindow):
         self._register_artifact(path, ArtifactType.HARDSUB, {"mode": "manual_hardsub"})
         if getattr(self, 'project_service', None) and self.project_service.current_project:
             self.project_service.current_project.state.export_status = "READY"
-            self.project_service.mark_dirty()
 
         Toast.show_success(self, f"Render Hardsub xong: {path}")
         self.progress_bar.setValue(100)
@@ -1659,7 +1658,6 @@ class MainWindow(QMainWindow):
         self._register_artifact(out_video_path, ArtifactType.HARDSUB, {"mode": "auto_queue_hardsub"})
         if getattr(self, 'project_service', None) and self.project_service.current_project:
             self.project_service.current_project.state.export_status = "READY"
-            self.project_service.mark_dirty()
 
         self.append_log(f"[FFmpeg] Xuất file thành công: {out_video_path}")
         self.process_next_batch_item()
@@ -1995,6 +1993,7 @@ class MainWindow(QMainWindow):
                                 print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact.path}")
                             except Exception as ex:
                                 print(f"[LỖI XUẤT SRT] {ex}")
+                                raise
                                 
                         # TRƯỜNG HỢP 2: File đang mở là Draft (.json) -> Dùng hàm lưu Draft
                         else:

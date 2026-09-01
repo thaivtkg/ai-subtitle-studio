@@ -196,10 +196,10 @@ class RecoveryManager(QObject):
             last_snapshot_at=None,
         )
         snapshot_path = self._active_session.directory / "snapshot.json"
-        snapshot_path.unlink(missing_ok=True)
         self.snapshot_store.write_json_atomic(
             self._active_session.directory / "manifest.json", asdict(manifest)
         )
+        snapshot_path.unlink(missing_ok=True)
         self._active_session = replace(self._active_session, manifest=manifest)
 
     def discard_session(self, session_id: str) -> None:
