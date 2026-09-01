@@ -4,7 +4,8 @@ import uuid
 from datetime import datetime
 from dataclasses import asdict
 
-from core.project.project import Project, SourceInfo
+from core.project.project import Project, SourceInfo as ProjectSourceInfo
+from core.project.source_fingerprint import generate_source_info, SourceInfo
 from core.project.project_state import ProjectState, WorkspaceState, TimingState
 from core.artifacts.artifact_store import ArtifactStore
 from core.utils.file_utils import atomic_save_json
@@ -50,46 +51,15 @@ class ProjectService:
         return {"version": data.get("version", 1.0), "segments": result, "video_path": data.get("video_path", "")}
 
     def _generate_fingerprint(self, video_path: str) -> SourceInfo:
-        """Tạo định danh và vân tay cho file video gốc bằng Fast Hash (SHA-256)"""
-        import hashlib
-        
-        if not os.path.exists(video_path):
-            raise FileNotFoundError(f"Không tìm thấy file video nguồn: {video_path}")
-        
-        stat = os.stat(video_path)
-        size = stat.st_size
-        mtime = stat.st_mtime
-        
-        # Fast Hashing: Băm size + 1MB đầu + 1MB cuối
-        chunk_size = 1024 * 1024  # 1MB
-        hasher = hashlib.sha256()
-        hasher.update(str(size).encode('utf-8'))
-        
-        try:
-            with open(video_path, 'rb') as f:
-                hasher.update(f.read(chunk_size))
-                if size > chunk_size:
-                    f.seek(-chunk_size, os.SEEK_END)
-                    hasher.update(f.read(chunk_size))
-        except Exception as e:
-            print(f"Lỗi khi đọc file để tạo hash: {e}")
-            
-        fingerprint = hasher.hexdigest()
-        
-        return SourceInfo(
-            path=video_path,
-            filename=os.path.basename(video_path),
-            size_bytes=size,
-            modified_at=mtime,
-            fingerprint=fingerprint
-        )
+        return generate_source_info(video_path)
 
     def create_project(self, project_dir: str, name: str, video_path: str) -> Project:
         """Tạo một Project mới hoàn toàn"""
         os.makedirs(project_dir, exist_ok=True)
         os.makedirs(os.path.join(project_dir, "artifacts"), exist_ok=True)
         
-        source_info = self._generate_fingerprint(video_path)
+        generated_source = self._generate_fingerprint(video_path)
+        source_info = ProjectSourceInfo(**generated_source.__dict__)
         now_str = datetime.now().isoformat()
         
         self.current_project = Project(
@@ -180,7 +150,7 @@ class ProjectService:
             
         with open(proj_file, 'r', encoding='utf-8') as f:
             p_data = json.load(f)
-        source_info = SourceInfo(**p_data["source"])
+        source_info = ProjectSourceInfo(**p_data["source"])
         
         # Source Validation
         video_path = source_info.path
