@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
-from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
+from core.recovery.recovery_models import RecoveryCandidate, RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 
@@ -188,6 +188,69 @@ class TestRecoveryManager(unittest.TestCase):
         self.assertEqual(result, session.directory)
         self.assertTrue(session.directory.exists())
         self.assertEqual(quarantines, [])
+
+    def test_tc96_handoff_failure_preserves_old_candidate(self):
+        session = self.manager.create_session(self.context("session-a"))
+        self.tracker.is_dirty = True
+        self.tracker.edit_revision = 1
+        self.assertTrue(self.manager.write_snapshot(self.make_state("session-a", 1)))
+        candidate = self.manager.scan_candidates()[0]
+        self.tracker.edit_revision = 1
+        original = self.manager.snapshot_store.write_json_atomic
+
+        def fail_session_b(path, payload):
+            if path.parent.name != "session-a" and path.name == "snapshot.json":
+                raise OSError("session B failed")
+            original(path, payload)
+
+        self.manager.snapshot_store.write_json_atomic = fail_session_b
+        with self.assertRaises(OSError):
+            self.manager.handoff_recovered_state(
+                candidate,
+                self.make_state("session-a", 1),
+                self.context("session-b"),
+            )
+        self.assertTrue(session.directory.exists())
+        self.assertTrue((session.directory / "active.lock").exists())
+        self.assertTrue((session.directory / "snapshot.json").exists())
+
+    def test_tc97_explicit_save_removes_obsolete_candidate(self):
+        session = self.manager.create_session(self.context("save-session"))
+        self.tracker.is_dirty = True
+        self.tracker.edit_revision = 1
+        self.assertTrue(self.manager.write_snapshot(self.make_state("save-session", 1)))
+        self.tracker.record_explicit_save_success.side_effect = self._mark_saved
+        self.manager.record_explicit_save()
+        self.assertEqual(self.tracker.last_saved_revision, 1)
+        self.assertEqual(self.tracker.last_clean_revision, 1)
+        self.assertFalse(self.tracker.recovered_dirty_baseline)
+        self.assertFalse((session.directory / "snapshot.json").exists())
+        self.assertTrue((session.directory / "active.lock").exists())
+        self.assertEqual(self.manager.scan_candidates(), [])
+
+    def _mark_saved(self):
+        self.tracker.last_saved_revision = self.tracker.edit_revision
+        self.tracker.last_clean_revision = self.tracker.edit_revision
+        self.tracker.recovered_dirty_baseline = False
+        self.tracker.is_dirty = False
+
+    def test_tc98_discard_removes_session_files(self):
+        session = self.manager.create_session(self.context("discard-session"))
+        self.tracker.is_dirty = True
+        self.tracker.edit_revision = 1
+        self.assertTrue(self.manager.write_snapshot(self.make_state("discard-session", 1)))
+        self.manager.discard_session(session.session_id)
+        self.assertFalse(session.directory.exists())
+
+    def test_tc99_finalize_dirty_shutdown_is_noop(self):
+        session = self.manager.create_session(self.context("dirty-session"))
+        self.tracker.is_dirty = True
+        self.tracker.edit_revision = 1
+        self.assertTrue(self.manager.write_snapshot(self.make_state("dirty-session", 1)))
+        before = {path.name: path.read_bytes() for path in session.directory.iterdir()}
+        self.manager.finalize_clean_shutdown()
+        after = {path.name: path.read_bytes() for path in session.directory.iterdir()}
+        self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

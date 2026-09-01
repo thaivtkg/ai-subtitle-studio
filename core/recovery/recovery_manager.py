@@ -157,6 +157,70 @@ class RecoveryManager(QObject):
             return result
         return self.validator.validate_source(candidate.manifest, actual_source_info)
 
+    def handoff_recovered_state(
+        self,
+        old_candidate: RecoveryCandidate,
+        recovered_state: RecoveryWorkingState,
+        new_context: RecoveryContext,
+    ) -> RecoverySession:
+        result = self.validate_candidate(old_candidate)
+        if not result.is_valid:
+            raise ValueError(result.reason)
+        new_session = self.create_session(new_context)
+        state = replace(recovered_state, session_id=new_session.session_id)
+        try:
+            if not self.write_snapshot(state, force=True):
+                raise OSError("recovered snapshot was not written")
+            snapshot_path = new_session.directory / "snapshot.json"
+            if not snapshot_path.exists():
+                raise OSError("recovered snapshot is missing")
+            committed = self.revision_tracker.snapshot_revision
+            if isinstance(committed, int) and committed != state.edit_revision:
+                raise OSError("recovered snapshot revision was not committed")
+        except (OSError, TypeError, ValueError):
+            self.discard_session(new_session.session_id)
+            raise
+        self.discard_session(old_candidate.manifest.session_id)
+        return new_session
+
+    def record_explicit_save(self) -> None:
+        if self._active_session is None:
+            return
+        self.revision_tracker.record_explicit_save_success()
+        manifest = replace(
+            self._active_session.manifest,
+            edit_revision=self.revision_tracker.edit_revision,
+            snapshot_revision=self.revision_tracker.snapshot_revision,
+            last_saved_revision=self.revision_tracker.last_saved_revision,
+            last_clean_revision=self.revision_tracker.last_clean_revision,
+            last_snapshot_at=None,
+        )
+        snapshot_path = self._active_session.directory / "snapshot.json"
+        snapshot_path.unlink(missing_ok=True)
+        self.snapshot_store.write_json_atomic(
+            self._active_session.directory / "manifest.json", asdict(manifest)
+        )
+        self._active_session = replace(self._active_session, manifest=manifest)
+
+    def discard_session(self, session_id: str) -> None:
+        directory = self.sessions_dir / session_id
+        if not directory.exists():
+            return
+        for name in ("active.lock", "snapshot.json", "manifest.json"):
+            (directory / name).unlink(missing_ok=True)
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+        if self._active_session and self._active_session.session_id == session_id:
+            self._active_session = None
+
+    def finalize_clean_shutdown(self) -> bool:
+        if self._active_session is None or self.revision_tracker.is_dirty:
+            return False
+        self.discard_session(self._active_session.session_id)
+        return True
+
     def quarantine_session(self, session_id: str, reason: str) -> Path:
         source = self.sessions_dir / session_id
         target = self.quarantine_dir / f"{session_id}-{self._timestamp_for_path()}"
