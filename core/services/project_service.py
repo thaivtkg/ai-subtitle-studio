@@ -13,10 +13,41 @@ from core.timing.timing_checkpoint import TimingCheckpoint
 class ProjectService:
     """Service điều phối toàn bộ Vòng đời của Dự án (Tạo, Lưu, Mở, Đóng)"""
     
-    def __init__(self, artifact_store: ArtifactStore):
-        self.artifact_store = artifact_store
+    def __init__(self, artifact_store: ArtifactStore | None = None):
+        self.artifact_store = artifact_store or ArtifactStore()
         self.current_project: Project | None = None
         self.project_dir: str | None = None
+
+    def save_draft(self, filepath: str, segments: list[dict], video_path: str = ""):
+        data = {"version": 2.0, "video_path": video_path, "segments": []}
+        for segment in segments:
+            segment_id = segment.get("id") or uuid.uuid4().hex
+            segment["id"] = segment_id
+            data["segments"].append({
+                "id": segment_id, "stt": str(segment.get("stt", "")),
+                "start": segment.get("start", 0), "end": segment.get("end", 0),
+                "text": segment.get("text", ""), "status": segment.get("status", "draft"),
+                "metadata": segment.get("metadata", {"type": "normal"}),
+            })
+        with open(filepath, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+
+    def load_draft(self, filepath: str) -> dict:
+        with open(filepath, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        result = []
+        for index, segment in enumerate(data.get("segments", [])):
+            raw_stt, raw_id = segment.get("stt"), segment.get("id")
+            legacy = raw_stt in (None, "")
+            result.append({
+                "id": uuid.uuid4().hex if legacy else (raw_id or uuid.uuid4().hex),
+                "stt": str(raw_id or index + 1) if legacy else str(raw_stt),
+                "start": segment.get("start", segment.get("start_ms", 0)),
+                "end": segment.get("end", segment.get("end_ms", 0)),
+                "text": segment.get("text", ""), "status": segment.get("status", "draft"),
+                "metadata": segment.get("metadata", {"type": "normal"}),
+            })
+        return {"version": data.get("version", 1.0), "segments": result, "video_path": data.get("video_path", "")}
 
     def _generate_fingerprint(self, video_path: str) -> SourceInfo:
         """Tạo định danh và vân tay cho file video gốc bằng Fast Hash (SHA-256)"""

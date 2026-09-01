@@ -77,6 +77,39 @@ class TestSprint10Integration(unittest.TestCase):
         manager.undo()
         self.assertEqual(self.data[0]["text"], "B")
 
+    def test_tc83_srt_to_draft_repairs_missing_uuid(self):
+        import os
+        import tempfile
+        from core.services.project_service import ProjectService
+        data = [{"id": None, "stt": "1", "start": 1000, "end": 2000, "text": "Line 1"}]
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            service = ProjectService()
+            service.save_draft(path, data)
+            loaded = service.load_draft(path)["segments"][0]
+            self.assertTrue(loaded["id"])
+            self.assertEqual(loaded["stt"], "1")
+        finally:
+            os.remove(path)
+
+    def test_tc84_legacy_draft_migrates_id_to_stt(self):
+        import json
+        import os
+        import tempfile
+        from core.services.project_service import ProjectService
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"version": 1.0, "segments": [{"id": "85", "start_ms": 10, "end_ms": 20, "text": "x"}]}, handle)
+            segment = ProjectService().load_draft(path)["segments"][0]
+            self.assertEqual(segment["stt"], "85")
+            self.assertNotEqual(segment["id"], "85")
+            self.assertEqual(segment["start"], 10)
+        finally:
+            os.remove(path)
+
 
 if __name__ == "__main__":
     unittest.main()
