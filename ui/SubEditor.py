@@ -763,15 +763,11 @@ class SubtitleEditorWidget(QWidget):
             path, _ = QFileDialog.getSaveFileName(self, "Xuất file SRT", default_name, "SubRip Subtitle (*.srt)")
             if not path: return
             
-        new_blocks = []
-        for seg in self.all_segments:
-            raw_text = seg['text']
-            if raw_text == "[ Chưa có nội dung ]": raw_text = ""
-            new_blocks.append(f"{seg['stt']}\n{seg['start']} --> {seg['end']}\n{raw_text}")
+        from core.export.export_service import generate_srt_content
             
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n\n".join(new_blocks) + "\n")
+                f.write(generate_srt_content(self.all_segments))
                 
             self.srt_path = path 
             # [S6-FIX] Cắt ngắn đường dẫn và hiện Toast

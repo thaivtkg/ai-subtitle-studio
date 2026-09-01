@@ -13,10 +13,11 @@ class SubtitleSegmentFactory:
     @staticmethod
     def create_segment(start_ms: int, end_ms: int, text: str = "") -> dict:
         return SubtitleSegment({
-            "stt": uuid.uuid4().hex[:8],
+            "id": uuid.uuid4().hex,
+            "stt": "",
             "start": start_ms,
             "end": end_ms,
             "text": text,
             "status": "draft",
-            "metadata": {},
+            "metadata": {"type": "normal"},
         })

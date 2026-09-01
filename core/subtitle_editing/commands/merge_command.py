@@ -14,7 +14,9 @@ class MergeCommand(SubtitleCommand):
         self.data_provider[self.segment_index]["end"] = self.original_seg2["end"]
         merged_text = f"{self.original_seg1['text'].strip()} {self.original_seg2['text'].strip()}".strip()
         self.data_provider[self.segment_index]["text"] = merged_text
+        self._renumber_stt()
 
     def undo(self):
         self.data_provider[self.segment_index] = self.original_seg1.copy()
         self.data_provider.insert(self.segment_index + 1, self.original_seg2.copy())
+        self._renumber_stt()

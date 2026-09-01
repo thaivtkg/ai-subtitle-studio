@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum, auto
+from core.subtitle_validation.validation_policy import ValidationMode
 
 
 class Severity(Enum):

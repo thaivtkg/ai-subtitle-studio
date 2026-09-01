@@ -12,7 +12,10 @@ class TimelineCommandAdapter(QUndoCommand):
         if self._executed:
             self.command.redo()
         else:
-            self.command.execute(context=None)
+            if hasattr(self.command, "execute"):
+                self.command.execute(context=None)
+            else:
+                self.command.redo()
             self._executed = True
 
     def undo(self):

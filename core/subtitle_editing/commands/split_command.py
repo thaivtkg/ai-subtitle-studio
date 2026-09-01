@@ -29,7 +29,9 @@ class SplitCommand(SubtitleCommand):
                 self.split_time_ms, self.original_seg["end"], text2
             )
         self.data_provider.insert(self.segment_index + 1, self.new_segment)
+        self._renumber_stt()
 
     def undo(self):
         self.data_provider.pop(self.segment_index + 1)
         self.data_provider[self.segment_index] = self.original_seg.copy()
+        self._renumber_stt()

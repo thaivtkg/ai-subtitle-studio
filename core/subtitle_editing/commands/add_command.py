@@ -10,6 +10,8 @@ class AddCommand(SubtitleCommand):
 
     def redo(self):
         self.data_provider.insert(self.segment_index, self.new_segment)
+        self._renumber_stt()
 
     def undo(self):
         self.data_provider.pop(self.segment_index)
+        self._renumber_stt()
