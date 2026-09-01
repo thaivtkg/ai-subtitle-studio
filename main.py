@@ -8,6 +8,7 @@ os.environ["HF_HUB_VERBOSITY"] = "error"  # Chỉ in khi có lỗi thực sự
 
 import ctypes
 import sys
+from dataclasses import replace
 
 from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QIcon
@@ -20,6 +21,8 @@ from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
+from core.project.source_fingerprint import generate_source_info
+from core.recovery.recovery_models import RecoveryContext
 # Import MainWindow từ thư mục ui
 Gui = None
 def build_ipc_request(argv: list[str]) -> IpcRequest:
@@ -72,18 +75,59 @@ def main():
     recovery_manager = build_recovery_manager()
     recovery_candidates = recovery_manager.scan_candidates()
     selected_candidate = recovery_candidates[0] if recovery_candidates else None
+    recovered_state = None
+    recovered_linked = True
     if selected_candidate is not None:
-        from ui.dialogs.recovery_dialog import RecoveryDialog
-
         candidate = selected_candidate
-        dialog = RecoveryDialog(
-            candidate.manifest.session_id,
-            candidate.manifest.project_id or candidate.manifest.project_file_path,
-            candidate.manifest.created_at,
-        )
-        if dialog.exec() == 0:
+        source_info = None
+        if candidate.manifest.video_path and os.path.exists(candidate.manifest.video_path):
+            try:
+                source_info = generate_source_info(candidate.manifest.video_path)
+            except (OSError, ValueError):
+                source_info = None
+        validation = recovery_manager.validate_candidate(candidate, source_info)
+        if not validation.is_valid:
             recovery_manager.discard_session(candidate.manifest.session_id)
             selected_candidate = None
+        else:
+            dialog_cls = None
+            if validation.source_matches:
+                from ui.dialogs.recovery_dialog import RecoveryDialog
+                dialog_cls = RecoveryDialog
+            else:
+                from ui.dialogs.source_mismatch_dialog import SourceMismatchDialog
+                dialog_cls = SourceMismatchDialog
+                recovered_linked = False
+            dialog = dialog_cls(
+                candidate.manifest.session_id,
+                candidate.manifest.project_id or candidate.manifest.project_file_path,
+                candidate.manifest.created_at,
+            )
+            if dialog.exec() == 0:
+                recovery_manager.discard_session(candidate.manifest.session_id)
+                selected_candidate = None
+            else:
+                recovery_manager.revision_tracker.restore_from_snapshot(
+                    candidate.snapshot.edit_revision,
+                    candidate.manifest.last_saved_revision,
+                    candidate.manifest.last_clean_revision,
+                )
+                recovered_session = recovery_manager.handoff_recovered_state(
+                    candidate,
+                    candidate.snapshot,
+                    RecoveryContext(
+                        candidate.manifest.project_id,
+                        candidate.manifest.project_file_path,
+                        candidate.manifest.video_path,
+                        candidate.manifest.source_fingerprint,
+                        candidate.manifest.source_modified_at,
+                        candidate.manifest.app_version,
+                    ),
+                )
+                recovered_state = candidate.snapshot
+                if not recovered_linked:
+                    recovered_state = replace(recovered_state, video_path="")
+                selected_candidate = None
     from ui import Gui as gui_module
 
     # --- CHỈNH SỬA TẠI ĐÂY: Sử dụng RuntimePaths load icon ---
@@ -192,8 +236,8 @@ def main():
 
     # Khởi tạo và hiển thị giao diện chính
     window = gui_module.MainWindow()
-    if selected_candidate is not None and hasattr(window, "apply_recovery_working_state"):
-        window.apply_recovery_working_state(selected_candidate.snapshot, linked=True)
+    if recovered_state is not None:
+        window.apply_recovery_working_state(recovered_state, linked=recovered_linked)
     guard.request_received.connect(window.handle_ipc_request)
     window.show()
 

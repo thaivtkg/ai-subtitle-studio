@@ -118,8 +118,7 @@ class MainWindow(QMainWindow):
         )
         self.revision_tracker.dirty_changed.connect(self._update_window_title_dirty_marker)
         self.revision_tracker.clean_point_reached.connect(
-            lambda revision: self.recovery_manager.invalidate_snapshot_at_clean_point(revision)
-            if hasattr(self.recovery_manager, "invalidate_snapshot_at_clean_point") else None
+            self.recovery_manager.invalidate_snapshot_at_clean_point
         )
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(30_000)

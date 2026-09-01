@@ -20,12 +20,32 @@ class RecoveryValidator:
             return RecoveryValidationResult(False, "SESSION_ID_MISMATCH")
         if manifest.snapshot_revision != snapshot.edit_revision:
             return RecoveryValidationResult(False, "SNAPSHOT_REVISION_MISMATCH")
+        revisions = (
+            manifest.edit_revision,
+            manifest.snapshot_revision,
+            manifest.last_saved_revision,
+            manifest.last_clean_revision,
+            snapshot.edit_revision,
+        )
+        if any(not isinstance(value, int) or value < 0 for value in revisions):
+            return RecoveryValidationResult(False, "INVALID_REVISION")
+        if manifest.snapshot_revision > manifest.edit_revision:
+            return RecoveryValidationResult(False, "INVALID_REVISION")
+        if not isinstance(snapshot.workspace_state, dict):
+            return RecoveryValidationResult(False, "INVALID_WORKSPACE_SCHEMA")
 
         for segment in snapshot.segments:
             if not isinstance(segment, dict):
                 return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
             if not segment.get("id") or not segment.get("stt"):
                 return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
+            if "start" in segment and "end" in segment:
+                try:
+                    start, end = float(segment["start"]), float(segment["end"])
+                except (TypeError, ValueError):
+                    return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
+                if start < 0 or end < start:
+                    return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
 
         return RecoveryValidationResult(True)
 

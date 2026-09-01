@@ -147,6 +147,19 @@ class RecoveryManager(QObject):
                 candidates.append(RecoveryCandidate(manifest, snapshot, directory))
         return candidates
 
+    def invalidate_snapshot_at_clean_point(self, clean_revision: int) -> None:
+        if self._active_session is None:
+            return
+        manifest = self._active_session.manifest
+        if manifest.snapshot_revision > clean_revision:
+            return
+        (self._active_session.directory / "snapshot.json").unlink(missing_ok=True)
+        updated = replace(manifest, last_clean_revision=clean_revision)
+        self.snapshot_store.write_json_atomic(
+            self._active_session.directory / "manifest.json", asdict(updated)
+        )
+        self._active_session = replace(self._active_session, manifest=updated)
+
     def validate_candidate(
         self,
         candidate: RecoveryCandidate,
