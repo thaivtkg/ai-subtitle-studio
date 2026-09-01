@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
@@ -493,7 +494,7 @@ class SubtitleEditorWidget(QWidget):
             return
         if self.selection_controller and not self._is_syncing_ui:
             self.selection_controller.select(
-                index, self.all_segments[index].get("stt"), SelectionSource.EDITOR
+                index, self.all_segments[index].get("id"), SelectionSource.EDITOR
             )
             return
         self._select_segment_ui(index)
@@ -524,7 +525,7 @@ class SubtitleEditorWidget(QWidget):
             return
         if self.selection_controller and not self._is_syncing_ui:
             self.selection_controller.select(
-                absolute_index, self.all_segments[absolute_index].get("stt"), SelectionSource.PLAYBACK
+                absolute_index, self.all_segments[absolute_index].get("id"), SelectionSource.PLAYBACK
             )
             return
         self.current_index = absolute_index
@@ -806,7 +807,8 @@ class SubtitleEditorWidget(QWidget):
                 current_status = "draft" if raw_text.strip() else "timing_only"
                 
             draft_data["segments"].append({
-                "id": seg['stt'],
+                "id": seg.get('id'),
+                "stt": seg.get('stt', ''),
                 "start_ms": self.time_str_to_ms(seg['start']),
                 "end_ms": self.time_str_to_ms(seg['end']),
                 "text": raw_text,
@@ -843,7 +845,8 @@ class SubtitleEditorWidget(QWidget):
             
         for seg in data.get("segments", []):
             self.all_segments.append({
-                "stt": str(seg.get("id", 0)),
+                "id": seg.get("id", uuid.uuid4().hex),
+                "stt": str(seg.get("stt", "")),
                 "start": self.ms_to_time_str(seg.get("start_ms", 0)),
                 "end": self.ms_to_time_str(seg.get("end_ms", 0)),
                 "text": seg.get("text", ""),
@@ -871,7 +874,7 @@ class SubtitleEditorWidget(QWidget):
         for seg in self.all_segments:
             seg['status'] = 'final'
             
-        Toast.show_success(self.window(), "Đã chốt Timing! Sẵn sàng cho AI điền chữ.")
+        Toast.show_success(self.window(), "Đã chốt Timing! Sẵn sàng tạo phụ đề.")
 
     def update_draft_progress(self):
         if not self.all_segments:

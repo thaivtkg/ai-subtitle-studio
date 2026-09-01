@@ -4,6 +4,7 @@ from core.subtitle_editing.segment_factory import SubtitleSegmentFactory
 from core.subtitle_editing.commands.add_command import AddCommand
 from core.subtitle_editing.commands.split_command import SplitCommand
 from core.subtitle_editing.commands.edit_text_command import EditTextCommand
+from core.subtitle_editing.commands.base_command import SubtitleCommand
 from core.subtitle_editing.commands.timeline_adapter import TimelineCommandAdapter
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.subtitle_validation.subtitle_validator import SubtitleValidator
@@ -58,6 +59,23 @@ class TestSprint10Integration(unittest.TestCase):
         draft = SubtitleValidator.validate_segment(0, self.data[0], 10000, ValidationMode.TIMING_DRAFT)
         self.assertTrue(any(issue.code == "EMPTY_TEXT" for issue in full))
         self.assertFalse(any(issue.code == "EMPTY_TEXT" for issue in draft))
+
+    def test_tc81_empty_list_add_renumbers(self):
+        data = []
+        AddCommand(0, 1000, 3000, data).redo()
+        self.assertEqual(data[0]["stt"], "1")
+        self.assertTrue(generate_srt_content(data).startswith("1\n00:00:01,000 --> 00:00:03,000"))
+
+    def test_tc82_global_undo_is_single_step(self):
+        manager = GlobalUndoManager()
+        manager.push(EditTextCommand(0, "A", "B", self.data))
+        class TimelineEdit(SubtitleCommand):
+            def redo(self): self.data_provider[0]["end"] = 5000
+            def undo(self): self.data_provider[0]["end"] = 3000
+        manager.push(TimelineEdit("Timeline", self.data))
+        self.assertEqual(manager.undo_stack.count(), 2)
+        manager.undo()
+        self.assertEqual(self.data[0]["text"], "B")
 
 
 if __name__ == "__main__":

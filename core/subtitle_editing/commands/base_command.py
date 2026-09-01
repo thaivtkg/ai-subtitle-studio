@@ -10,7 +10,10 @@ class SubtitleCommand(QUndoCommand):
         self._stt_schema = bool(data_provider and any("stt" in segment for segment in data_provider))
 
     def _renumber_stt(self):
-        if not self._stt_schema:
+        if not self.data_provider:
+            return
+        # Empty-list Add creates the first production segment with id/stt.
+        if not self._stt_schema and not all("id" in segment for segment in self.data_provider):
             return
         for index, segment in enumerate(self.data_provider):
             segment["stt"] = str(index + 1)

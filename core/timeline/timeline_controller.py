@@ -105,13 +105,6 @@ class TimelineController(QObject):
             elif key == Qt.Key_Delete:
                 self._trigger_delete()
                 return True
-            elif key == Qt.Key_Z:
-                if modifiers == Qt.ControlModifier:
-                    self.handle_undo()
-                    return True
-                elif modifiers == (Qt.ControlModifier | Qt.ShiftModifier):
-                    self.handle_redo()
-                    return True
         return super().eventFilter(obj, event)
 
     def _do_seek(self, x, modifiers=Qt.NoModifier):
