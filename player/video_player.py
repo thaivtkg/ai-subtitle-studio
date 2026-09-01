@@ -244,6 +244,12 @@ class VideoPlayerWidget(QWidget):
         else:
             self.player.play()
 
+    def get_current_time_ms(self):
+        return self.player.position()
+
+    def get_video_duration_ms(self):
+        return self.player.duration()
+
     def update_play_button(self):
         if self.player.isPlaying():
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))

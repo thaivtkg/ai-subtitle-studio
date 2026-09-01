@@ -45,6 +45,8 @@ from core.Backend import is_garbage
 from core.queue_manager import QueueManager
 from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
+from core.subtitle_editing.global_undo_manager import GlobalUndoManager
+from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
@@ -95,6 +97,9 @@ class MainWindow(QMainWindow):
         self.artifact_store = ArtifactStore()
         self.project_service = ProjectService(self.artifact_store)
         self.workspace_service = WorkspaceService(self, self.project_service)
+        self.undo_manager = GlobalUndoManager(self)
+        self.global_undo_manager = self.undo_manager
+        self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
         from core.subtitle_generation.faster_whisper_service import FasterWhisperService
@@ -119,10 +124,6 @@ class MainWindow(QMainWindow):
         self.shortcut_save.setContext(Qt.ApplicationShortcut)
         self.shortcut_save.activated.connect(self.action_save_project)
 
-        self.shortcut_play = QShortcut(QKeySequence("Space"), self)
-        self.shortcut_play.setContext(Qt.WindowShortcut)
-        self.shortcut_play.activated.connect(self._toggle_playback_shortcut)
-        
         self.setWindowTitle("AI Subtitle Studio")
         
         self.setMinimumSize(1280, 720)
@@ -277,6 +278,12 @@ class MainWindow(QMainWindow):
         self.top_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
         self.top_splitter = self.top_horizontal_splitter
         self.sub_editor = SubtitleEditorWidget()
+        self.sub_editor.project_service = self.project_service
+        self.sub_editor.undo_manager = self.undo_manager
+        self.sub_editor.selection_controller = self.selection_controller
+        self.selection_controller.selection_changed.connect(self.sub_editor.sync_selection)
+        self.undo_manager.state_changed.connect(self.sub_editor.render_page)
+        self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
         self.top_horizontal_splitter.addWidget(self.sub_editor)
@@ -292,6 +299,7 @@ class MainWindow(QMainWindow):
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
+        self._setup_global_shortcuts()
 
         self.workspace_vertical_splitter.addWidget(self.top_horizontal_splitter)
 
@@ -433,7 +441,11 @@ class MainWindow(QMainWindow):
         self.workspace_vertical_splitter.addWidget(self.timeline_widget)
 
         self.timeline_data_provider = TimelineDataProvider()
-        self.timeline_controller = TimelineController(self.project_service, self.timeline_widget, self.timeline_data_provider)
+        self.timeline_controller = TimelineController(
+            self.project_service, self.timeline_widget, self.timeline_data_provider,
+            undo_manager=self.undo_manager, selection_controller=self.selection_controller,
+        )
+        self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
         
         # Liên kết Cầu đồng bộ (Click Table -> Bôi đen Timeline)
@@ -633,6 +645,19 @@ class MainWindow(QMainWindow):
         if hasattr(self.video_player, "toggle_playback"):
             self.video_player.toggle_playback()
 
+    def _setup_global_shortcuts(self):
+        self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.shortcut_undo.activated.connect(self.undo_manager.undo)
+        self.shortcut_redo = QShortcut(QKeySequence("Ctrl+Y"), self)
+        self.shortcut_redo.activated.connect(self.undo_manager.redo)
+        self.shortcut_merge = QShortcut(QKeySequence("Ctrl+M"), self)
+        self.shortcut_merge.activated.connect(self.sub_editor.trigger_merge)
+        self.shortcut_split = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+        self.shortcut_split.activated.connect(
+            lambda: self.sub_editor.trigger_split(self.video_player.get_current_time_ms())
+        )
+        QApplication.instance().installEventFilter(self)
+
     @Slot()
     def _toggle_ai_drawer(self):
         if self.drawer_anim.state() == QAbstractAnimation.Running:
@@ -693,6 +718,15 @@ class MainWindow(QMainWindow):
         self.btn_drawer_toggle.raise_()
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and self.isActiveWindow():
+            focus_widget = QApplication.focusWidget()
+            is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit))
+            if event.key() == Qt.Key_Space and not is_typing:
+                self.video_player.toggle_playback()
+                return True
+            if event.key() == Qt.Key_Delete and not is_typing:
+                self.sub_editor.trigger_delete()
+                return True
         if obj == self.centralWidget() and event.type() == QEvent.Resize:
             self._update_drawer_handle_position()
         return super().eventFilter(obj, event)

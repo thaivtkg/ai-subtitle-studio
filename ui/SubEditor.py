@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
@@ -27,6 +28,16 @@ from PySide6.QtWidgets import (
 # Nạp Design System
 from ui.theme import Theme
 from ui.toast import Toast
+from core.subtitle_editing.commands.edit_text_command import EditTextCommand
+from core.subtitle_editing.commands.edit_timing_command import EditTimingCommand
+from core.subtitle_editing.commands.add_command import AddCommand
+from core.subtitle_editing.commands.delete_command import DeleteCommand
+from core.subtitle_editing.commands.merge_command import MergeCommand
+from core.subtitle_editing.commands.split_command import SplitCommand
+from core.subtitle_validation.subtitle_validator import SubtitleValidator
+from core.subtitle_validation.validation_issue import Severity
+from core.subtitle_editing.selection_controller import SelectionSource
+from core.export.subtitle_parser import parse_srt_content
 
 
 def ms_to_time_str(ms: int) -> str:
@@ -39,6 +50,8 @@ def ms_to_time_str(ms: int) -> str:
 
 def time_str_to_ms(time_str: str) -> int:
     """Parse a strict HH:MM:SS,mmm timestamp; return -1 when invalid."""
+    if isinstance(time_str, (int, float)) and not isinstance(time_str, bool):
+        return int(time_str)
     match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", str(time_str).strip())
     if not match:
         return -1
@@ -90,6 +103,8 @@ class CurrentSubtitleEditor(QWidget):
         self._debounce.timeout.connect(self._emit_changed)
 
     def set_values(self, start, end, text):
+        start = ms_to_time_str(start) if isinstance(start, (int, float)) else str(start)
+        end = ms_to_time_str(end) if isinstance(end, (int, float)) else str(end)
         for widget, value in ((self.start_edit, start), (self.end_edit, end)):
             widget.blockSignals(True)
             widget.setText(value)
@@ -129,10 +144,13 @@ class SubtitleEditorWidget(QWidget):
         self.srt_path = None
         
         self.all_segments = []
+        self.undo_manager = None
+        self.selection_controller = None
         self.current_page = 0
         self.current_index = -1
         self.group_size = 0     
         self.is_rendering = False
+        self._is_syncing_ui = False
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -333,12 +351,24 @@ class SubtitleEditorWidget(QWidget):
             self.btn_next.setEnabled(self.current_page < max_page - 1)
 
         display_segments = self.all_segments[start_idx:end_idx]
+        all_issues = SubtitleValidator.validate_all(self.all_segments, self._video_duration_ms())
         self.table.setRowCount(len(display_segments))
 
         for row, seg in enumerate(display_segments):
-            self._set_table_item(row, 0, str(seg['stt']))
-            self._set_table_item(row, 1, seg['start'])
-            self._set_table_item(row, 2, seg['end'])
+            global_index = start_idx + row
+            start_text = self.ms_to_time_str(seg['start']) if isinstance(seg['start'], (int, float)) else seg['start']
+            end_text = self.ms_to_time_str(seg['end']) if isinstance(seg['end'], (int, float)) else seg['end']
+            item_id = QTableWidgetItem(str(seg.get('stt', global_index + 1)))
+            item_id.setTextAlignment(Qt.AlignCenter)
+            item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
+            issues = all_issues.get(global_index, [])
+            if issues:
+                has_error = any(issue.severity is Severity.ERROR for issue in issues)
+                item_id.setText(f"{'❌' if has_error else '⚠'} {item_id.text()}")
+                item_id.setToolTip("\n".join(f"- {issue.message}" for issue in issues))
+            self.table.setItem(row, 0, item_id)
+            self._set_table_item(row, 1, start_text)
+            self._set_table_item(row, 2, end_text)
             try:
                 duration_ms = self.time_str_to_ms(seg['end']) - self.time_str_to_ms(seg['start'])
                 duration_text = f"{max(0, duration_ms) / 1000:.3f} s"
@@ -360,7 +390,25 @@ class SubtitleEditorWidget(QWidget):
         self.table.blockSignals(False)
         self.is_rendering = False
         self.update_empty_state()
+        self._load_current_editor()
         self.sync_to_controller()
+
+    def _video_duration_ms(self):
+        try:
+            player = getattr(self.window(), "video_player", None)
+            getter = getattr(player, "get_video_duration_ms", None)
+            if getter:
+                return max(0, int(getter()))
+            return max(0, int(player.player.duration())) if player is not None else 0
+        except (AttributeError, TypeError, ValueError):
+            return 0
+
+    def _has_blocking_validation_errors(self):
+        return any(
+            issue.severity is Severity.ERROR
+            for issues in SubtitleValidator.validate_all(self.all_segments, self._video_duration_ms()).values()
+            for issue in issues
+        )
 
     def _set_table_item(self, row, col, text, readonly=False):
         item = QTableWidgetItem(str(text))
@@ -383,13 +431,14 @@ class SubtitleEditorWidget(QWidget):
         self.live_edit_applied.emit(data)
 
     def on_table_edit(self, row, col):
-        if self.is_rendering: return
+        if self.is_rendering or self.undo_manager is None: return
         
         abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
         if abs_idx >= len(self.all_segments): return
 
-        old_start = self.all_segments[abs_idx]['start']
-        old_end = self.all_segments[abs_idx]['end']
+        segment = self.all_segments[abs_idx]
+        old_start = segment['start']
+        old_end = segment['end']
 
         it_stt = self.table.item(row, 0)
         it_start = self.table.item(row, 1)
@@ -398,7 +447,6 @@ class SubtitleEditorWidget(QWidget):
 
         if it_stt and it_start and it_end and it_text:
             try:
-                self.time_str_to_ms(it_start.text())
                 start_ms = self.time_str_to_ms(it_start.text())
                 end_ms = self.time_str_to_ms(it_end.text())
                 if start_ms >= end_ms:
@@ -407,21 +455,27 @@ class SubtitleEditorWidget(QWidget):
                 # [S6-FIX] Dùng Toast Error thay cho QMessageBox
                 Toast.show_error(self.window(), "Timestamp không hợp lệ (Chuẩn: HH:MM:SS,mmm)")
                 self.table.blockSignals(True)
-                it_start.setText(old_start)
-                it_end.setText(old_end)
+                it_start.setText(self._display_time_value(old_start))
+                it_end.setText(self._display_time_value(old_end))
                 self.table.blockSignals(False)
                 return
 
-            self.all_segments[abs_idx]['stt'] = it_stt.text()
-            self.all_segments[abs_idx]['start'] = it_start.text()
-            self.all_segments[abs_idx]['end'] = it_end.text()
-            
+            new_start, new_end = it_start.text(), it_end.text()
+            new_start = self._coerce_time_value(old_start, new_start)
+            new_end = self._coerce_time_value(old_end, new_end)
             raw_text = it_text.text()
             if raw_text == "[ Chưa có nội dung ]": raw_text = ""
-            self.all_segments[abs_idx]['text'] = raw_text
-            
-            self.sync_to_controller()
-            self.update_draft_progress()
+            if new_start != old_start or new_end != old_end:
+                self.undo_manager.push(
+                    EditTimingCommand(
+                        abs_idx, old_start, old_end, new_start, new_end, self.all_segments
+                    )
+                )
+
+            if segment['text'] != raw_text:
+                self.undo_manager.push(
+                    EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments)
+                )
 
     def _on_row_selected(self, row, _column):
         abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
@@ -439,6 +493,23 @@ class SubtitleEditorWidget(QWidget):
     def select_segment(self, index: int):
         if not (0 <= index < len(self.all_segments)):
             return
+        if self.selection_controller and not self._is_syncing_ui:
+            self.selection_controller.select(
+                index, self.all_segments[index].get("id"), SelectionSource.EDITOR
+            )
+            return
+        self._select_segment_ui(index)
+
+    def sync_selection(self, index, segment_id, source=None):
+        if 0 <= index < len(self.all_segments):
+            self._is_syncing_ui = True
+            self._select_segment_ui(index)
+            self._is_syncing_ui = False
+        else:
+            self.current_index = -1
+            self.update_empty_state()
+
+    def _select_segment_ui(self, index: int):
         self.current_index = index
         seg = self.all_segments[index]
         self.current_editor.setEnabled(True)
@@ -452,6 +523,11 @@ class SubtitleEditorWidget(QWidget):
     def sync_playback_highlight(self, absolute_index: int):
         """Select the subtitle currently playing without issuing a seek."""
         if not (0 <= absolute_index < len(self.all_segments)):
+            return
+        if self.selection_controller and not self._is_syncing_ui:
+            self.selection_controller.select(
+                absolute_index, self.all_segments[absolute_index].get("id"), SelectionSource.PLAYBACK
+            )
             return
         self.current_index = absolute_index
         items_per_page = self.group_size or len(self.all_segments)
@@ -476,25 +552,100 @@ class SubtitleEditorWidget(QWidget):
             self.current_editor.setTitle(f"Current Subtitle: #{self.current_index + 1}")
             self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
 
-    def _apply_current_editor(self, values):
-        rows = self.table.selectionModel().selectedRows()
-        if not rows:
+    def _apply_current_editor(self, values=None):
+        if self._is_syncing_ui or self.current_index < 0 or self.undo_manager is None:
             return
-        row = rows[0].row()
-        abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
+        if values is None:
+            values = {
+                "start": self.inp_start.text(),
+                "end": self.inp_end.text(),
+                "text": self.txt_content.toPlainText(),
+            }
+        abs_idx = self.current_index
         if not (0 <= abs_idx < len(self.all_segments)):
             return
+        segment = self.all_segments[abs_idx]
         try:
             start_ms = self.time_str_to_ms(values["start"])
             end_ms = self.time_str_to_ms(values["end"])
-            if start_ms >= end_ms:
+            if start_ms < 0 or end_ms < 0 or start_ms >= end_ms:
                 raise ValueError
         except ValueError:
+            self._is_syncing_ui = True
+            self.inp_start.setText(self._display_time_value(segment["start"]))
+            self.inp_end.setText(self._display_time_value(segment["end"]))
+            self._is_syncing_ui = False
             return
-        self.all_segments[abs_idx].update(values)
-        self.render_page()
+
+        new_start = self._coerce_time_value(segment["start"], values["start"])
+        new_end = self._coerce_time_value(segment["end"], values["end"])
+        if new_start != segment["start"] or new_end != segment["end"]:
+            self.undo_manager.push(
+                EditTimingCommand(
+                    abs_idx,
+                    segment["start"],
+                    segment["end"],
+                    new_start,
+                    new_end,
+                    self.all_segments,
+                )
+            )
+        if values["text"] != segment["text"]:
+            self.undo_manager.push(
+                EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments)
+            )
+
+    @staticmethod
+    def _coerce_time_value(old_value, value):
+        if isinstance(old_value, (int, float)) and not isinstance(old_value, bool):
+            return time_str_to_ms(value)
+        return value
+
+    @staticmethod
+    def _display_time_value(value):
+        return ms_to_time_str(value) if isinstance(value, (int, float)) else str(value)
+
+    def trigger_delete(self):
+        if self.current_index < 0 or self.undo_manager is None:
+            return
+        self.undo_manager.push(DeleteCommand(self.current_index, self.all_segments))
+
+    def trigger_merge(self):
+        if (
+            self.current_index < 0
+            or self.current_index >= len(self.all_segments) - 1
+            or self.undo_manager is None
+        ):
+            return
+        self.undo_manager.push(MergeCommand(self.current_index, self.all_segments))
+
+    def trigger_split(self, playhead_ms: int):
+        if self.current_index < 0 or self.undo_manager is None:
+            return
+        segment = self.all_segments[self.current_index]
+        start_ms = self.time_str_to_ms(segment["start"])
+        end_ms = self.time_str_to_ms(segment["end"])
+        if start_ms < playhead_ms < end_ms:
+            self.undo_manager.push(
+                SplitCommand(self.current_index, playhead_ms, self.all_segments)
+            )
+
+    def trigger_add(self, playhead_ms: int, video_duration_ms: int):
+        if self.undo_manager is None:
+            return
+        start_ms = max(0, int(playhead_ms))
+        end_ms = min(start_ms + 2000, int(video_duration_ms))
+        insert_idx = self.current_index + 1 if self.current_index >= 0 else len(self.all_segments)
+        if insert_idx < len(self.all_segments):
+            next_start = self.time_str_to_ms(self.all_segments[insert_idx]["start"])
+            end_ms = min(end_ms, next_start)
+        if end_ms <= start_ms:
+            return
+        self.undo_manager.push(AddCommand(insert_idx, start_ms, end_ms, self.all_segments))
 
     def _undo_manager(self):
+        if self.undo_manager is not None:
+            return self.undo_manager
         window = self.window()
         timeline = getattr(window, "timeline_widget", None)
         manager = getattr(timeline, "undo_manager", None)
@@ -559,45 +710,30 @@ class SubtitleEditorWidget(QWidget):
         return value
 
     def load_srt_file(self, srt_path):
-        self.srt_path = srt_path
-        self.all_segments.clear()
-
-        if not srt_path or not os.path.exists(srt_path): 
-            self.render_page()
+        if not srt_path or not os.path.exists(srt_path):
             return
-
-        with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read().replace('\r\n', '\n')
-
-        blocks = re.split(r'\n{2,}', content.strip())
-        
-        for block in blocks:
-            lines = block.strip().split("\n")
-            if len(lines) >= 2 and "-->" in lines[1]:
-                idx = lines[0].strip()
-                time_range = lines[1].strip()
-                text = "\n".join(lines[2:]) if len(lines) > 2 else ""
-                
-                times = time_range.split(" --> ")
-                start = times[0].strip() if len(times) > 0 else ""
-                end = times[1].strip() if len(times) > 1 else ""
-                
-                self.all_segments.append({
-                    "stt": idx,
-                    "start": start,
-                    "end": end,
-                    "text": text,
-                    "status": "draft",
-                    "metadata": {"type": "normal"}
-                })
-
+        with open(srt_path, "r", encoding="utf-8", errors="ignore") as handle:
+            self.all_segments = parse_srt_content(handle.read())
+        self.srt_path = srt_path
         self.current_page = 0
         self.render_page()
+        if self.undo_manager:
+            self.undo_manager.clear()
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
         self.update_draft_progress()
 
     def save_srt(self):
         from PySide6.QtWidgets import QFileDialog
         import os
+
+        if self._has_blocking_validation_errors():
+            QMessageBox.critical(
+                self,
+                "Lỗi Phụ Đề",
+                "Phụ đề đang chứa lỗi thời gian nghiêm trọng (❌). Vui lòng sửa trước khi xuất file.",
+            )
+            return
         
         path = self.srt_path
         if not path or not path.endswith('.srt'):
@@ -606,15 +742,11 @@ class SubtitleEditorWidget(QWidget):
             path, _ = QFileDialog.getSaveFileName(self, "Xuất file SRT", default_name, "SubRip Subtitle (*.srt)")
             if not path: return
             
-        new_blocks = []
-        for seg in self.all_segments:
-            raw_text = seg['text']
-            if raw_text == "[ Chưa có nội dung ]": raw_text = ""
-            new_blocks.append(f"{seg['stt']}\n{seg['start']} --> {seg['end']}\n{raw_text}")
+        from core.export.export_service import generate_srt_content
             
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n\n".join(new_blocks) + "\n")
+                f.write(generate_srt_content(self.all_segments))
                 
             self.srt_path = path 
             # [S6-FIX] Cắt ngắn đường dẫn và hiện Toast
@@ -624,14 +756,15 @@ class SubtitleEditorWidget(QWidget):
         except Exception as e:
             Toast.show_error(self.window(), f"Lỗi lưu SRT: {str(e)}")
 
-    def save_draft(self, silent=False):
+    def save_draft(self, filepath=None, silent=False):
         import json
         import os
         from PySide6.QtWidgets import QFileDialog
         
-        path = self.srt_path
+        explicit_path = bool(filepath)
+        path = filepath or self.srt_path
         
-        if silent:
+        if silent and not explicit_path:
             if not path:
                 path = "Project.ai-subtitle-draft"
             elif not path.endswith('.ai-subtitle-draft'):
@@ -644,26 +777,12 @@ class SubtitleEditorWidget(QWidget):
             
         if not path: return
         
-        draft_data = {"version": 1.0, "segments": []}
-        for seg in self.all_segments:
-            raw_text = seg['text'] if seg['text'] != "[ Chưa có nội dung ]" else ""
-            current_status = seg.get('status', 'timing_only')
-            
-            if current_status != 'final':
-                current_status = "draft" if raw_text.strip() else "timing_only"
-                
-            draft_data["segments"].append({
-                "id": seg['stt'],
-                "start_ms": self.time_str_to_ms(seg['start']),
-                "end_ms": self.time_str_to_ms(seg['end']),
-                "text": raw_text,
-                "status": current_status,
-                "metadata": seg.get('metadata', {"type": "normal"})
-            })
-            
         try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(draft_data, f, ensure_ascii=False, indent=4)
+            if not getattr(self, "project_service", None):
+                return
+            self.project_service.save_draft(path, self.all_segments)
+            if self.undo_manager:
+                self.undo_manager.mark_saved()
                 
             self.srt_path = path
             
@@ -675,31 +794,17 @@ class SubtitleEditorWidget(QWidget):
                 Toast.show_error(self.window(), f"Lỗi lưu Draft: {str(e)}")
 
     def load_draft_file(self, draft_path):
-        import json
-        import os
-        
-        self.srt_path = draft_path 
-        self.all_segments.clear()
-        
-        if not draft_path or not os.path.exists(draft_path):
-            self.render_page()
+        if not getattr(self, "project_service", None) or not draft_path:
             return
-            
-        with open(draft_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        for seg in data.get("segments", []):
-            self.all_segments.append({
-                "stt": str(seg.get("id", 0)),
-                "start": self.ms_to_time_str(seg.get("start_ms", 0)),
-                "end": self.ms_to_time_str(seg.get("end_ms", 0)),
-                "text": seg.get("text", ""),
-                "status": seg.get("status", "timing_only"),
-                "metadata": seg.get("metadata", {"type": "normal"})
-            })
-            
+        data = self.project_service.load_draft(draft_path)
+        self.srt_path = draft_path
+        self.all_segments = data.get("segments", [])
         self.current_page = 0
         self.render_page()
+        if self.undo_manager:
+            self.undo_manager.clear()
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
         self.update_draft_progress()
 
     def on_row_double_clicked(self, row, column):
@@ -718,7 +823,7 @@ class SubtitleEditorWidget(QWidget):
         for seg in self.all_segments:
             seg['status'] = 'final'
             
-        Toast.show_success(self.window(), "Đã chốt Timing! Sẵn sàng cho AI điền chữ.")
+        Toast.show_success(self.window(), "Đã chốt Timing! Sẵn sàng tạo phụ đề.")
 
     def update_draft_progress(self):
         if not self.all_segments:
