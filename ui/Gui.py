@@ -1904,7 +1904,6 @@ class MainWindow(QMainWindow):
             if exported:
                 if getattr(self, 'project_service', None) and self.project_service.current_project:
                     self.project_service.current_project.state.export_status = "READY"
-                    self.project_service.mark_dirty()
                 Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
             else:
                 Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
@@ -2007,9 +2006,9 @@ class MainWindow(QMainWindow):
             result = self.project_service.save_project()
             if result is False:
                 return False
+            self.recovery_manager.record_explicit_save()
             self.revision_tracker.record_explicit_save_success()
             self.global_undo_manager.mark_saved()
-            self.recovery_manager.record_explicit_save()
             self._update_window_title_dirty_marker(False)
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True

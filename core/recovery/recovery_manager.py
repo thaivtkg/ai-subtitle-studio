@@ -186,13 +186,13 @@ class RecoveryManager(QObject):
     def record_explicit_save(self) -> None:
         if self._active_session is None:
             return
-        self.revision_tracker.record_explicit_save_success()
+        revision = self.revision_tracker.edit_revision
         manifest = replace(
             self._active_session.manifest,
-            edit_revision=self.revision_tracker.edit_revision,
-            snapshot_revision=self.revision_tracker.snapshot_revision,
-            last_saved_revision=self.revision_tracker.last_saved_revision,
-            last_clean_revision=self.revision_tracker.last_clean_revision,
+            edit_revision=revision,
+            snapshot_revision=revision,
+            last_saved_revision=revision,
+            last_clean_revision=revision,
             last_snapshot_at=None,
         )
         snapshot_path = self._active_session.directory / "snapshot.json"
@@ -200,6 +200,7 @@ class RecoveryManager(QObject):
             self._active_session.directory / "manifest.json", asdict(manifest)
         )
         snapshot_path.unlink(missing_ok=True)
+        self.revision_tracker.record_explicit_save_success()
         self._active_session = replace(self._active_session, manifest=manifest)
 
     def discard_session(self, session_id: str) -> None:

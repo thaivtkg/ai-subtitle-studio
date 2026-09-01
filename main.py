@@ -192,7 +192,7 @@ def main():
 
     # Khởi tạo và hiển thị giao diện chính
     window = gui_module.MainWindow()
-    if selected_candidate is not None and hasattr(window, "apply_recovery_state"):
+    if selected_candidate is not None and hasattr(window, "apply_recovery_working_state"):
         window.apply_recovery_working_state(selected_candidate.snapshot, linked=True)
     guard.request_received.connect(window.handle_ipc_request)
     window.show()
