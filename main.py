@@ -41,13 +41,14 @@ def run_secondary_instance(guard: SingleInstanceGuard, argv: list[str]) -> int:
 def build_recovery_manager():
     undo_manager = GlobalUndoManager()
     tracker = RevisionTracker(undo_manager)
-    return RecoveryManager(
+    manager = RecoveryManager(
         RuntimePaths.get_recovery_sessions_dir(),
         RuntimePaths.get_recovery_quarantine_dir(),
         tracker,
         AtomicSnapshotStore(),
         RecoveryValidator(),
     )
+    return undo_manager, tracker, manager
 
 
 def main():
@@ -72,7 +73,7 @@ def main():
         guard.close()
         return result
     guard.start_listening()
-    recovery_manager = build_recovery_manager()
+    undo_manager, revision_tracker, recovery_manager = build_recovery_manager()
     recovery_candidates = recovery_manager.scan_candidates()
     selected_candidate = recovery_candidates[0] if recovery_candidates else None
     recovered_state = None
@@ -107,7 +108,7 @@ def main():
                 recovery_manager.discard_session(candidate.manifest.session_id)
                 selected_candidate = None
             else:
-                recovery_manager.revision_tracker.restore_from_snapshot(
+                revision_tracker.restore_from_snapshot(
                     candidate.snapshot.edit_revision,
                     candidate.manifest.last_saved_revision,
                     candidate.manifest.last_clean_revision,
@@ -235,7 +236,11 @@ def main():
 
 
     # Khởi tạo và hiển thị giao diện chính
-    window = gui_module.MainWindow()
+    window = gui_module.MainWindow(
+        revision_tracker=revision_tracker,
+        recovery_manager=recovery_manager,
+        undo_manager=undo_manager,
+    )
     if recovered_state is not None:
         window.apply_recovery_working_state(recovered_state, linked=recovered_linked)
     guard.request_received.connect(window.handle_ipc_request)

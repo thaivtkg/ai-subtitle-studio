@@ -49,7 +49,7 @@ from core.services.workspace_service import WorkspaceService
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
-from core.recovery.recovery_models import RecoveryWorkingState
+from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.runtime.runtime_paths import RuntimePaths
@@ -95,20 +95,20 @@ class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None, parent=None):
+        super().__init__(parent)
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
 
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
-        self.undo_manager = GlobalUndoManager(self)
+        self.undo_manager = undo_manager or GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
-        self.revision_tracker = RevisionTracker(self.undo_manager, self)
+        self.revision_tracker = revision_tracker or RevisionTracker(self.undo_manager, self)
         self.project_service = ProjectService(self.artifact_store)
         self.project_service.revision_tracker = self.revision_tracker
-        self.recovery_manager = RecoveryManager(
+        self.recovery_manager = recovery_manager or RecoveryManager(
             RuntimePaths.get_recovery_sessions_dir(),
             RuntimePaths.get_recovery_quarantine_dir(),
             self.revision_tracker,
@@ -1780,9 +1780,15 @@ class MainWindow(QMainWindow):
             self.timeline_data_provider.load_runtime_data(state.segments, 0)
         if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "load_project_data"):
             self.timeline_widget.load_project_data(0, state.segments, None)
-        self.workspace_service.apply_workspace(state.workspace_state)
+        if state.workspace_state and getattr(self.project_service, "current_project", None):
+            self.workspace_service.apply_workspace(state.workspace_state)
         self.global_undo_manager.clear()
-        self.revision_tracker.restore_from_snapshot(state.edit_revision, 0, 0)
+        manifest = getattr(getattr(self.recovery_manager, "_active_session", None), "manifest", None)
+        self.revision_tracker.restore_from_snapshot(
+            state.edit_revision,
+            getattr(manifest, "last_saved_revision", 0),
+            getattr(manifest, "last_clean_revision", 0),
+        )
         self._update_window_title_dirty_marker(True)
 
     def _on_autosave_timeout(self):
@@ -1933,6 +1939,19 @@ class MainWindow(QMainWindow):
 
         Toast.show_info(self, f"Đã định vị đến câu {start_idx + 1}. Bạn có thể kiểm tra và bấm bắt đầu khi sẵn sàng.")
 
+    def _ensure_recovery_session_exists(self):
+        if getattr(self.recovery_manager, "_active_session", None):
+            return
+        project = self.project_service.current_project
+        source = getattr(project, "source", None)
+        self.recovery_manager.create_session(RecoveryContext(
+            getattr(project, "project_id", None),
+            self.project_service.project_dir or "",
+            getattr(source, "path", "") if source else "",
+            getattr(source, "fingerprint", "") if source else "",
+            getattr(source, "modified_at", 0.0) if source else 0.0,
+        ))
+
     def action_new_project(self):
         dialog = NewProjectDialog(self)
         if dialog.exec():
@@ -1944,6 +1963,8 @@ class MainWindow(QMainWindow):
             
             try:
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
+                self.revision_tracker.reset_for_new_document()
+                self._ensure_recovery_session_exists()
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
@@ -2035,6 +2056,8 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(False)
 
             self.project_service.open_project(project_dir)
+            self.revision_tracker.reset_for_new_document()
+            self._ensure_recovery_session_exists()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
