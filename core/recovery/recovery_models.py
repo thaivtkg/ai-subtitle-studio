@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 
-@dataclass
+@dataclass(frozen=True)
 class RecoveryValidationResult:
     is_valid: bool
     reason: str = ""
@@ -10,7 +10,13 @@ class RecoveryValidationResult:
     source_reason: str = ""
 
 
-@dataclass
+@dataclass(frozen=True)
+class RecoveryCandidate:
+    manifest: "RecoveryManifest"
+    snapshot: "RecoveryWorkingState"
+
+
+@dataclass(frozen=True)
 class RecoveryManifest:
     schema_version: int
     session_id: str
@@ -28,7 +34,7 @@ class RecoveryManifest:
     last_clean_revision: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class RecoveryWorkingState:
     schema_version: float
     session_id: str

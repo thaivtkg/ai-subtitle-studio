@@ -1,11 +1,14 @@
 import os
 import tempfile
 import unittest
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from core.project.source_fingerprint import SourceInfo
 from core.recovery.recovery_models import (
+    RecoveryCandidate,
     RecoveryManifest,
     RecoveryWorkingState,
 )
@@ -105,8 +108,7 @@ class TestSourceFingerprint(unittest.TestCase):
 class TestRecoveryValidator(unittest.TestCase):
     def test_revision_mismatch_is_invalid(self):
         manifest = make_manifest()
-        snapshot = make_snapshot()
-        snapshot.edit_revision = 4
+        snapshot = replace(make_snapshot(), edit_revision=4)
         result = RecoveryValidator().validate_data(manifest, snapshot)
         self.assertFalse(result.is_valid)
         self.assertEqual(result.reason, "SNAPSHOT_REVISION_MISMATCH")
@@ -114,7 +116,9 @@ class TestRecoveryValidator(unittest.TestCase):
     def test_missing_segment_uuid_is_invalid(self):
         manifest = make_manifest()
         snapshot = make_snapshot()
-        snapshot.segments[0]["id"] = ""
+        segments = deepcopy(snapshot.segments)
+        segments[0]["id"] = ""
+        snapshot = replace(snapshot, segments=segments)
         result = RecoveryValidator().validate_data(manifest, snapshot)
         self.assertFalse(result.is_valid)
         self.assertEqual(result.reason, "INVALID_SEGMENT_SCHEMA")
