@@ -1,98 +1,109 @@
-# Sprint 12 — Contextual Transcription & Media Import
+# Sprint 12 — Phiên âm theo ngữ cảnh & Nhập video từ URL
 
-**Status:** Locked Design Spec — pending final user review  
-**Date:** 2026-09-02  
-**Target branch:** `sprint-12`  
-**Base:** `master` after Sprint 11 (`4f827b32c1d5df5ba6980dd6c66af5e92c687825`)  
-
-## 1. Goal
-
-Sprint 12 restores and strengthens contextual transcription while adding secure URL-based video import without creating a second media-processing pipeline.
-
-Two coordinated capabilities are introduced:
-
-1. **Contextual Transcription** — Project-owned Context + Glossary is compiled deterministically into a bounded Whisper `initial_prompt` for each new generation transaction.
-2. **Media Import from URL** — external URLs are resolved/downloaded into validated local media first; only then are existing Project, Queue, VideoPlayer, Timing Draft, Full Subtitle, Recovery, and Artifact workflows reused.
-
-Core rules:
-
-> Audio remains the source of truth. Context only biases transcription.
-
-> URLs are import sources, never canonical media identities. Canonical media is always a validated local file.
-
-> Failed or cancelled URL import must leave zero canonical Project side effects.
+**Trạng thái:** ✅ ĐÃ PHÊ DUYỆT — THIẾT KẾ ĐÃ KHÓA  
+**Ngày:** 2026-09-02  
+**Nhánh mục tiêu:** `sprint-12`  
+**Nền:** `master` sau Sprint 11 (`4f827b32c1d5df5ba6980dd6c66af5e92c687825`)
 
 ---
 
-## 2. Non-goals
+# 1. Mục tiêu
 
-Sprint 12 does **not** include:
+Sprint 12 phục hồi và nâng cấp luồng phiên âm có ngữ cảnh, đồng thời bổ sung khả năng nhập video từ URL mà **không tạo thêm một pipeline xử lý media thứ hai**.
 
-- Local LLM post-processing or translation.
-- Rewriting subtitle text according to lore/style.
-- Replacing the source video of an existing Project.
-- Playlist/batch playlist download.
-- Livestream recording.
-- DRM bypass.
-- Authentication/cookies UI.
-- Browser-cookie extraction or credential storage.
-- Downloading remote subtitle tracks.
-- Direct URL playback in VideoPlayer.
-- Direct URL transcription in Whisper.
-- A second URL-specific Timing/ASR pipeline.
-- Arbitrary yt-dlp arguments, output templates, custom downloaders, or shell postprocessors.
-- Media transcoding solely for import compatibility.
-- A chip/tag-heavy glossary editor.
+Sprint gồm hai năng lực phối hợp với nhau:
+
+1. **Phiên âm theo ngữ cảnh** — Project lưu dữ liệu Ngữ cảnh + Thuật ngữ; tại thời điểm bắt đầu một lượt Generate mới, dữ liệu này được biên dịch có giới hạn thành Whisper `initial_prompt`.
+2. **Nhập video từ URL** — URL bên ngoài phải được resolve/tải xuống thành file media cục bộ, kiểm tra hợp lệ và finalize nguyên tử trước; sau đó mới tái sử dụng các luồng Project, Queue, VideoPlayer, Timing Draft, Full Subtitle, Recovery và Artifact hiện có.
+
+Ba nguyên tắc trung tâm:
+
+> Audio là nguồn sự thật cuối cùng. Ngữ cảnh chỉ giúp thiên vị nhận dạng từ vựng, không được phép sáng tác lại lời thoại.
+
+> URL chỉ là nguồn nhập. Media chuẩn của Project luôn là một file cục bộ đã được xác thực.
+
+> Import thất bại hoặc bị hủy phải để lại **0 side-effect canonical lên Project**.
 
 ---
 
-# 3. Existing Architecture Constraints
+# 2. Ngoài phạm vi Sprint 12
 
-Sprint 12 extends current boundaries:
+Sprint 12 **không** bao gồm:
 
-- `ProjectService` owns canonical Project lifecycle/persistence.
-- `Project.source.path` + fingerprint remain canonical media identity.
-- `QueueManager.add_video()` receives existing local filesystem paths.
-- `SubtitleGenerationRequest.video_path` remains local-path-only.
-- `FasterWhisperService` consumes local media through the existing FFmpeg batch-extraction path.
-- Timing Draft and Full Subtitle reuse current project/source workflows.
-- `RevisionTracker` remains dirty-state source of truth.
-- `RecoveryManager` protects unsaved canonical working state.
-- Workers execute; Services own domain transactions; MainWindow orchestrates application/UI flow.
-- `Gui.py` must not absorb downloader, media-probe, or prompt-compilation internals.
-
-No new subtitle domain model is introduced.
+- Local LLM hậu xử lý, dịch thuật hoặc rewrite lời thoại.
+- Viết lại subtitle theo lore/phong cách nhân vật.
+- Thay thế source video của Project đang tồn tại.
+- Tải playlist hàng loạt.
+- Ghi livestream.
+- Bypass DRM.
+- UI đăng nhập/cookies.
+- Đọc cookie từ trình duyệt.
+- Lưu credential.
+- Tải subtitle track từ website.
+- Phát URL trực tiếp bằng VideoPlayer.
+- Transcribe URL trực tiếp bằng Whisper.
+- Tạo pipeline Timing/ASR riêng cho URL.
+- Cho người dùng truyền arbitrary yt-dlp arguments, output template, downloader hoặc shell postprocessor.
+- Transcode toàn bộ media chỉ để phục vụ import.
+- Glossary editor dạng chip/tag phức tạp.
+- Tự động garbage-collect media queue-only đã tải thành công.
 
 ---
 
-# 4. Locked Invariants
+# 3. Ràng buộc kiến trúc hiện hữu
 
-## 4.1 Local-media-first
+Sprint 12 mở rộng kiến trúc hiện tại, không thay thế các owner đã có:
+
+- `ProjectService` sở hữu vòng đời và persistence canonical của Project.
+- `Project.source.path` + fingerprint vẫn là định danh media canonical.
+- `QueueManager.add_video()` chỉ nhận path file cục bộ đã tồn tại.
+- `SubtitleGenerationRequest.video_path` vẫn chỉ là local path.
+- `FasterWhisperService` tiếp tục xử lý local media qua pipeline FFmpeg hiện có.
+- Timing Draft và Full Subtitle tái sử dụng source workflow hiện tại.
+- `RevisionTracker` vẫn là nguồn sự thật cho dirty state.
+- `RecoveryManager` bảo vệ canonical working state chưa Save.
+- Worker chỉ thực thi; Service sở hữu transaction; MainWindow chỉ điều phối ứng dụng/UI.
+- `ui/Gui.py` không được chứa HTTP, yt-dlp, ffprobe, staging hoặc thuật toán prompt.
+- Không tạo thêm subtitle domain model mới.
+
+---
+
+# 4. Các invariant đã khóa
+
+## 4.1. Local-media-first
+
+Mọi URL đều phải đi qua:
 
 ```text
 URL
-→ resolve/download
-→ staging media
-→ media validation
+→ resolve / download
+→ media trong staging
+→ validate media
 → atomic finalize
-→ canonical local media
-→ existing application pipeline
+→ local canonical media
+→ pipeline hiện có
 ```
 
-No production equivalents of `load_url_video()`, `generate_from_url()`, or `timing_from_url()` are allowed.
+Không được tạo các API production tương đương:
 
-## 4.2 No source replacement
+```text
+load_url_video()
+generate_from_url()
+timing_from_url()
+```
 
-URL import may only:
+## 4.2. Không thay source Project hiện tại
 
-- create a **New Project**, or
-- create durable local media and **Add to Queue**.
+URL Import chỉ được phép:
 
-It never replaces an existing Project source.
+- tạo **New Project**, hoặc
+- tạo local media bền vững rồi **Add to Queue**.
 
-## 4.3 Zero canonical side effects before finalize
+Không có chức năng Replace Source trong Sprint 12.
 
-Before media finalization succeeds:
+## 4.3. 0 canonical side-effect trước finalize
+
+Trước khi media finalize thành công:
 
 ```text
 ProjectService untouched
@@ -102,20 +113,20 @@ Recovery untouched
 ArtifactStore untouched
 ```
 
-Only staging directories/files may exist.
+Chỉ staging directory/file được phép tồn tại.
 
-## 4.4 Context domain data
+## 4.4. Project chỉ lưu dữ liệu người dùng
 
-Project persistence stores only:
+Project persistence chỉ lưu:
 
 ```text
 context: str
 glossary: list[str]
 ```
 
-Compiled/model-specific prompt text is never Project metadata.
+Project không lưu compiled prompt theo model.
 
-## 4.5 Derived immutable generation prompt
+## 4.5. Prompt là dữ liệu dẫn xuất và bất biến theo transaction
 
 ```text
 Project.transcription_context
@@ -124,58 +135,94 @@ Project.transcription_context
 → SubtitleGenerationRequest.prompt_context
 ```
 
-Once a generation transaction starts, its compiled prompt is immutable and is preserved by checkpoint/resume.
+Khi generation transaction đã bắt đầu, compiled prompt của transaction đó bất biến cho đến khi kết thúc/resume.
 
-## 4.6 Glossary priority
+## 4.6. Resume giữ prompt cũ
 
-Within the configured budget:
+Nếu lượt Generate bắt đầu bằng prompt `P`, sau đó Project Context đổi thành `P2`, Resume lượt cũ vẫn phải dùng `P`.
 
-1. accepted Glossary terms are allocated first in stable order;
-2. remaining budget goes to Context;
-3. Context truncates before accepted Glossary terms;
-4. a Glossary item is never partially cut;
-5. if Glossary alone exceeds budget, deterministic first-N retention applies.
+Chỉ lượt Generate mới được phép compile và dùng `P2`.
 
-## 4.7 Audio truth
+## 4.7. Glossary luôn ưu tiên trước Context
 
-Context is passed only as Whisper `initial_prompt`; it never becomes an LLM rewrite stage. Timing Draft is VAD-only and does not consume Context.
+Trong token budget:
 
-## 4.8 Recovery coverage
+1. Glossary được cấp ngân sách trước theo stable order.
+2. Phần ngân sách còn lại mới dùng cho Context.
+3. Context bị truncate trước các Glossary term đã accept.
+4. Không cắt nửa một Glossary term.
+5. Nếu riêng Glossary đã vượt budget thì giữ deterministic first-N.
 
-Unsaved Context/Glossary edits are canonical working-state changes and must:
+## 4.8. Audio là nguồn sự thật
 
-- increment one logical external revision;
-- mark the session dirty;
-- be included in recovery snapshots;
-- restore after crash;
-- remain dirty after recovery until explicit Save.
+Context chỉ được truyền vào Whisper qua `initial_prompt`.
 
-## 4.9 Atomic media acceptance
+Không có Local LLM rewrite trong Sprint 12.
+
+Timing Draft là VAD-only nên không consume Context.
+
+## 4.9. Recovery phải bảo vệ Context/Glossary chưa Save
+
+Edit Context/Glossary là canonical working-state edit, do đó phải:
+
+- tăng đúng một logical external revision;
+- khiến session dirty;
+- được autosave vào recovery snapshot;
+- sống sót qua crash restore;
+- vẫn dirty sau restore cho đến explicit Save.
+
+## 4.10. Atomic media acceptance
 
 ```text
-adapter output in staging
-→ MediaProbe validates
-→ app-controlled os.replace(..., canonical_path)
-→ only now return MediaImportResult
+adapter output trong staging
+→ MediaProbe validate
+→ os.replace(..., canonical_path)
+→ chỉ sau đó mới trả MediaImportResult
 ```
 
-Adapter-specific `.part`, fragments, or merge temporaries are not the application's durability contract.
+`.part`, fragments và temp file do adapter tạo chỉ là implementation detail, không phải durability contract của app.
 
-## 4.10 Worker/service boundary
+## 4.11. Worker/Service boundary
 
-`MediaImportWorker` executes `MediaImportService` only. `MediaImportService` has no dependency on Project, Queue, MainWindow, VideoPlayer, Whisper, Timing, or ArtifactStore.
+`MediaImportWorker` chỉ execute `MediaImportService`.
 
-## 4.11 Network security boundary
+`MediaImportService` không phụ thuộc vào:
 
-Only `http://` and `https://` are accepted. URL validation must reject local/non-network schemes and must also prevent connections to loopback, link-local, private, multicast, unspecified, and other non-public address ranges unless a future explicit trusted-local-source feature is designed separately.
+- `ProjectService`
+- `QueueManager`
+- `MainWindow`
+- `VideoPlayer`
+- `FasterWhisperService`
+- Timing subsystem
+- `ArtifactStore`
 
-DNS resolution and **every redirect target** must be revalidated so a public-looking hostname cannot redirect or re-resolve into a blocked local/private address.
+## 4.12. Network security boundary
+
+Chỉ nhận:
+
+```text
+http://
+https://
+```
+
+Phải chặn:
+
+- loopback;
+- private RFC1918 / IPv6 private;
+- link-local;
+- multicast;
+- unspecified;
+- reserved/non-public ranges phù hợp;
+- redirect sang địa chỉ bị chặn;
+- hostname public nhưng DNS resolve/rebind sang địa chỉ private/local.
+
+TLS verification không được tắt.
 
 ---
 
 # 5. Project Schema v2
 
-New domain model:
+Domain model mới:
 
 ```python
 @dataclass
@@ -184,7 +231,7 @@ class TranscriptionContext:
     glossary: list[str] = field(default_factory=list)
 ```
 
-Project shape:
+Project v2:
 
 ```text
 Project
@@ -200,16 +247,21 @@ Project
 └── schema_version = 2
 ```
 
-`project.json` persists `transcription_context`; `state.json` and `workspace.json` do not.
+`project.json` lưu `transcription_context`.
 
-Example:
+`state.json` và `workspace.json` không sở hữu dữ liệu này.
+
+Ví dụ:
 
 ```json
 {
   "schema_version": 2,
   "project_id": "uuid",
   "name": "Example",
-  "source": {"path": "...", "fingerprint": "..."},
+  "source": {
+    "path": "...",
+    "fingerprint": "..."
+  },
   "transcription_context": {
     "context": "Trận chiến tại Demacia...",
     "glossary": ["Demacia", "Garen", "Lux", "Petricite"]
@@ -219,30 +271,33 @@ Example:
 
 ---
 
-# 6. Project v1 → v2 Migration
+# 6. Migration Project v1 → v2
 
-Opening a v1 Project with no transcription context produces in-memory defaults:
+Nếu mở Project v1 không có `transcription_context`, runtime tạo mặc định trong RAM:
 
 ```text
 context = ""
 glossary = []
 ```
 
-Opening/migrating does **not** rewrite canonical files. The v2 shape is persisted only on explicit Save.
+Open/migrate không được tự ghi lại canonical file.
+
+Project chỉ chuyển thành shape v2 trên disk khi người dùng explicit Save.
 
 ---
 
-# 7. Glossary Normalization
+# 7. Chuẩn hóa Glossary
 
 Canonical normalization:
 
-1. trim whitespace;
-2. remove empty entries;
-3. deduplicate by `casefold()`;
-4. keep visible spelling of first occurrence;
-5. preserve stable input order.
+1. trim whitespace đầu/cuối;
+2. bỏ entry rỗng;
+3. deduplicate bằng `casefold()`;
+4. giữ cách viết hiển thị của occurrence đầu tiên;
+5. giữ stable input order;
+6. không sort ẩn.
 
-Example:
+Ví dụ:
 
 ```text
 Demacia
@@ -250,36 +305,37 @@ demacia
  DEMACIA
 ```
 
-becomes exactly one visible entry:
+trở thành:
 
 ```text
 Demacia
 ```
 
-No hidden alphabetical sort.
-
 ---
 
-# 8. Context Edit Semantics
+# 8. Semantics khi edit Context
 
 ```text
-user edits
-→ 300–500 ms debounce or focus-out commit
-→ Project.transcription_context updated
+user gõ
+→ debounce 300–500 ms hoặc focus-out
+→ commit logical value
+→ Project.transcription_context cập nhật
 → ProjectService.mark_dirty()
 → RevisionTracker.record_external_change()
 → Recovery autosave eligible
 ```
 
-Continuous typing must not increment revision once per keystroke.
+Không được tăng revision theo từng keystroke.
 
-There is no separate Save Context button. Existing canonical Save/Ctrl+S semantics apply.
+Không có nút `Save Context` riêng.
+
+`Ctrl+S` tiếp tục là canonical Save theo save routing hiện có.
 
 ---
 
-# 9. Recovery Schema Extension
+# 9. Mở rộng Recovery schema
 
-`RecoveryWorkingState` gains:
+`RecoveryWorkingState` thêm:
 
 ```text
 transcription_context
@@ -287,13 +343,15 @@ transcription_context
 └── glossary[]
 ```
 
-Recovery snapshots continue to contain canonical working state only; compiled prompt strings are not separately duplicated into recovery state unless they already belong to an active generation checkpoint owned by the generation subsystem.
+Recovery chỉ lưu raw canonical working data.
+
+Không duplicate compiled `prompt_context` vào recovery snapshot; compiled prompt thuộc generation checkpoint nếu có generation đang chạy.
 
 ---
 
 # 10. PromptContextBuilder
 
-New subsystem:
+Subsystem mới:
 
 ```text
 core/transcription/
@@ -310,20 +368,20 @@ PromptContextBuilder.build(
 ) -> CompiledPromptContext
 ```
 
-A token-counter dependency is injected through a small protocol:
+Token counter được dependency-inject qua protocol nhỏ:
 
 ```python
 class TokenCounterProtocol(Protocol):
     def count(self, text: str) -> int: ...
 ```
 
-`DEFAULT_PROMPT_BUDGET = 180` is a conservative runtime policy, not persisted Project data and not a claim that every Whisper/model version has an identical hard limit.
+`DEFAULT_PROMPT_BUDGET = 180` là runtime policy bảo thủ, không phải dữ liệu persisted và không khẳng định mọi model đều có cùng hard limit.
 
 ---
 
 # 11. CompiledPromptContext
 
-Recommended immutable model:
+Model immutable đề xuất:
 
 ```text
 CompiledPromptContext
@@ -336,76 +394,82 @@ CompiledPromptContext
 └── truncated
 ```
 
-The UI may display diagnostics but cannot edit compiled text directly.
+UI được phép hiển thị diagnostic nhưng không cho sửa compiled text trực tiếp.
 
 ---
 
-# 12. Prompt Compilation Algorithm
+# 12. Thuật toán compile prompt
 
 ```text
 normalize glossary
-→ append terms in stable order while each complete item fits
-→ reserve accepted terminology
-→ append Context using remaining budget
-→ truncate Context at sentence boundary if possible
-→ else whitespace boundary
-→ hard boundary only as last resort
-→ return text + diagnostics
+→ thêm term theo stable order nếu còn fit
+→ khóa các term đã accept
+→ dùng budget còn lại cho Context
+→ ưu tiên truncate tại sentence boundary
+→ nếu không được thì whitespace boundary
+→ hard boundary chỉ là phương án cuối
+→ trả text + diagnostics
 ```
 
-Recommended representation:
+Format runtime khuyến nghị:
 
 ```text
 Terminology: Demacia, Noxus, Garen, Lux, Petricite.
 Context: Trận chiến tại Demacia. Garen đang nói chuyện với Lux.
 ```
 
-If both inputs are empty, compiled text is `""`.
+Nếu Context và Glossary đều rỗng:
+
+```text
+CompiledPromptContext.text == ""
+```
 
 ---
 
-# 13. Contextual Generation Contract
+# 13. Contract Contextual Generation
 
-`SubtitleGenerationRequest` gains:
+`SubtitleGenerationRequest` thêm:
 
 ```python
 prompt_context: str = ""
 ```
 
-New generation:
+Luồng generation mới:
 
 ```text
 Generate
-→ read Project.transcription_context
-→ compile once
-→ put compiled text into request
-→ generation/checkpoint owns that request snapshot
+→ đọc Project.transcription_context
+→ compile đúng một lần
+→ ghi compiled text vào request
+→ request/checkpoint sở hữu snapshot này
 → FasterWhisperService
-→ model.transcribe(..., initial_prompt=request.prompt_context or None)
+→ model.transcribe(..., initial_prompt=request.prompt_context)
 ```
 
-The request does not carry raw Context/Glossary.
+Nếu prompt rỗng thì omit `initial_prompt` hoặc truyền `None` theo API Faster-Whisper.
+
+Request không giữ raw Context/Glossary.
 
 ---
 
-# 14. Checkpoint / Resume Transaction
+# 14. Checkpoint / Resume
 
 ```text
-start with compiled prompt P
-→ checkpoint persists request containing P
-→ Project context changes to P2
-→ Resume old run
-→ uses P
-→ only a new run compiles/uses P2
+start với prompt P
+→ checkpoint persist request có P
+→ user sửa Project Context thành P2
+→ Resume checkpoint cũ
+→ vẫn dùng P
+→ lượt Generate mới mới dùng P2
 ```
 
-This invariant is mandatory for deterministic batch output and debugging.
+Đây là invariant bắt buộc để batch output deterministic và debug được.
 
 ---
 
-# 15. Context UI/UX
+# 15. UI/UX Context
 
-Context belongs to the active Project and appears in the Right Inspector:
+Context thuộc Project hiện tại và nằm ở Right Inspector:
 
 ```text
 Right Inspector
@@ -414,7 +478,7 @@ Right Inspector
 └── Context
 ```
 
-Context panel:
+Panel:
 
 ```text
 Transcription Context
@@ -427,23 +491,27 @@ Glossary
 
 Prompt usage
 6/6 terms · ~72/180 tokens
-✓ All terminology included
+✓ Đã dùng toàn bộ thuật ngữ
 ```
 
-When necessary:
+Nếu truncate:
 
 ```text
-⚠ 8/14 glossary terms included
-⚠ Context truncated
+⚠ Chỉ dùng 8/14 thuật ngữ
+⚠ Context đã bị rút gọn
 ```
 
-Optional `Preview compiled prompt` is read-only.
+Có thể có `Preview compiled prompt` dạng read-only.
 
-`SubtitleGenerationPanel` only shows compact Context status and an `Edit Context` navigation action. It never duplicates the editor.
+`SubtitleGenerationPanel` chỉ hiển thị trạng thái ngắn + action `Edit Context`, không duplicate editor.
+
+Full Subtitle dùng Context.
+
+Timing Draft không dùng Context.
 
 ---
 
-# 16. Media Import Architecture
+# 16. Kiến trúc Media Import
 
 ```text
 UI
@@ -456,16 +524,17 @@ UI
 → atomic finalize
 → MediaImportResult
 → MainWindow orchestration
-→ ProjectService or QueueManager
+→ ProjectService hoặc QueueManager
 ```
 
-New core structure:
+Cấu trúc mới:
 
 ```text
 core/media_import/
 ├── media_import_service.py
 ├── media_import_models.py
 ├── media_import_errors.py
+├── network_safety.py
 ├── media_probe.py
 ├── url_classifier.py
 └── adapters/
@@ -478,7 +547,7 @@ core/media_import/
 
 # 17. MediaImportResult / Progress
 
-Recommended immutable result:
+Result immutable:
 
 ```text
 MediaImportResult
@@ -490,9 +559,18 @@ MediaImportResult
 └── metadata
 ```
 
-Metadata may include duration, width, height, codec, container, and fps.
+Metadata có thể gồm:
 
-Progress stages:
+```text
+duration_ms
+width
+height
+codec
+container
+fps
+```
+
+Progress stage:
 
 ```text
 RESOLVING
@@ -501,7 +579,7 @@ VALIDATING
 FINALIZING
 ```
 
-Progress payload:
+Payload:
 
 ```text
 MediaImportProgress
@@ -513,62 +591,63 @@ MediaImportProgress
 └── percent | None
 ```
 
-Unknown total size is a valid indeterminate-progress case.
+Unknown total size là case hợp lệ và UI dùng progress indeterminate.
 
 ---
 
-# 18. Adapter Selection Policy
+# 18. Chính sách chọn Adapter
 
 ```text
 URL
-→ validate public HTTP(S) target
+→ validate public HTTP(S)
 → classify
 
 obvious direct media?
 ├─ yes
 │  → DirectHTTPAdapter
-│  → genuine HTTP/network/media failure: STOP
-│  → response is actually page/non-media: yt-dlp may be tried
+│  → HTTP/network/media failure thật: STOP
+│  → response thực ra là page/non-media: có thể thử yt-dlp
 │
 └─ no
    → YtDlpAdapter
-   → UnsupportedURL/no extractor: DirectHTTP fallback allowed
-   → auth/network/geo/DRM/etc.: propagate classified original failure
+   → UnsupportedURL / no extractor: cho phép DirectHTTP fallback
+   → auth/network/geo/DRM/...: giữ lỗi gốc, KHÔNG fallback mù
 ```
 
-DirectHTTP is never a blind fallback for arbitrary yt-dlp failures.
-
-Extension/Content-Type are routing hints, not final media trust.
+Extension và Content-Type chỉ là routing hint, không phải media trust boundary.
 
 ---
 
 # 19. DirectHTTPAdapter
 
-Sprint 12 uses `requests` streaming in the worker thread rather than adding an asyncio runtime.
+Dùng `requests` streaming trong worker thread; không thêm asyncio runtime.
 
-Requirements:
+Yêu cầu:
 
-- stream chunks to disk;
-- never load whole media into RAM;
-- finite connect/read timeout;
-- finite redirect count;
-- TLS verification ON;
-- URL/IP policy rechecked after DNS resolution and redirects;
-- cancellation checked during streaming;
-- HTTP failures mapped into the domain taxonomy;
-- no Authorization/cookie injection from browser state.
+- stream theo chunk xuống disk;
+- không load toàn bộ media vào RAM;
+- connect/read timeout hữu hạn;
+- redirect limit hữu hạn;
+- TLS verify bật;
+- validate URL/IP trước connection và sau mỗi redirect;
+- chống DNS rebinding/TOCTOU gần connection nhất có thể;
+- cancellation cooperative trong vòng lặp streaming;
+- map lỗi mạng sang error taxonomy;
+- không tự lấy Authorization/cookie từ browser.
 
 ---
 
 # 20. YtDlpAdapter
 
-Use yt-dlp **Python API**, not shell command concatenation:
+Dùng yt-dlp Python API:
 
-```text
+```python
 yt_dlp.YoutubeDL(options)
 ```
 
-Locked policy:
+Không dùng shell command string.
+
+Policy cố định:
 
 ```text
 noplaylist = True
@@ -578,24 +657,26 @@ no browser cookie extraction
 no credentials
 no arbitrary user output template
 no custom external downloader
-no arbitrary postprocessor command
+no arbitrary shell postprocessor
 ```
 
-Recommended format:
+Format ưu tiên:
 
 ```text
 bestvideo*+bestaudio/best
 ```
 
-FFmpeg may merge streams. Sprint 12 does not mandate transcoding every source to MP4.
+FFmpeg được phép merge streams.
 
-The final resolved media/network requests used by the adapter must remain subject to the same public-network security policy; redirects/resolved endpoints must not be allowed to pivot into blocked local/private destinations.
+Sprint 12 không bắt buộc transcode mọi nguồn về MP4.
+
+Resolved network target do yt-dlp sử dụng vẫn phải tuân theo public-network safety policy ở mức adapter cho phép.
 
 ---
 
 # 21. Media Validation Gate
 
-Before finalization, `MediaProbe` requires:
+Trước finalize, `MediaProbe` bắt buộc kiểm tra:
 
 ```text
 file exists
@@ -605,15 +686,15 @@ has video stream
 duration > 0
 ```
 
-Audio-only results fail with `NO_VIDEO_STREAM`.
+Audio-only → `NO_VIDEO_STREAM`.
 
-The final trust boundary is ffprobe/media structure, not extension or HTTP Content-Type.
+Trust boundary cuối là cấu trúc media do ffprobe xác nhận, không phải extension/Content-Type.
 
 ---
 
-# 22. Project-Owned Media Storage
+# 22. Project-owned Media Storage
 
-For **New Project from URL**:
+Với New Project từ URL:
 
 ```text
 <Project>.ai-subtitle/
@@ -625,39 +706,49 @@ For **New Project from URL**:
 └── artifacts/
 ```
 
-During import only staging exists:
+Trong lúc import chỉ có staging:
 
 ```text
-<Project>.ai-subtitle/media/.staging/<download-id>/...
+<Project>.ai-subtitle/
+└── media/
+    └── .staging/
+        └── <download-id>/
 ```
 
-Canonical Project files are not created until media has been successfully finalized.
+Canonical Project file chưa được tạo trước finalize thành công.
 
 ---
 
-# 23. Precomputed Bundle Path Rule
+# 23. Ruling Precompute Bundle Path
+
+Luồng New Project từ URL:
 
 ```text
-user chooses root + Project name
-→ derive intended <Project>.ai-subtitle path
-→ create media/.staging/<id> only
+user chọn root + project name
+→ tính trước <Project>.ai-subtitle path
+→ chỉ tạo media/.staging/<id>
 → download
 → validate
-→ atomic media finalize
+→ atomic finalize media
 → ProjectService.create_project(...)
-→ recovery session
+→ tạo/switch Recovery session
 → existing Player/Workspace
 ```
 
-Failure/cancel removes staging and empty directories where safe. It must leave no `project.json`, `state.json`, Artifact manifest, or Recovery session.
+Failure/cancel:
+
+- xóa staging;
+- dọn thư mục rỗng an toàn;
+- không có `project.json`;
+- không có `state.json`;
+- không có Artifact manifest;
+- không có Recovery session canonical.
 
 ---
 
-# 24. Queue-Only URL Storage
+# 24. Queue-only URL Storage
 
-To remove lifecycle ambiguity, **Add to Queue from URL uses a durable app-owned import cache**, not `%TEMP%` and not a fake Project bundle.
-
-`RuntimePaths` gains an app-data location conceptually equivalent to:
+`Add to Queue` từ URL dùng durable app-owned storage, không dùng `%TEMP%` và không tạo fake Project:
 
 ```text
 %LOCALAPPDATA%/AI Subtitle Studio/media_imports/
@@ -666,45 +757,49 @@ To remove lifecycle ambiguity, **Add to Queue from URL uses a durable app-owned 
     └── source.<validated-ext>
 ```
 
-Exact OS path construction remains owned by `RuntimePaths`; no media-import component hardcodes `%LOCALAPPDATA%`.
+Path thật do `RuntimePaths` sở hữu; media import không hard-code `%LOCALAPPDATA%`.
 
 Queue-only workflow:
 
 ```text
 URL
-→ RuntimePaths media-import staging
+→ RuntimePaths media_imports staging
 → download + validate + atomic finalize
 → QueueManager.add_video(finalized_local_path)
 ```
 
-Lifecycle rule for Sprint 12:
+Ruling lifecycle Sprint 12:
 
-- a successfully finalized queue-only media file remains durable for the app session and future Project creation/use;
-- removing a Queue item does **not** automatically delete the underlying file in Sprint 12 because ownership may already have escaped to downstream workflows;
-- automatic cache garbage collection is a non-goal for Sprint 12 and may be designed later.
+- file queue-only đã finalize thành công là durable;
+- remove Queue item **không** tự xóa underlying file;
+- auto cache garbage collection là non-goal.
 
-This intentionally prefers data safety over aggressive disk cleanup.
+Ưu tiên data safety hơn aggressive disk cleanup.
 
 ---
 
 # 25. Atomic Finalization
 
-For Project media and queue-only media alike:
+Áp dụng giống nhau cho Project media và Queue-only media:
 
 ```text
-adapter completes staged media
-→ MediaProbe validates
-→ choose app-controlled canonical filename/extension
-→ os.replace(staged_completed_media, canonical_path)
-→ fsync parent directory where supported/practical
-→ return MediaImportResult
+adapter hoàn tất staged media
+→ MediaProbe validate
+→ chọn app-controlled filename/extension
+→ os.replace(staged_media, canonical_path)
+→ fsync parent directory nếu thực tế hỗ trợ
+→ trả MediaImportResult
 ```
 
-If `os.replace` fails, no canonical media is accepted and no downstream Project/Queue mutation occurs.
+Nếu `os.replace` fail:
+
+- không chấp nhận canonical media;
+- không mutate Project/Queue;
+- trả `FINALIZE_FAILED`.
 
 ---
 
-# 26. New Project Import Workflow
+# 26. Workflow New Project từ URL
 
 ```text
 Import Video from URL
@@ -725,72 +820,88 @@ Import Video from URL
 → Full Subtitle available
 ```
 
-No URL-specific Project type exists.
+Không có URL-specific Project type.
 
 ---
 
-# 27. Add-to-Queue Workflow
+# 27. Workflow Add to Queue
 
 ```text
 Import Video from URL
-→ choose Add to Queue
+→ chọn Add to Queue
 → RuntimePaths media_imports/<id> staging
 → MediaImportWorker
 → MediaImportResult(local_path)
 → QueueManager.add_video(local_path)
-→ existing Queue metadata/player workflow
+→ existing Queue workflow
 ```
 
-`QueueManager` remains local-path-only.
+`QueueManager` vẫn local-path-only.
 
 ---
 
 # 28. URL Import UI
 
-Shared dialog:
+Một dialog dùng chung:
 
 ```text
 ui/dialogs/media_import_dialog.py
 ```
 
-Entry points may include:
+Entry point có thể gồm:
 
 ```text
 File > Import > Video from URL...
 Queue > URL
 ```
 
-Both open the same implementation.
+Cả hai đều mở cùng implementation.
 
-Initial state:
+State ban đầu:
 
 ```text
 URL [................................]
-Import as:
+
+Nhập dưới dạng:
 ● New Project
 ○ Add to Queue
 
-Project Location [Browse...]   # New Project only
-Project Name     [...]         # New Project only
+Project Location [Browse...]   # chỉ New Project
+Project Name     [...]         # chỉ New Project
 
-[Cancel] [Import]
+[Hủy] [Import]
 ```
 
-Running states:
+Running state machine:
 
 ```text
-RESOLVING → DOWNLOADING → VALIDATING → FINALIZING → SUCCEEDED
+IDLE
+→ RESOLVING
+→ DOWNLOADING
+→ VALIDATING
+→ FINALIZING
+→ SUCCEEDED
 ```
 
-Failure goes to `FAILED`; cancel goes through `CANCELLING → CANCELLED`.
+Failure:
 
-Closing a running dialog triggers cooperative cancellation/cleanup instead of abandoning a worker.
+```text
+running → FAILED
+```
+
+Cancel:
+
+```text
+running → CANCELLING → CANCELLED
+```
+
+Đóng dialog khi worker đang chạy phải trigger cooperative cancel/cleanup, không bỏ worker mồ côi.
 
 ---
 
 # 29. MainWindow / Module Boundaries
 
-New UI/worker files:
+Files mới ở UI/worker:
 
 ```text
 ui/components/transcription_context_panel.py
@@ -798,40 +909,40 @@ ui/dialogs/media_import_dialog.py
 workers/media_import_worker.py
 ```
 
-MainWindow may:
+MainWindow chỉ được:
 
 ```text
-open dialog
+mở dialog
 start worker
-receive result
+nhận result
 call ProjectService / QueueManager
 switch active workspace
 ```
 
-MainWindow may not own:
+MainWindow không được sở hữu:
 
 ```text
 HTTP requests
-yt-dlp configuration
+yt-dlp config
 ffprobe invocation
 staging mechanics
-prompt token/truncation internals
+prompt token/truncation algorithm
 ```
 
-This is a targeted responsibility cleanup, not a broad unrelated refactor.
+Đây là cleanup trách nhiệm có mục tiêu, không phải broad refactor.
 
 ---
 
-# 30. Security — URL, DNS, Redirects, SSRF
+# 30. Bảo mật — URL, DNS, Redirect, SSRF
 
-Accepted schemes:
+Allowed scheme:
 
 ```text
 http
 https
 ```
 
-Rejected before adapters:
+Rejected scheme:
 
 ```text
 file
@@ -842,34 +953,41 @@ javascript
 custom schemes
 ```
 
-For HTTP(S), the importer must reject targets resolving to blocked address classes, including at minimum:
+Đối với HTTP(S), importer phải reject target resolve tới:
 
 ```text
 loopback
-private RFC1918 / equivalent IPv6 private ranges
+private
 link-local
-unspecified
 multicast
-reserved/non-public ranges where appropriate
+unspecified
+reserved/non-public phù hợp
 ```
 
-Requirements:
+Yêu cầu:
 
-1. resolve hostname before connection where the adapter permits;
-2. validate all resolved candidate addresses;
-3. validate every redirect destination;
-4. protect against DNS rebinding/time-of-check-time-of-use by validating the actual connected/resolved target as close to connection time as the HTTP/adapter API allows;
-5. never weaken TLS verification.
+1. resolve hostname trước connection nếu adapter cho phép;
+2. validate mọi resolved candidate IP;
+3. validate từng redirect destination;
+4. validate actual resolved/connected target càng sát thời điểm connection càng tốt để chống DNS rebinding/TOCTOU;
+5. không bao giờ tắt TLS verification.
 
-This rule applies conceptually to both DirectHTTP and yt-dlp-mediated network access.
+Áp dụng về nguyên tắc cho cả DirectHTTP và yt-dlp mediated requests.
 
 ---
 
-# 31. Security — Path Confinement
+# 31. Bảo mật — Path Confinement
 
-Never trust remote title, URL basename, Content-Disposition, or extractor title as a filesystem path.
+Không bao giờ tin remote metadata làm filesystem path:
 
-Canonical filenames are app-controlled, e.g.:
+```text
+video title
+URL basename
+Content-Disposition filename
+yt-dlp extractor title
+```
+
+Canonical filename do app quyết định:
 
 ```text
 source.mp4
@@ -877,37 +995,53 @@ source.webm
 source.mkv
 ```
 
-Before write/finalize:
+Trước mọi write/finalize:
 
 ```text
-resolved output path MUST be a descendant of the configured target directory
+resolved output path MUST be descendant of configured target directory
 ```
 
-Any traversal/confinement violation is a security failure.
+Traversal/confinement violation → security failure.
 
 ---
 
-# 32. Security — Shell Execution
+# 32. Bảo mật — Shell Execution
 
-FFmpeg/ffprobe use argument arrays and `shell=False`.
+FFmpeg/ffprobe dùng argument array và:
 
-Forbidden:
+```text
+shell=False
+```
+
+Cấm:
 
 ```python
 subprocess.run(f"ffprobe {user_input}", shell=True)
 ```
 
-The URL is never interpolated into shell commands.
+URL không được interpolate vào shell command.
 
 ---
 
-# 33. Security — Logs
+# 33. Bảo mật — Log
 
-Logs may contain adapter, stage, redacted hostname/path, HTTP status, and exception type.
+Log được phép có:
 
-Logs must not contain cookies, Authorization headers, credentials, browser session data, or full signed/auth query strings.
+- adapter name;
+- stage;
+- hostname/path đã redact;
+- HTTP status;
+- exception type.
 
-Default URL logging removes query and fragment components.
+Log không được chứa:
+
+- cookies;
+- Authorization headers;
+- credentials;
+- browser session data;
+- signed/auth query string đầy đủ.
+
+Mặc định redact query và fragment khỏi URL trước khi log.
 
 ---
 
@@ -932,36 +1066,44 @@ FINALIZE_FAILED
 UNKNOWN
 ```
 
-`UNSAFE_URL` covers blocked schemes, private/local address targets, unsafe redirects, and related network-boundary violations.
+`UNSAFE_URL` bao gồm:
 
-Cancellation is not shown as an error dialog.
+- scheme bị cấm;
+- local/private target;
+- unsafe redirect;
+- network boundary violation liên quan.
+
+Cancellation chủ động không hiển thị như error dialog đỏ.
 
 ---
 
 # 35. Resource Protection / Cancellation
 
-Downloads stream to disk; no whole-media buffering.
+Download stream xuống disk, không buffer whole media vào RAM.
 
-If expected size is known, available disk space may be preflighted. Runtime `ENOSPC` maps to `DISK_FULL`.
+Nếu biết expected size, importer có thể preflight free disk.
 
-No arbitrary fixed video-size cap is imposed in Sprint 12.
+`ENOSPC` → `DISK_FULL`.
+
+Sprint 12 không đặt arbitrary fixed max media size.
 
 Cancellation:
 
 ```text
 UI Cancel
 → worker cancellation token
-→ adapter stops cooperatively
-→ close handles/resources
+→ adapter quan sát token
+→ stop network/yt-dlp cooperatively
+→ close handle/resource
 → delete staging session
 → emit cancelled
 ```
 
-No downstream canonical mutation occurs.
+Không có downstream canonical mutation khi cancel.
 
 ---
 
-# 36. Proposed Directory Structure
+# 36. Cấu trúc thư mục dự kiến
 
 ```text
 core/
@@ -977,6 +1119,7 @@ core/
 │   ├── media_import_service.py            NEW
 │   ├── media_import_models.py             NEW
 │   ├── media_import_errors.py             NEW
+│   ├── network_safety.py                  NEW
 │   ├── media_probe.py                     NEW
 │   ├── url_classifier.py                  NEW
 │   └── adapters/
@@ -985,11 +1128,11 @@ core/
 │       ├── yt_dlp_adapter.py               NEW
 │       └── direct_http_adapter.py          NEW
 ├── runtime/
-│   └── runtime_paths.py                    MODIFY for queue-only import cache
+│   └── runtime_paths.py                    MODIFY
 ├── subtitle_generation/
 │   ├── subtitle_generation_request.py      MODIFY
 │   ├── faster_whisper_service.py           MODIFY
-│   └── checkpoint serialization            MODIFY as required
+│   └── checkpoint serialization            MODIFY khi cần
 └── recovery/
     ├── recovery_models.py                  MODIFY
     └── recovery_validator.py               MODIFY
@@ -1017,206 +1160,393 @@ tests/
 
 ---
 
-# 37. Acceptance Tests — Contextual Transcription
+# 37. Kiểm thử chấp nhận — Contextual Transcription
 
-**TC107 — Project v1 migration**  
-Load v1 → empty `TranscriptionContext` in RAM → no canonical rewrite.
+## TC107 — Migration Project v1
 
-**TC108 — Project v2 round-trip**  
-Save/open v2 → Context preserved; Glossary preserved in its canonical normalized form and stable order.
+```text
+load Project v1
+→ TranscriptionContext rỗng trong RAM
+→ canonical file không bị rewrite
+```
 
-**TC109 — Glossary priority**  
-Budget exceeded → Context truncates before accepted Glossary terms.
+## TC108 — Round-trip Project v2
 
-**TC110 — Glossary over budget**  
-First-N deterministic retention; no partial term.
+```text
+save/open v2
+→ Context giữ nguyên
+→ Glossary ở canonical normalized form
+→ stable order được giữ
+```
 
-**TC111 — Empty context**  
-Compiled prompt empty → no effective Whisper initial prompt.
+## TC109 — Glossary priority
 
-**TC112 — Context passed to Whisper**  
-Exact compiled `request.prompt_context` reaches `initial_prompt`.
+```text
+prompt vượt budget
+→ Context truncate trước Glossary đã accept
+```
 
-**TC113 — Immutable resume prompt**  
-Start P → checkpoint → Project changes to P2 → resume still uses P.
+## TC110 — Glossary tự vượt budget
 
-**TC114 — Revision/recovery participation**  
-Logical Context/Glossary commit → one revision transition → dirty → recovery snapshot contains edit.
+```text
+first-N deterministic
+→ không partial term
+```
 
-**TC115 — Crash restore**  
-Unsaved Context/Glossary survives recovery and remains dirty until explicit Save.
+## TC111 — Context rỗng
+
+```text
+compiled prompt == ""
+→ Whisper không nhận effective initial_prompt
+```
+
+## TC112 — Context đi tới Whisper
+
+```text
+compiled request.prompt_context
+→ exact initial_prompt của FasterWhisper
+```
+
+## TC113 — Resume giữ original prompt
+
+```text
+start bằng P
+→ checkpoint
+→ Project đổi thành P2
+→ resume vẫn dùng P
+```
+
+## TC114 — Revision + Recovery participation
+
+```text
+logical Context/Glossary commit
+→ đúng một external revision
+→ dirty
+→ recovery snapshot chứa edit
+```
+
+## TC115 — Crash restore Context
+
+```text
+unsaved Context/Glossary
+→ durable recovery snapshot
+→ crash/restore
+→ dữ liệu được phục hồi
+→ vẫn dirty cho đến explicit Save
+```
 
 ---
 
-# 38. Acceptance Tests — Media Import
+# 38. Kiểm thử chấp nhận — Media Import
 
-**TC116 — Direct media**  
-Direct MP4/compatible URL → DirectHTTP → validated atomic local file.
+## TC116 — Direct media
 
-**TC117 — Supported webpage**  
-Supported site URL → yt-dlp → validated atomic local media.
+```text
+direct MP4/compatible URL
+→ DirectHTTPAdapter
+→ validated atomic local file
+```
 
-**TC118 — Unsupported extractor fallback**  
-yt-dlp UnsupportedURL/no extractor → DirectHTTP fallback allowed.
+## TC117 — Website được hỗ trợ
 
-**TC119 — No masked real failure**  
-Auth/network/DRM/geo failure → classified original error → no blind fallback.
+```text
+supported website URL
+→ YtDlpAdapter
+→ validated atomic local media
+```
 
-**TC120 — Cancel**  
-Cancel mid-download → staging removed → no Project/Queue mutation.
+## TC118 — Unsupported extractor fallback
 
-**TC121 — Network failure**  
-Failure → staging removed → canonical target absent.
+```text
+yt-dlp UnsupportedURL/no extractor
+→ DirectHTTP fallback được phép
+```
 
-**TC122 — Invalid media**  
-Download completes → ffprobe invalid/no video → no downstream mutation.
+## TC119 — Không che lỗi thật
 
-**TC123 — Finalize failure**  
-`os.replace` failure → no canonical media accepted → no Project/Queue mutation.
+```text
+auth/network/DRM/geo error
+→ giữ classified original error
+→ không blind fallback
+```
 
-**TC124 — New Project SourceInfo**  
-Successful import → Project source points to finalized local media → fingerprint generated locally.
+## TC120 — Cancel giữa download
 
-**TC125 — Player reuse**  
-Existing VideoPlayer receives same finalized local path.
+```text
+cancel
+→ staging removed
+→ không Project/Queue mutation
+```
 
-**TC126 — Timing reuse**  
-Existing Timing Draft operates on `Project.source.path`.
+## TC121 — Network failure cleanup
 
-**TC127 — Full Subtitle reuse**  
-Generation request `video_path == Project.source.path`.
+```text
+network failure
+→ staging removed
+→ canonical target absent
+```
 
-**TC128 — Reopen source guard**  
-Save/close/reopen → same valid local source fingerprint.
+## TC122 — Invalid media
 
-**TC129 — Full URL E2E**  
-URL → adapter → staging → validate → finalize → Project → Player → Timing Draft → Full Subtitle → Save → reopen → valid source guard.
+```text
+download complete
+→ ffprobe invalid/no video
+→ không downstream mutation
+```
 
-**TC130 — Queue-only durable storage**  
-URL → app-owned `media_imports/<id>` → atomic finalize → Queue receives local path → no fake Project created.
+## TC123 — Finalize failure
 
-**TC131 — SSRF/redirect guard**  
-Loopback/private/link-local target or redirect is rejected as `UNSAFE_URL` before canonical download acceptance.
+```text
+os.replace fail
+→ không canonical media accepted
+→ không Project/Queue mutation
+```
 
-CI uses injectable fake adapters/resolvers/probes; Internet access is not required.
+## TC124 — New Project SourceInfo
+
+```text
+URL import thành công
+→ Project.source.path = finalized local media
+→ fingerprint sinh từ local media
+```
+
+## TC125 — Tái sử dụng Player
+
+```text
+successful import
+→ existing VideoPlayer nhận cùng finalized local path
+```
+
+## TC126 — Tái sử dụng Timing Draft
+
+```text
+successful import
+→ existing Timing Draft chạy trên Project.source.path
+```
+
+## TC127 — Tái sử dụng Full Subtitle
+
+```text
+SubtitleGenerationRequest.video_path == Project.source.path
+```
+
+## TC128 — Source guard sau reopen
+
+```text
+Save/close/reopen
+→ source fingerprint vẫn valid
+```
+
+## TC129 — Full URL E2E
+
+```text
+URL
+→ adapter
+→ staging
+→ validate
+→ finalize
+→ Project
+→ Player
+→ Timing Draft
+→ Full Subtitle
+→ Save
+→ close
+→ reopen
+→ valid source guard
+```
+
+## TC130 — Queue-only durable storage
+
+```text
+URL
+→ app-owned media_imports/<id>
+→ atomic finalize
+→ Queue nhận local path
+→ không fake Project
+```
+
+## TC131 — SSRF / unsafe redirect guard
+
+```text
+loopback/private/link-local target hoặc redirect
+→ UNSAFE_URL
+→ reject trước canonical download acceptance
+```
+
+CI dùng injectable fake/mock cho network adapter và media probe; không phụ thuộc Internet thật.
 
 ---
 
 # 39. Regression Gates
 
-Must not regress:
+Sprint 12 không được regression:
 
-- Sprint 9 generation/checkpoint behavior.
-- Sprint 10 canonical segments/editing/undo.
-- Sprint 11 Recovery, source guard, handoff, dirty semantics, single-instance IPC, explicit Save, and Export != Save.
+- Sprint 9 generation/checkpoint/resume.
+- Sprint 10 canonical segment schema/editing/undo.
+- Sprint 11 dirty state, recovery snapshot, source mismatch guard, recovery handoff, close matrix, single-instance IPC, explicit Save và Export != Save.
 
-Final verification:
+Final verification bắt buộc:
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall core ui workers tests main.py
 ```
 
-CI changes only if current discovery/dependency installation cannot cover Sprint 12.
+CI chỉ thay đổi nếu discovery/dependency hiện tại không chạy được test Sprint 12.
 
 ---
 
-# 40. Dependencies
+# 40. Dependency mới
 
-Production direct dependencies added explicitly if not already direct:
+Production dependencies:
 
 ```text
 yt-dlp
 requests
 ```
 
-FFmpeg/ffprobe continue through existing runtime-path/tooling conventions.
+Nếu `requests` đã có transitively vẫn phải khai báo explicit vì production code import trực tiếp.
 
-No asyncio HTTP dependency is added.
+FFmpeg/ffprobe tiếp tục là runtime dependency theo `RuntimePaths` hiện có.
 
----
-
-# 41. Locked Design Rulings
-
-1. Contextual Whisper = `initial_prompt` only; no Local LLM.
-2. Project persists Context + Glossary, never compiled prompt.
-3. Prompt budget is runtime policy; default 180.
-4. Glossary priority over Context.
-5. Resume preserves original compiled prompt.
-6. URL import is download-first/local-file-first.
-7. MediaImportService is isolated from Project/UI/Whisper/Timing.
-8. yt-dlp + Direct HTTP live behind adapters.
-9. DirectHTTP is not a blind fallback.
-10. ffprobe validation is mandatory before canonical acceptance.
-11. URL import never replaces an existing Project source.
-12. New Project is created only after media finalize succeeds.
-13. Failed/cancelled import creates zero canonical Project/Queue side effects.
-14. Queue-only media uses durable app-owned `RuntimePaths` storage, not `%TEMP%` and not a Project bundle.
-15. MainWindow remains orchestration-only.
-16. Only public HTTP(S) destinations are supported; private/local SSRF targets and unsafe redirects are rejected.
-17. TLS verification, path confinement, shell-free subprocess execution, and log redaction are mandatory.
-18. No cookies, credentials, browser-cookie extraction, DRM bypass, or arbitrary yt-dlp/shell hooks.
-19. Context/Glossary participates in RevisionTracker + Recovery.
-20. Timing Draft does not consume Context.
-21. Existing local Player/Timing/Full Subtitle pipelines are reused after finalization.
-22. Automatic cleanup/garbage collection of successfully imported queue-only media is deferred to a future design to avoid accidental data loss.
+Không thêm HTTP asyncio dependency.
 
 ---
 
-# 42. Definition of Done
-
-### Contextual Transcription
+# 41. Tóm tắt ownership
 
 ```text
-✅ Project v2 persistence
-✅ v1 backward-compatible load
-✅ revision tracking
-✅ recovery coverage
-✅ deterministic bounded prompt
-✅ glossary priority
-✅ Whisper initial_prompt wiring
-✅ immutable checkpoint/resume prompt
+TranscriptionContext
+→ dữ liệu domain do user sở hữu
+
+PromptContextBuilder
+→ compiler deterministic cho prompt dẫn xuất
+
+SubtitleGenerationRequest
+→ immutable generation transaction snapshot
+
+FasterWhisperService
+→ ASR adapter; chỉ consume initial_prompt
+
+MediaImportDialog
+→ presentation + state machine UI
+
+MediaImportWorker
+→ bridge thực thi background
+
+MediaImportService
+→ transaction URL → local media
+
+URLClassifier
+→ routing hint
+
+NetworkSafetyPolicy
+→ URL/DNS/IP/redirect/SSRF boundary
+
+YtDlpAdapter / DirectHTTPAdapter
+→ download mechanics
+
+MediaProbe
+→ media trust boundary
+
+MainWindow
+→ application orchestration
+
+ProjectService
+→ canonical Project lifecycle
+
+QueueManager
+→ queue lifecycle
+
+RecoveryManager / RevisionTracker
+→ durability + dirty truth
 ```
 
-### Media Import
+---
+
+# 42. Các ruling cuối cùng đã khóa
+
+1. Contextual Whisper chỉ dùng `initial_prompt`; không Local LLM.
+2. Project lưu Context + Glossary, không lưu compiled prompt.
+3. Prompt budget 180 là runtime policy, không phải persisted schema.
+4. Glossary ưu tiên trước Context.
+5. Resume giữ original compiled prompt.
+6. URL import luôn download-first/local-file-first.
+7. `MediaImportService` độc lập với Project/Queue/Player/Whisper.
+8. yt-dlp + Direct HTTP nằm sau adapter boundary.
+9. DirectHTTP không blind fallback cho mọi lỗi yt-dlp.
+10. Media phải qua ffprobe trước canonical acceptance.
+11. Không Replace Source Project hiện tại.
+12. New Project chỉ được tạo sau media finalize thành công.
+13. Fail/cancel tạo 0 canonical Project side-effect.
+14. Queue-only media dùng durable `RuntimePaths.media_imports`.
+15. MainWindow chỉ orchestration.
+16. Chỉ public HTTP(S).
+17. Chặn SSRF, unsafe redirect và DNS rebinding ở mức adapter có thể bảo đảm.
+18. Không cookie/credential/DRM bypass/arbitrary shell hook.
+19. Path confinement và `shell=False` bắt buộc.
+20. Context/Glossary edit tham gia RevisionTracker + Recovery.
+21. Timing Draft không consume Context.
+22. Sau URL finalize phải tái sử dụng pipeline local Project/Player/Timing/Full Subtitle hiện có.
+
+---
+
+# 43. Definition of Done
+
+## Contextual Transcription
 
 ```text
-✅ shared URL import dialog
-✅ New Project + Add to Queue
-✅ yt-dlp Python adapter
-✅ Direct HTTP streaming adapter
-✅ progress/cancel
-✅ classified fallback policy
-✅ public-network/SSRF guard
-✅ isolated staging
+✅ Project v2 persist Context + Glossary
+✅ Project v1 backward-compatible
+✅ edit Context/Glossary được revision-track
+✅ Recovery bảo vệ unsaved Context/Glossary
+✅ PromptContextBuilder deterministic + bounded
+✅ Glossary priority đúng contract
+✅ FasterWhisper nhận initial_prompt
+✅ empty context không tạo effective prompt
+✅ checkpoint/resume giữ original prompt transaction
+```
+
+## Media Import
+
+```text
+✅ URL dialog hỗ trợ New Project / Add to Queue
+✅ yt-dlp adapter qua Python API
+✅ DirectHTTP streaming
+✅ classified routing/fallback
+✅ progress + cancel không block UI
+✅ staging cô lập
 ✅ ffprobe validation
-✅ atomic finalize
-✅ Project-owned media for New Project
-✅ RuntimePaths-owned durable media for Queue-only import
-✅ existing Player/Timing/Full Subtitle reuse
-✅ valid source fingerprint after reopen
+✅ app-controlled atomic finalize
+✅ fail/cancel = 0 canonical Project side-effect
+✅ successful import sinh local SourceInfo/fingerprint
+✅ VideoPlayer reuse
+✅ Timing Draft reuse
+✅ Full Subtitle reuse
+✅ source guard valid sau Save/reopen
+✅ queue-only media ở durable app storage
 ```
 
-### Security / Architecture
+## Security / Architecture
 
 ```text
-✅ HTTP(S)-only + public destination validation
-✅ DNS/redirect revalidation
-✅ TLS verification ON
-✅ path traversal prevention
-✅ shell=False
-✅ no auth/cookie/DRM bypass surface
-✅ sensitive URL redaction
-✅ service boundaries preserved
-✅ MainWindow orchestration-only
+✅ public HTTP(S)-only
+✅ TLS verify ON
+✅ SSRF/private/local/unsafe redirect guard
+✅ path traversal prevented
+✅ shell=False subprocess
+✅ không cookie/credential/DRM bypass surface
+✅ URL query sensitive được redact trong log
+✅ MediaImportService không phụ thuộc Project/UI/Whisper
+✅ MainWindow chỉ orchestration
 ```
 
-### Verification
+## Verification
 
 ```text
 ✅ TC107–TC131 pass
-✅ full regression suite passes
-✅ compileall passes
-✅ worktree clean
-✅ PR review has no unresolved Critical/Important findings
+✅ full regression suite pass
+✅ compileall pass
+✅ worktree sạch
+✅ PR review không còn Critical/Important unresolved
 ```
