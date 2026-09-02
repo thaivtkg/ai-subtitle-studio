@@ -84,6 +84,10 @@ class RuntimePaths:
         return RuntimePaths.get_user_data_dir() / "logs"
 
     @staticmethod
+    def get_media_imports_dir() -> Path:
+        return RuntimePaths.get_user_data_dir() / "media_imports"
+
+    @staticmethod
     def get_settings_file() -> Path:
         return RuntimePaths.get_user_data_dir() / "settings.json"
 
@@ -105,6 +109,7 @@ class RuntimePaths:
         cls.get_user_data_dir().mkdir(parents=True, exist_ok=True)
         cls.get_models_dir().mkdir(exist_ok=True)
         cls.get_logs_dir().mkdir(exist_ok=True)
+        cls.get_media_imports_dir().mkdir(exist_ok=True)
         cls.get_recovery_dir().mkdir(parents=True, exist_ok=True)
         cls.get_recovery_sessions_dir().mkdir(parents=True, exist_ok=True)
         cls.get_recovery_quarantine_dir().mkdir(parents=True, exist_ok=True)
