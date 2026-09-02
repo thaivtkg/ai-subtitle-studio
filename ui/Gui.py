@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 import copy
+from dataclasses import asdict
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -56,6 +57,7 @@ from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
+from core.project.transcription_context import TranscriptionContext
 from core.transcription.prompt_context_builder import PromptContextBuilder
 from core.transcription.token_counter import ApproximateTokenCounter
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
@@ -1761,11 +1763,30 @@ class MainWindow(QMainWindow):
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
+    def on_transcription_context_committed(
+        self, new_context: TranscriptionContext
+    ) -> None:
+        project = self.project_service.current_project
+        if project is None:
+            return
+        normalized = new_context.normalized()
+        current = getattr(project, "transcription_context", TranscriptionContext())
+        if current.normalized() == normalized:
+            return
+        project.transcription_context = normalized
+        self.project_service.mark_dirty()
+
     def capture_recovery_working_state(self) -> RecoveryWorkingState:
         workspace = self.workspace_service.capture_workspace() or {}
         project = self.project_service.current_project
         source = getattr(project, "source", None)
         session = getattr(self.recovery_manager, "_active_session", None)
+        context = getattr(project, "transcription_context", None)
+        context_data = (
+            asdict(context.normalized())
+            if isinstance(context, TranscriptionContext)
+            else {}
+        )
         return RecoveryWorkingState(
             schema_version=2.0,
             session_id=session.session_id if session else "",
@@ -1776,6 +1797,7 @@ class MainWindow(QMainWindow):
             edit_revision=self.revision_tracker.edit_revision,
             segments=copy.deepcopy(getattr(self.sub_editor, "all_segments", [])),
             workspace_state=copy.deepcopy(workspace),
+            transcription_context=context_data,
         )
 
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
@@ -1788,6 +1810,13 @@ class MainWindow(QMainWindow):
             self.timeline_widget.load_project_data(0, state.segments, None)
         if state.workspace_state and getattr(self.project_service, "current_project", None):
             self.workspace_service.apply_workspace(state.workspace_state)
+        context_data = getattr(state, "transcription_context", None)
+        project = getattr(self.project_service, "current_project", None)
+        if context_data and project:
+            project.transcription_context = TranscriptionContext(
+                context=context_data.get("context", ""),
+                glossary=context_data.get("glossary", []),
+            ).normalized()
         self.global_undo_manager.clear()
         manifest = getattr(getattr(self.recovery_manager, "_active_session", None), "manifest", None)
         self.revision_tracker.restore_from_snapshot(
