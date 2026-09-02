@@ -58,13 +58,12 @@ from core.runtime.single_instance_guard import IpcAction, IpcRequest
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
 from core.project.transcription_context import TranscriptionContext
-from core.transcription.prompt_context_builder import PromptContextBuilder
-from core.transcription.token_counter import ApproximateTokenCounter
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
+from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
@@ -354,6 +353,7 @@ class MainWindow(QMainWindow):
         self.generation_panel.timing_cancel_requested.connect(
             self.timing_service.cancel_timing
         )
+        self.generation_panel.request_context_edit.connect(self._show_context_inspector)
         self.timing_service.progress_signal.connect(self._on_timing_progress)
         self.timing_service.log_signal.connect(self._on_timing_log)
         self.timing_service.batch_completed_signal.connect(
@@ -422,6 +422,11 @@ class MainWindow(QMainWindow):
             }}
         """)
         dock_tabs.addTab(self.generation_panel, "✨ Generate")
+        self.context_panel = TranscriptionContextPanel(self)
+        self.context_panel.context_committed.connect(
+            self.on_transcription_context_committed
+        )
+        dock_tabs.addTab(self.context_panel, "📝 Context")
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
         dock_tabs.addTab(self.inspector_panel, "🎨 Style")
@@ -1088,6 +1093,7 @@ class MainWindow(QMainWindow):
                         self.project_service.open_project(project_dir)
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
+                self._refresh_transcription_context_views()
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
                 )
@@ -1388,7 +1394,7 @@ class MainWindow(QMainWindow):
 
             project = self.project_service.current_project
             settings = self.page_settings
-            compiled_context = PromptContextBuilder(ApproximateTokenCounter()).build(
+            compiled_context = self.subtitle_generation_service.compile_prompt_context(
                 project.transcription_context
             )
             request = SubtitleGenerationRequest(
@@ -1775,6 +1781,24 @@ class MainWindow(QMainWindow):
             return
         project.transcription_context = normalized
         self.project_service.mark_dirty()
+        self._refresh_transcription_context_views(sync_editor=False)
+
+    def _refresh_transcription_context_views(self, *, sync_editor: bool = True) -> None:
+        project = getattr(self.project_service, "current_project", None)
+        if project is None or not hasattr(self, "context_panel"):
+            return
+        context = getattr(project, "transcription_context", TranscriptionContext())
+        compiled = self.subtitle_generation_service.compile_prompt_context(context)
+        if sync_editor:
+            self.context_panel.set_context(context)
+        self.context_panel.set_prompt_diagnostics(compiled)
+        self.generation_panel.set_context_status(
+            compiled, configured=bool(context.context.strip() or context.glossary)
+        )
+
+    def _show_context_inspector(self) -> None:
+        self.generation_dock.show()
+        self.dock_tabs.setCurrentWidget(self.context_panel)
 
     def capture_recovery_working_state(self) -> RecoveryWorkingState:
         workspace = self.workspace_service.capture_workspace() or {}
@@ -1825,6 +1849,7 @@ class MainWindow(QMainWindow):
             getattr(manifest, "last_clean_revision", 0),
         )
         self._update_window_title_dirty_marker(True)
+        self._refresh_transcription_context_views()
 
     def _on_autosave_timeout(self):
         if self.revision_tracker.is_dirty and self.revision_tracker.edit_revision > self.revision_tracker.snapshot_revision:
@@ -2008,6 +2033,7 @@ class MainWindow(QMainWindow):
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
+                self._refresh_transcription_context_views()
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
             except Exception as e:
@@ -2141,6 +2167,7 @@ class MainWindow(QMainWindow):
 
             self.generation_panel.set_video_duration(dur_ms)
             self.generation_panel.check_resumable_state()
+            self._refresh_transcription_context_views()
             
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
@@ -2160,6 +2187,7 @@ class MainWindow(QMainWindow):
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
             self.project_service.open_project(request.path)
             self.workspace_service.restore_workspace()
+            self._refresh_transcription_context_views()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_MEDIA and request.path:
             if hasattr(self, "queue_mgr"):

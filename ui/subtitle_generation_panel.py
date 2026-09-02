@@ -18,8 +18,6 @@ from PySide6.QtWidgets import (
 from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
-from core.transcription.prompt_context_builder import PromptContextBuilder
-from core.transcription.token_counter import ApproximateTokenCounter
 from ui.theme import Theme
 
 
@@ -30,11 +28,13 @@ class SubtitleGenerationPanel(QWidget):
     timing_start_requested = Signal(int, dict)
     timing_resume_requested = Signal(int, dict)
     timing_cancel_requested = Signal()
+    request_context_edit = Signal()
 
     def __init__(self, generation_service, parent=None):
         super().__init__(parent)
         self.generation_service = generation_service
-        self.prompt_context_builder = PromptContextBuilder(ApproximateTokenCounter())
+        self._context_compiled = None
+        self._context_configured = False
         self.video_duration_ms = 0
         self._setup_ui()
         self._connect_signals()
@@ -140,6 +140,15 @@ class SubtitleGenerationPanel(QWidget):
         )
         layout.addWidget(advanced_group)
 
+        context_layout = QHBoxLayout()
+        self.lbl_context_status = QLabel("Context: not configured")
+        self.lbl_context_status.setWordWrap(True)
+        self.btn_context_edit = QPushButton("Edit context")
+        self.context_status_label = self.lbl_context_status
+        self.edit_context_btn = self.btn_context_edit
+        context_layout.addWidget(self.lbl_context_status, stretch=1)
+        context_layout.addWidget(self.btn_context_edit)
+        layout.addLayout(context_layout)
         layout.addStretch()
         self.lbl_status = QLabel("Ready")
         self._configure_status_label(self.lbl_status)
@@ -180,9 +189,33 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_generate.clicked.connect(self._on_generate_clicked)
         self.btn_resume.clicked.connect(self._on_resume_clicked)
         self.btn_cancel.clicked.connect(self._on_cancel_clicked)
+        self.btn_context_edit.clicked.connect(self.request_context_edit)
         self.generation_service.on_progress = self._update_progress
         self.generation_service.on_error = self._on_error
         self.generation_service.on_finish = self._on_finish
+
+    def set_context_status(self, compiled, configured: bool) -> None:
+        self._context_compiled = compiled
+        self._context_configured = configured
+        self._render_context_status()
+
+    def _render_context_status(self) -> None:
+        label = getattr(self, "context_status_label", None)
+        if label is None:
+            return
+        if self._is_timing_mode():
+            label.setText("Context: not used in Timing Draft")
+            return
+        if not self._context_configured or self._context_compiled is None:
+            label.setText("Context: not configured")
+            return
+        compiled = self._context_compiled
+        total_glossary = compiled.glossary_items_used + compiled.glossary_items_dropped
+        label.setText(
+            "Context: configured · "
+            f"{compiled.glossary_items_used}/{total_glossary} glossary · "
+            f"~{compiled.token_count}/{compiled.max_tokens} tokens"
+        )
 
     @Slot()
     def _on_mode_changed(self):
@@ -213,6 +246,7 @@ class SubtitleGenerationPanel(QWidget):
         if hasattr(self, "btn_resume"):
             self.check_resumable_state()
         self.refresh_batch_mode_availability()
+        self._render_context_status()
 
     def _is_timing_mode(self) -> bool:
         return self.cmb_mode.currentData() == "timing"
@@ -338,7 +372,7 @@ class SubtitleGenerationPanel(QWidget):
             return
 
         language = self.cmb_language.currentText()
-        compiled_context = self.prompt_context_builder.build(
+        compiled_context = self.generation_service.compile_prompt_context(
             project.transcription_context
         )
         request = SubtitleGenerationRequest(
