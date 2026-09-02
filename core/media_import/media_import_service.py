@@ -38,7 +38,8 @@ class MediaImportService:
         if cancel_flag and cancel_flag.is_set():
             raise MediaImportError(MediaImportErrorCode.DOWNLOAD_CANCELLED, "Download cancelled by user")
 
-    def import_from_url(self, url: str, progress_callback=None, cancel_flag=None) -> MediaImportResult:
+    def import_from_url(self, url: str, progress_callback=None, cancel_flag=None,
+                        destination_dir: Path | str | None = None) -> MediaImportResult:
         self._check_cancel(cancel_flag)
         if progress_callback:
             progress_callback(MediaImportProgress(stage=MediaImportStage.RESOLVING))
@@ -46,14 +47,20 @@ class MediaImportService:
         target = self.safety_policy.validate_url(url)
         self._check_cancel(cancel_flag)
 
-        import_dir = self.storage_root / uuid.uuid4().hex[:12]
-        staging_dir = import_dir / ".staging"
+        custom_destination = destination_dir is not None
+        if custom_destination:
+            import_dir = Path(destination_dir).expanduser().resolve()
+            staging_dir = import_dir / ".staging" / uuid.uuid4().hex[:12]
+        else:
+            import_dir = (self.storage_root / uuid.uuid4().hex[:12]).resolve()
+            staging_dir = import_dir / ".staging"
         staging_dir.mkdir(parents=True, exist_ok=True)
         plan = (
             [("direct", self.direct_adapter), ("ytdlp", self.ytdlp_adapter)]
             if url_type == MediaURLType.DIRECT_MEDIA
             else [("ytdlp", self.ytdlp_adapter), ("direct", self.direct_adapter)]
         )
+        finalized_path = None
         try:
             for index, (adapter_name, adapter) in enumerate(plan):
                 staging_target = staging_dir / f"{adapter_name}_download"
@@ -73,6 +80,11 @@ class MediaImportService:
                     self._check_cancel(cancel_flag)
                     if progress_callback:
                         progress_callback(MediaImportProgress(stage=MediaImportStage.FINALIZING))
+                    if list(import_dir.glob("source.*")):
+                        raise MediaImportError(
+                            MediaImportErrorCode.FINALIZE_FAILED,
+                            "Destination already contains canonical media",
+                        )
                     final_path = import_dir / f"source{probe.extension}"
                     try:
                         os.replace(downloaded, final_path)
@@ -82,7 +94,13 @@ class MediaImportService:
                             "Unable to finalize imported media",
                             details={"exception_type": type(exc).__name__},
                         ) from exc
+                    finalized_path = final_path
                     shutil.rmtree(staging_dir, ignore_errors=True)
+                    if custom_destination:
+                        try:
+                            (import_dir / ".staging").rmdir()
+                        except OSError:
+                            pass
                     metadata = dict(download.metadata)
                     metadata.update(duration=probe.duration, video_codec=probe.video_codec,
                                     width=probe.width, height=probe.height,
@@ -106,7 +124,20 @@ class MediaImportService:
                         continue
                     raise
         except Exception as exc:
-            shutil.rmtree(import_dir, ignore_errors=True)
+            if custom_destination:
+                if finalized_path is not None:
+                    finalized_path.unlink(missing_ok=True)
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                try:
+                    (import_dir / ".staging").rmdir()
+                except OSError:
+                    pass
+                try:
+                    import_dir.rmdir()
+                except OSError:
+                    pass
+            else:
+                shutil.rmtree(import_dir, ignore_errors=True)
             if isinstance(exc, MediaImportError):
                 raise
             raise MediaImportError(MediaImportErrorCode.UNKNOWN, "Unexpected error during media import pipeline",

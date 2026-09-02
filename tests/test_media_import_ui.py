@@ -22,7 +22,7 @@ class TestMediaImportUI(unittest.TestCase):
 
     def setUp(self):
         self.mock_service = MagicMock()
-        self.dialog = MediaImportDialog(self.mock_service)
+        self.dialog = MediaImportDialog(self.mock_service, mode="queue")
 
     def test_full_transition_and_worker_success(self):
         self.assertEqual(self.dialog.current_state, MediaImportDialogState.IDLE)

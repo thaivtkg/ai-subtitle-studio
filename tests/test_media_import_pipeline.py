@@ -267,6 +267,42 @@ class TestMediaImportService(unittest.TestCase):
         self.assertEqual(ctx.exception.code, MediaImportErrorCode.FINALIZE_FAILED)
         self.assertEqual(len(list(self.media_imports_dir.iterdir())), 0)
 
+    def test_custom_destination_does_not_use_queue_storage(self):
+        project_media = Path(self.temp_dir) / "Demo.ai-subtitle" / "media"
+        self.url_classifier.classify.return_value = MediaURLType.DIRECT_MEDIA
+        self.safety_policy.validate_url.return_value = MagicMock(
+            original_url="https://example.com/video.mp4", resolved_ips=("1.1.1.1",)
+        )
+        self._mock_success_download(self.direct_adapter)
+        self.media_probe.probe.return_value = ProbeResult(True, "h264", 10.0, 1920, 1080)
+
+        result = self.service.import_from_url(
+            "https://example.com/video.mp4", destination_dir=project_media
+        )
+
+        self.assertEqual(Path(result.local_path).parent.resolve(), project_media.resolve())
+        self.assertNotIn(self.media_imports_dir.resolve(), Path(result.local_path).resolve().parents)
+
+    def test_custom_destination_refuses_existing_canonical_source(self):
+        project_media = Path(self.temp_dir) / "Demo.ai-subtitle" / "media"
+        project_media.mkdir(parents=True)
+        existing = project_media / "source.mp4"
+        existing.write_bytes(b"existing-project-source")
+        self.url_classifier.classify.return_value = MediaURLType.DIRECT_MEDIA
+        self.safety_policy.validate_url.return_value = MagicMock(
+            original_url="https://example.com/video.mp4", resolved_ips=("1.1.1.1",)
+        )
+        self._mock_success_download(self.direct_adapter)
+        self.media_probe.probe.return_value = ProbeResult(True, "h264", 10.0, 1920, 1080)
+
+        with self.assertRaises(MediaImportError) as ctx:
+            self.service.import_from_url(
+                "https://example.com/video.mp4", destination_dir=project_media
+            )
+
+        self.assertEqual(ctx.exception.code, MediaImportErrorCode.FINALIZE_FAILED)
+        self.assertEqual(existing.read_bytes(), b"existing-project-source")
+
     def test_webpage_auth_drm_network_no_fallback(self):
         self.url_classifier.classify.return_value = MediaURLType.PAGE_OR_EXTRACTOR
         target = MagicMock(original_url="https://url", resolved_ips=("1.1.1.1",))

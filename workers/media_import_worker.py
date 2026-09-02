@@ -12,19 +12,23 @@ class MediaImportWorker(QThread):
     failed = Signal(MediaImportError)
     cancelled = Signal()
 
-    def __init__(self, service, url: str, parent=None):
+    def __init__(self, service, url: str, parent=None, destination_dir=None):
         super().__init__(parent)
         self.service = service
         self.url = url
+        self.destination_dir = destination_dir
         self.cancel_flag = threading.Event()
 
     def run(self):
         try:
-            result = self.service.import_from_url(
-                url=self.url,
-                progress_callback=self.progress_changed.emit,
-                cancel_flag=self.cancel_flag,
-            )
+            kwargs = {
+                "url": self.url,
+                "progress_callback": self.progress_changed.emit,
+                "cancel_flag": self.cancel_flag,
+            }
+            if self.destination_dir is not None:
+                kwargs["destination_dir"] = self.destination_dir
+            result = self.service.import_from_url(**kwargs)
             self.succeeded.emit(result)
         except MediaImportError as exc:
             if exc.code == MediaImportErrorCode.DOWNLOAD_CANCELLED:

@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTabWidget,
     QDockWidget,
+    QDialog,
     QSizePolicy,
     QTextEdit,
     QVBoxLayout,
@@ -55,6 +56,7 @@ from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
+from core.media_import.media_import_service import MediaImportService
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
 from core.project.transcription_context import TranscriptionContext
@@ -65,6 +67,7 @@ from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
 from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.new_project_dialog import NewProjectDialog
+from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.pages.dashboard_page import DashboardPage
@@ -98,7 +101,8 @@ class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
 
-    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None, parent=None):
+    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None,
+                 parent=None, project_service=None, media_import_service=None):
         super().__init__(parent)
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
@@ -109,8 +113,11 @@ class MainWindow(QMainWindow):
         self.undo_manager = undo_manager or GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
         self.revision_tracker = revision_tracker or RevisionTracker(self.undo_manager, self)
-        self.project_service = ProjectService(self.artifact_store)
+        self.project_service = project_service or ProjectService(self.artifact_store)
+        if project_service is not None:
+            self.artifact_store = getattr(project_service, "artifact_store", self.artifact_store)
         self.project_service.revision_tracker = self.revision_tracker
+        self.media_import_service = media_import_service or MediaImportService()
         self.recovery_manager = recovery_manager or RecoveryManager(
             RuntimePaths.get_recovery_sessions_dir(),
             RuntimePaths.get_recovery_quarantine_dir(),
@@ -144,6 +151,9 @@ class MainWindow(QMainWindow):
         self.shortcut_new = QShortcut(QKeySequence("Ctrl+N"), self)
         self.shortcut_new.setContext(Qt.ApplicationShortcut)
         self.shortcut_new.activated.connect(self.action_new_project)
+
+        self.action_new_from_url = QAction("New from URL...", self)
+        self.action_new_from_url.triggered.connect(self._on_new_from_url)
         
         self.shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
         self.shortcut_open.setContext(Qt.ApplicationShortcut)
@@ -208,6 +218,7 @@ class MainWindow(QMainWindow):
         btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
         btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
         sidebar_layout.addWidget(btn_new_project)
+        sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
         
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
@@ -2038,6 +2049,28 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
             except Exception as e:
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
+
+    def _on_new_from_url(self):
+        dialog = MediaImportDialog(self.media_import_service, self, mode="new_project")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.get_result()
+        project_data = dialog.get_project_data()
+        if not result or not result.local_path or not project_data:
+            return
+        try:
+            self.project_service.create_project(
+                project_data["bundle_path"], project_data["name"], result.local_path
+            )
+            self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
+            self.video_player.load_video(result.local_path)
+            self.revision_tracker.reset_for_new_document()
+            self._switch_recovery_session()
+            self.workspace_service.restore_workspace()
+            self.generation_panel.check_resumable_state()
+            self._refresh_transcription_context_views()
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
 
     def action_save_project(self):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:

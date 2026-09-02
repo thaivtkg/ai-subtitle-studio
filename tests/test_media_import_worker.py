@@ -107,6 +107,18 @@ class TestMediaImportWorker(unittest.TestCase):
         self.assertEqual(emitted_errors, [])
         self.assertEqual(emitted_cancels, [True])
 
+    def test_worker_forwards_destination_dir(self):
+        destination = "/tmp/Demo.ai-subtitle/media"
+        self.mock_service.import_from_url.return_value = MagicMock()
+        worker = MediaImportWorker(self.mock_service, self.url, destination_dir=destination)
+
+        worker.run()
+
+        self.assertEqual(
+            self.mock_service.import_from_url.call_args.kwargs["destination_dir"],
+            destination,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
