@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
+from core.transcription.prompt_context_builder import PromptContextBuilder
+from core.transcription.token_counter import ApproximateTokenCounter
 from ui.theme import Theme
 
 
@@ -32,6 +34,7 @@ class SubtitleGenerationPanel(QWidget):
     def __init__(self, generation_service, parent=None):
         super().__init__(parent)
         self.generation_service = generation_service
+        self.prompt_context_builder = PromptContextBuilder(ApproximateTokenCounter())
         self.video_duration_ms = 0
         self._setup_ui()
         self._connect_signals()
@@ -335,6 +338,9 @@ class SubtitleGenerationPanel(QWidget):
             return
 
         language = self.cmb_language.currentText()
+        compiled_context = self.prompt_context_builder.build(
+            project.transcription_context
+        )
         request = SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
@@ -349,6 +355,7 @@ class SubtitleGenerationPanel(QWidget):
             batch_mode=self.cmb_batch_mode.currentData(),
             batch_size_value=self.spin_batch_val.value(),
             overlap_ms=2000,
+            prompt_context=compiled_context.text,
         )
         self._set_ui_state_running()
         try:

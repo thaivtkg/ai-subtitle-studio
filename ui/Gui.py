@@ -56,6 +56,8 @@ from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
+from core.transcription.prompt_context_builder import PromptContextBuilder
+from core.transcription.token_counter import ApproximateTokenCounter
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
@@ -1384,6 +1386,9 @@ class MainWindow(QMainWindow):
 
             project = self.project_service.current_project
             settings = self.page_settings
+            compiled_context = PromptContextBuilder(ApproximateTokenCounter()).build(
+                project.transcription_context
+            )
             request = SubtitleGenerationRequest(
                 request_id=str(uuid.uuid4()),
                 project_id=project.project_id,
@@ -1398,6 +1403,7 @@ class MainWindow(QMainWindow):
                 batch_mode="time",
                 batch_size_value=5,
                 overlap_ms=2000,
+                prompt_context=compiled_context.text,
             )
             try:
                 self.subtitle_generation_service.start_generation(

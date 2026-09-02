@@ -25,6 +25,7 @@ class SubtitleGenerationRequest:
     batch_size_value: int = 5
     overlap_ms: int = 2000
     batch_duration_ms: Optional[int] = None
+    prompt_context: str = ""
 
     def __post_init__(self) -> None:
         if self.batch_mode not in {"time", "segments"}:
