@@ -1,5 +1,6 @@
 import sys
 import unittest
+from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
@@ -125,6 +126,22 @@ class TestYtDlpAdapter(unittest.TestCase):
             self.adapter.download(self.mock_target, "/tmp/staging/out.mp4")
         self.assertEqual(ctx.exception.code, MediaImportErrorCode.FINALIZE_FAILED)
         self.assertIn("unsafe output path", str(ctx.exception))
+
+    @patch("yt_dlp.YoutubeDL")
+    def test_appends_ext_placeholder_to_outtmpl_and_accepts_merged_path(self, mock_ydl_cls):
+        mock_ydl = MagicMock()
+        merged_path = "/tmp/staging/ytdlp_download.mkv"
+        mock_ydl.extract_info.return_value = {"filepath": merged_path}
+        mock_ydl_cls.return_value.__enter__.return_value = mock_ydl
+
+        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat:
+            mock_stat.return_value.st_size = 500
+            result = self.adapter.download(self.mock_target, "/tmp/staging/ytdlp_download")
+
+        opts = mock_ydl_cls.call_args.kwargs["params"]
+        expected = str(Path("/tmp/staging/ytdlp_download.%(ext)s").resolve())
+        self.assertEqual(opts["outtmpl"], expected)
+        self.assertEqual(result.local_path, str(Path(merged_path).resolve()))
 
 
 if __name__ == "__main__":

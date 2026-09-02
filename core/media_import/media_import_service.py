@@ -3,7 +3,6 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 from core.media_import.media_import_errors import MediaImportError, MediaImportErrorCode
 from core.media_import.media_import_models import MediaImportProgress, MediaImportResult, MediaImportStage
@@ -50,33 +49,62 @@ class MediaImportService:
         import_dir = self.storage_root / uuid.uuid4().hex[:12]
         staging_dir = import_dir / ".staging"
         staging_dir.mkdir(parents=True, exist_ok=True)
+        plan = (
+            [("direct", self.direct_adapter), ("ytdlp", self.ytdlp_adapter)]
+            if url_type == MediaURLType.DIRECT_MEDIA
+            else [("ytdlp", self.ytdlp_adapter), ("direct", self.direct_adapter)]
+        )
         try:
-            if progress_callback:
-                progress_callback(MediaImportProgress(stage=MediaImportStage.DOWNLOADING))
-            name = Path(urlsplit(target.original_url).path).name or "download"
-            staging_target = staging_dir / name
-            adapter = self.direct_adapter if url_type == MediaURLType.DIRECT_MEDIA else self.ytdlp_adapter
-            download = adapter.download(target, staging_target, progress_callback=progress_callback, cancel_flag=cancel_flag)
-            self._check_cancel(cancel_flag)
-            downloaded = Path(download.local_path).resolve()
-            if not downloaded.exists():
-                raise MediaImportError(MediaImportErrorCode.MEDIA_NOT_FOUND, "Downloaded media file does not exist in staging")
-            if staging_dir.resolve() not in downloaded.parents:
-                raise MediaImportError(MediaImportErrorCode.FINALIZE_FAILED, "Downloaded media escaped staging directory")
-            if progress_callback:
-                progress_callback(MediaImportProgress(stage=MediaImportStage.VALIDATING))
-            probe = self.media_probe.probe(downloaded)
-            self._check_cancel(cancel_flag)
-            if progress_callback:
-                progress_callback(MediaImportProgress(stage=MediaImportStage.FINALIZING))
-            ext = downloaded.suffix if downloaded.suffix and downloaded.suffix != ".tmp" else Path(download.filename).suffix
-            final_path = import_dir / f"source{ext or '.mp4'}"
-            os.replace(downloaded, final_path)
-            shutil.rmtree(staging_dir, ignore_errors=True)
-            metadata = dict(download.metadata)
-            metadata.update(duration=probe.duration, video_codec=probe.video_codec, width=probe.width, height=probe.height)
-            return MediaImportResult(str(final_path), target.original_url, final_path.name,
-                                     final_path.stat().st_size, download.media_type, metadata)
+            for index, (adapter_name, adapter) in enumerate(plan):
+                staging_target = staging_dir / f"{adapter_name}_download"
+                try:
+                    if progress_callback:
+                        progress_callback(MediaImportProgress(stage=MediaImportStage.DOWNLOADING))
+                    download = adapter.download(target, staging_target, progress_callback, cancel_flag)
+                    self._check_cancel(cancel_flag)
+                    downloaded = Path(download.local_path).resolve()
+                    if not downloaded.exists():
+                        raise MediaImportError(MediaImportErrorCode.MEDIA_NOT_FOUND, "Downloaded media file does not exist in staging")
+                    if staging_dir.resolve() not in downloaded.parents:
+                        raise MediaImportError(MediaImportErrorCode.FINALIZE_FAILED, "Downloaded media escaped staging directory")
+                    if progress_callback:
+                        progress_callback(MediaImportProgress(stage=MediaImportStage.VALIDATING))
+                    probe = self.media_probe.probe(downloaded)
+                    self._check_cancel(cancel_flag)
+                    if progress_callback:
+                        progress_callback(MediaImportProgress(stage=MediaImportStage.FINALIZING))
+                    final_path = import_dir / f"source{probe.extension}"
+                    try:
+                        os.replace(downloaded, final_path)
+                    except OSError as exc:
+                        raise MediaImportError(
+                            MediaImportErrorCode.FINALIZE_FAILED,
+                            "Unable to finalize imported media",
+                            details={"exception_type": type(exc).__name__},
+                        ) from exc
+                    shutil.rmtree(staging_dir, ignore_errors=True)
+                    metadata = dict(download.metadata)
+                    metadata.update(duration=probe.duration, video_codec=probe.video_codec,
+                                    width=probe.width, height=probe.height,
+                                    container=probe.container)
+                    return MediaImportResult(
+                        str(final_path), target.original_url, final_path.name,
+                        final_path.stat().st_size, download.media_type, metadata
+                    )
+                except MediaImportError as exc:
+                    self._check_cancel(cancel_flag)
+                    if staging_target.exists():
+                        if staging_target.is_dir():
+                            shutil.rmtree(staging_target, ignore_errors=True)
+                        else:
+                            staging_target.unlink(missing_ok=True)
+                    can_fallback = index == 0 and (
+                        (adapter_name == "direct" and exc.code == MediaImportErrorCode.INVALID_MEDIA)
+                        or (adapter_name == "ytdlp" and exc.code == MediaImportErrorCode.UNSUPPORTED_URL)
+                    )
+                    if can_fallback:
+                        continue
+                    raise
         except Exception as exc:
             shutil.rmtree(import_dir, ignore_errors=True)
             if isinstance(exc, MediaImportError):

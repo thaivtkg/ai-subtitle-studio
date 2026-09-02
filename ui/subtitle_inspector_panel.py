@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt, Slot
 from PySide6.QtGui import QColor
+from ui.theme import Theme
 
 
 class SubtitleInspectorPanel(QWidget):
@@ -82,7 +83,7 @@ class SubtitleInspectorPanel(QWidget):
 
     @Slot()
     def _choose_text_color(self):
-        color = QColorDialog.getColor(self.text_color, self, "Chọn màu chữ")
+        color = self._choose_color(self.text_color, "Chọn màu chữ")
         if color.isValid():
             self.text_color = color
             self._update_color_button(self.btn_text_color, color)
@@ -90,11 +91,32 @@ class SubtitleInspectorPanel(QWidget):
 
     @Slot()
     def _choose_outline_color(self):
-        color = QColorDialog.getColor(self.outline_color, self, "Chọn màu viền")
+        color = self._choose_color(self.outline_color, "Chọn màu viền")
         if color.isValid():
             self.outline_color = color
             self._update_color_button(self.btn_outline_color, color)
             self._on_style_changed()
+
+    def _choose_color(self, initial: QColor, title: str) -> QColor:
+        dialog = QColorDialog(initial, self)
+        dialog.setWindowTitle(title)
+        dialog.setOption(QColorDialog.DontUseNativeDialog, True)
+        dialog.setStyleSheet(
+            f"""
+            QColorDialog, QDialog {{ background: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY}; }}
+            QColorDialog QLabel {{ color: {Theme.TEXT_SECONDARY}; }}
+            QColorDialog QLineEdit, QColorDialog QSpinBox {{
+                background: {Theme.SURFACE}; color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER}; border-radius: 5px; padding: 5px;
+            }}
+            QColorDialog QPushButton {{
+                background: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER}; border-radius: 5px; padding: 6px 14px;
+            }}
+            QColorDialog QPushButton:hover {{ border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}
+            """
+        )
+        return dialog.currentColor() if dialog.exec() else QColor()
 
     @Slot()
     def _on_style_changed(self, *args):

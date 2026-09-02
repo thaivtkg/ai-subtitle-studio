@@ -45,6 +45,7 @@ class YtDlpAdapter:
         cancel_flag=None,
     ) -> MediaImportResult:
         dest_path = Path(dest_path).resolve()
+        outtmpl = str(dest_path.with_name(dest_path.name + ".%(ext)s"))
 
         def hook(data):
             if cancel_flag and cancel_flag.is_set():
@@ -67,7 +68,7 @@ class YtDlpAdapter:
             )
 
         options = {
-            "outtmpl": str(dest_path),
+            "outtmpl": outtmpl,
             "format": "bestvideo*+bestaudio/best",
             "noplaylist": True,
             "quiet": True,

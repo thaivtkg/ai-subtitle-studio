@@ -2,6 +2,7 @@ from PySide6.QtCore import QSignalBlocker, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
 from core.project.transcription_context import TranscriptionContext
+from ui.theme import Theme
 
 
 class TranscriptionContextPanel(QWidget):
@@ -9,6 +10,19 @@ class TranscriptionContextPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet(
+            f"""
+            QPlainTextEdit {{
+                background-color: {Theme.BG_APP};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+            QPlainTextEdit:focus {{ border: 1px solid {Theme.PRIMARY_PURPLE}; }}
+            QPlainTextEdit {{ selection-background-color: {Theme.PRIMARY_PURPLE}; }}
+            """
+        )
         self.context_edit = QPlainTextEdit()
         self.context_edit.setPlaceholderText("Context for Whisper")
         self.glossary_edit = QPlainTextEdit()
