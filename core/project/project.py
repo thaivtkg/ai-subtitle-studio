@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from core.project.project_state import ProjectState
+from core.project.transcription_context import TranscriptionContext
 
 @dataclass
 class SourceInfo:
@@ -20,5 +21,5 @@ class Project:
     
     source: SourceInfo
     state: ProjectState
-    
-    schema_version: int = 1
+    transcription_context: TranscriptionContext = field(default_factory=TranscriptionContext)
+    schema_version: int = 2
