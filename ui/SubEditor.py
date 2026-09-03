@@ -754,7 +754,7 @@ class SubtitleEditorWidget(QWidget):
             Toast.show_success(self.window(), f"Đã xuất SRT: {file_name}")
             self.srt_saved.emit(self.srt_path)
         except Exception as e:
-            Toast.show_error(self.window(), f"Lỗi lưu SRT: {str(e)}")
+            Toast.show_error(self.window(), f"Lỗi lưu SRT: {e!s}")
 
     def save_draft(self, filepath=None, silent=False):
         import json
@@ -791,7 +791,7 @@ class SubtitleEditorWidget(QWidget):
                 Toast.show_success(self.window(), f"Đã bảo lưu Draft: {file_name}")
         except Exception as e:
             if not silent: 
-                Toast.show_error(self.window(), f"Lỗi lưu Draft: {str(e)}")
+                Toast.show_error(self.window(), f"Lỗi lưu Draft: {e!s}")
 
     def load_draft_file(self, draft_path):
         if not getattr(self, "project_service", None) or not draft_path:

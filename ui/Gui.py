@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import uuid
 from dataclasses import asdict
 
@@ -683,7 +684,7 @@ class MainWindow(QMainWindow):
                 peaks
             )
             print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
-        except Exception as e:
+        except RuntimeError as e:
             print(f"[DEBUG-WAVEFORM] ❌ LỖI KHI VẼ UI: {e}")
 
     def center_on_screen(self):
@@ -1109,7 +1110,7 @@ class MainWindow(QMainWindow):
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
                 )
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 # Never leave another video's project active after a failed
                 # auto-project switch.
                 self.project_service.close_project()
@@ -1134,8 +1135,6 @@ class MainWindow(QMainWindow):
 
         # 2. KHỞI CHẠY LUỒNG SÓNG ÂM (Background Worker)
         from core.waveform.waveform_service import WaveformService
-        import threading
-
         def _load_waveform():
             # [FIX REVIEW 1] Luồng này giờ chỉ thuần túy xử lý audio, tuyệt đối không chạm vào UI State
             print(f"[DEBUG-WAVEFORM] Bắt đầu nạp sóng âm cho: {vid_path}")
@@ -1147,7 +1146,7 @@ class MainWindow(QMainWindow):
                 peaks = None
                 try:
                     peaks = WaveformService.generate_waveform_peaks(vid_path)
-                except Exception as e:
+                except (OSError, RuntimeError, ValueError) as e:
                     print(f"[DEBUG-WAVEFORM] ❌ LỖI Trích xuất sóng âm: {e}")
 
                 if duration_ms <= 0 and peaks is not None and len(peaks) > 0:
@@ -1159,7 +1158,7 @@ class MainWindow(QMainWindow):
                 # Báo cáo kết quả về Main Thread
                 self.waveform_ready_signal.emit(vid_path, duration_ms, peaks)
                 
-            except Exception as e:
+            except (OSError, RuntimeError, ValueError) as e:
                 print(f"[DEBUG-WAVEFORM] ❌ LỖI TỔNG QUÁT LUỒNG SÓNG ÂM: {e}")
 
         threading.Thread(target=_load_waveform, daemon=True).start()
@@ -1197,7 +1196,7 @@ class MainWindow(QMainWindow):
         base_key = draft_filename.replace(".ai-subtitle-draft", "").replace("_timing", "")
         
         target_vid = None
-        for vid in self.queue_mgr.get_items().keys():
+        for vid in self.queue_mgr.get_items():
             vid_name = os.path.splitext(os.path.basename(vid))[0]
             if vid_name == base_key or vid_name.startswith(base_key) or base_key.startswith(vid_name):
                 target_vid = vid
@@ -1331,7 +1330,7 @@ class MainWindow(QMainWindow):
             duration_sec = get_video_duration(video_path)
             if duration_sec > 0:
                 return int(duration_sec * 1000)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self.append_log(f"[QUEUE] Không đọc được thời lượng video: {exc}")
         return 3600000
 
@@ -1429,7 +1428,7 @@ class MainWindow(QMainWindow):
                 self.subtitle_generation_service.start_generation(
                     request, duration_ms
                 )
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 self.process_error(f"Lỗi khởi chạy Subtitle Generation: {exc}")
             return
 
@@ -1515,7 +1514,7 @@ class MainWindow(QMainWindow):
         """Start the legacy VAD-only draft pipeline from the new panel."""
         try:
             self.timing_service.start_timing(batch_minutes, settings)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self._on_timing_error(str(exc))
 
     def _resume_timing_draft(self, batch_minutes: int, settings: dict):
@@ -1528,7 +1527,7 @@ class MainWindow(QMainWindow):
                 # No Timing Artifact exists when cancellation happens before
                 # the first batch commits, so there is nothing to continue.
                 self.timing_service.start_timing(batch_minutes, settings)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self._on_timing_error(str(exc))
 
     def _on_timing_progress(self, percent: int, message: str):
@@ -1599,7 +1598,7 @@ class MainWindow(QMainWindow):
                 duration_ms, self.timeline_data_provider.get_all_segments()
             )
             self.generation_panel.refresh_batch_mode_availability()
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
 
     def _on_generation_batch_sync(self, batch=None, segments=None):
@@ -1639,7 +1638,7 @@ class MainWindow(QMainWindow):
 
             SubtitleExportService.export_srt(subtitles, temp_srt_path)
             os.replace(temp_srt_path, shadow_srt_path)
-        except Exception as exc:
+        except (ImportError, OSError, ValueError, RuntimeError) as exc:
             if os.path.exists(temp_srt_path):
                 os.remove(temp_srt_path)
             self.append_log(f"[SYNC] Không tạo được Shadow SRT: {exc}")
@@ -1938,8 +1937,8 @@ class MainWindow(QMainWindow):
             
         try:
             os.makedirs(out_dir, exist_ok=True)
-        except Exception as e:
-            Toast.show_error(self, f"Lỗi hệ thống tập tin: {str(e)}")
+        except OSError as e:
+            Toast.show_error(self, f"Lỗi hệ thống tập tin: {e!s}")
             return
 
         base_name = os.path.splitext(os.path.basename(self.queue_mgr.active_vid))[0]
@@ -1985,8 +1984,8 @@ class MainWindow(QMainWindow):
                 Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
             else:
                 Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
-        except Exception as e:
-            Toast.show_error(self, f"Lỗi trong quá trình ghi file: {str(e)}")
+        except (OSError, ValueError, RuntimeError) as e:
+            Toast.show_error(self, f"Lỗi trong quá trình ghi file: {e!s}")
 
     def _continue_draft_from_center(self, draft_path):
         if not self._load_draft_from_center(draft_path, silent=True):
@@ -2048,8 +2047,8 @@ class MainWindow(QMainWindow):
                 self._refresh_transcription_context_views()
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
-            except Exception as e:
-                QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
+            except (OSError, ValueError, RuntimeError) as e:
+                QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{e!s}")
 
     def _on_new_from_url(self):
         dialog = MediaImportDialog(self.media_import_service, self, mode="new_project")
@@ -2070,7 +2069,7 @@ class MainWindow(QMainWindow):
             self.workspace_service.restore_workspace()
             self.generation_panel.check_resumable_state()
             self._refresh_transcription_context_views()
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
 
     def _on_add_url_to_queue(self):
@@ -2124,7 +2123,7 @@ class MainWindow(QMainWindow):
                                     
                                 exporter.export_srt(subs_for_export, artifact.path)
                                 print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact.path}")
-                            except Exception as ex:
+                            except (OSError, ValueError, RuntimeError) as ex:
                                 print(f"[LỖI XUẤT SRT] {ex}")
                                 raise
                                 
@@ -2147,8 +2146,8 @@ class MainWindow(QMainWindow):
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True
             
-        except Exception as e:
-            Toast.show_error(self, f"Không thể lưu dự án:\n{str(e)}")
+        except (OSError, ValueError, RuntimeError) as e:
+            Toast.show_error(self, f"Không thể lưu dự án:\n{e!s}")
             import traceback
             print(traceback.format_exc())
             return False
@@ -2216,8 +2215,8 @@ class MainWindow(QMainWindow):
             self.generation_panel.check_resumable_state()
             self._refresh_transcription_context_views()
             
-        except Exception as e:
-            Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
+        except (OSError, ValueError, KeyError, RuntimeError) as e:
+            Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{e!s}")
             print(f"[LỖI CRASH MỞ PROJECT] {e}")
         finally:
             # 3. MỞ KHÓA RENDER: Vẽ đồng loạt tất cả mọi thứ ra màn hình trong 1 frame duy nhất

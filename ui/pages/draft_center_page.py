@@ -229,4 +229,4 @@ class DraftCenterPage(QWidget):
                 card_widget.deleteLater()
                 Toast.show_success(self.window(), "Đã xóa bản nháp thành công.")
             except Exception as e:
-                Toast.show_error(self.window(), f"Lỗi xóa file: {str(e)}")
+                Toast.show_error(self.window(), f"Lỗi xóa file: {e!s}")
