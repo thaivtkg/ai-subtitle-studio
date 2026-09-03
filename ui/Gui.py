@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 import copy
+from dataclasses import asdict
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -19,7 +20,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTabWidget,
     QDockWidget,
+    QDialog,
     QSizePolicy,
     QTextEdit,
     QVBoxLayout,
@@ -54,14 +56,18 @@ from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
+from core.media_import.media_import_service import MediaImportService
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
 from core.timing.timing_batch_service import TimingBatchService
+from core.project.transcription_context import TranscriptionContext
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
+from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.new_project_dialog import NewProjectDialog
+from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.pages.dashboard_page import DashboardPage
@@ -95,7 +101,8 @@ class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
 
-    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None, parent=None):
+    def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None,
+                 parent=None, project_service=None, media_import_service=None):
         super().__init__(parent)
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
@@ -106,8 +113,11 @@ class MainWindow(QMainWindow):
         self.undo_manager = undo_manager or GlobalUndoManager(self)
         self.global_undo_manager = self.undo_manager
         self.revision_tracker = revision_tracker or RevisionTracker(self.undo_manager, self)
-        self.project_service = ProjectService(self.artifact_store)
+        self.project_service = project_service or ProjectService(self.artifact_store)
+        if project_service is not None:
+            self.artifact_store = getattr(project_service, "artifact_store", self.artifact_store)
         self.project_service.revision_tracker = self.revision_tracker
+        self.media_import_service = media_import_service or MediaImportService()
         self.recovery_manager = recovery_manager or RecoveryManager(
             RuntimePaths.get_recovery_sessions_dir(),
             RuntimePaths.get_recovery_quarantine_dir(),
@@ -141,6 +151,11 @@ class MainWindow(QMainWindow):
         self.shortcut_new = QShortcut(QKeySequence("Ctrl+N"), self)
         self.shortcut_new.setContext(Qt.ApplicationShortcut)
         self.shortcut_new.activated.connect(self.action_new_project)
+
+        self.action_new_from_url = QAction("New from URL...", self)
+        self.action_new_from_url.triggered.connect(self._on_new_from_url)
+        self.action_add_url_to_queue = QAction("Add URL to Queue...", self)
+        self.action_add_url_to_queue.triggered.connect(self._on_add_url_to_queue)
         
         self.shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
         self.shortcut_open.setContext(Qt.ApplicationShortcut)
@@ -205,6 +220,8 @@ class MainWindow(QMainWindow):
         btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
         btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
         sidebar_layout.addWidget(btn_new_project)
+        sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
+        sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
         
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
@@ -350,6 +367,7 @@ class MainWindow(QMainWindow):
         self.generation_panel.timing_cancel_requested.connect(
             self.timing_service.cancel_timing
         )
+        self.generation_panel.request_context_edit.connect(self._show_context_inspector)
         self.timing_service.progress_signal.connect(self._on_timing_progress)
         self.timing_service.log_signal.connect(self._on_timing_log)
         self.timing_service.batch_completed_signal.connect(
@@ -418,6 +436,11 @@ class MainWindow(QMainWindow):
             }}
         """)
         dock_tabs.addTab(self.generation_panel, "✨ Generate")
+        self.context_panel = TranscriptionContextPanel(self)
+        self.context_panel.context_committed.connect(
+            self.on_transcription_context_committed
+        )
+        dock_tabs.addTab(self.context_panel, "📝 Context")
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
         dock_tabs.addTab(self.inspector_panel, "🎨 Style")
@@ -1084,6 +1107,7 @@ class MainWindow(QMainWindow):
                         self.project_service.open_project(project_dir)
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
+                self._refresh_transcription_context_views()
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
                 )
@@ -1384,6 +1408,9 @@ class MainWindow(QMainWindow):
 
             project = self.project_service.current_project
             settings = self.page_settings
+            compiled_context = self.subtitle_generation_service.compile_prompt_context(
+                project.transcription_context
+            )
             request = SubtitleGenerationRequest(
                 request_id=str(uuid.uuid4()),
                 project_id=project.project_id,
@@ -1398,6 +1425,7 @@ class MainWindow(QMainWindow):
                 batch_mode="time",
                 batch_size_value=5,
                 overlap_ms=2000,
+                prompt_context=compiled_context.text,
             )
             try:
                 self.subtitle_generation_service.start_generation(
@@ -1755,11 +1783,48 @@ class MainWindow(QMainWindow):
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
+    def on_transcription_context_committed(
+        self, new_context: TranscriptionContext
+    ) -> None:
+        project = self.project_service.current_project
+        if project is None:
+            return
+        normalized = new_context.normalized()
+        current = getattr(project, "transcription_context", TranscriptionContext())
+        if current.normalized() == normalized:
+            return
+        project.transcription_context = normalized
+        self.project_service.mark_dirty()
+        self._refresh_transcription_context_views(sync_editor=False)
+
+    def _refresh_transcription_context_views(self, *, sync_editor: bool = True) -> None:
+        project = getattr(self.project_service, "current_project", None)
+        if project is None or not hasattr(self, "context_panel"):
+            return
+        context = getattr(project, "transcription_context", TranscriptionContext())
+        compiled = self.subtitle_generation_service.compile_prompt_context(context)
+        if sync_editor:
+            self.context_panel.set_context(context)
+        self.context_panel.set_prompt_diagnostics(compiled)
+        self.generation_panel.set_context_status(
+            compiled, configured=bool(context.context.strip() or context.glossary)
+        )
+
+    def _show_context_inspector(self) -> None:
+        self.generation_dock.show()
+        self.dock_tabs.setCurrentWidget(self.context_panel)
+
     def capture_recovery_working_state(self) -> RecoveryWorkingState:
         workspace = self.workspace_service.capture_workspace() or {}
         project = self.project_service.current_project
         source = getattr(project, "source", None)
         session = getattr(self.recovery_manager, "_active_session", None)
+        context = getattr(project, "transcription_context", None)
+        context_data = (
+            asdict(context.normalized())
+            if isinstance(context, TranscriptionContext)
+            else {}
+        )
         return RecoveryWorkingState(
             schema_version=2.0,
             session_id=session.session_id if session else "",
@@ -1770,6 +1835,7 @@ class MainWindow(QMainWindow):
             edit_revision=self.revision_tracker.edit_revision,
             segments=copy.deepcopy(getattr(self.sub_editor, "all_segments", [])),
             workspace_state=copy.deepcopy(workspace),
+            transcription_context=context_data,
         )
 
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
@@ -1782,6 +1848,13 @@ class MainWindow(QMainWindow):
             self.timeline_widget.load_project_data(0, state.segments, None)
         if state.workspace_state and getattr(self.project_service, "current_project", None):
             self.workspace_service.apply_workspace(state.workspace_state)
+        context_data = getattr(state, "transcription_context", None)
+        project = getattr(self.project_service, "current_project", None)
+        if context_data and project:
+            project.transcription_context = TranscriptionContext(
+                context=context_data.get("context", ""),
+                glossary=context_data.get("glossary", []),
+            ).normalized()
         self.global_undo_manager.clear()
         manifest = getattr(getattr(self.recovery_manager, "_active_session", None), "manifest", None)
         self.revision_tracker.restore_from_snapshot(
@@ -1790,6 +1863,7 @@ class MainWindow(QMainWindow):
             getattr(manifest, "last_clean_revision", 0),
         )
         self._update_window_title_dirty_marker(True)
+        self._refresh_transcription_context_views()
 
     def _on_autosave_timeout(self):
         if self.revision_tracker.is_dirty and self.revision_tracker.edit_revision > self.revision_tracker.snapshot_revision:
@@ -1973,10 +2047,46 @@ class MainWindow(QMainWindow):
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
+                self._refresh_transcription_context_views()
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
             except Exception as e:
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{str(e)}")
+
+    def _on_new_from_url(self):
+        dialog = MediaImportDialog(self.media_import_service, self, mode="new_project")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.get_result()
+        project_data = dialog.get_project_data()
+        if not result or not result.local_path or not project_data:
+            return
+        try:
+            self.project_service.create_project(
+                project_data["bundle_path"], project_data["name"], result.local_path
+            )
+            self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
+            self.video_player.load_video(result.local_path)
+            self.revision_tracker.reset_for_new_document()
+            self._switch_recovery_session()
+            self.workspace_service.restore_workspace()
+            self.generation_panel.check_resumable_state()
+            self._refresh_transcription_context_views()
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
+
+    def _on_add_url_to_queue(self):
+        dialog = MediaImportDialog(self.media_import_service, self, mode="queue")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.get_result()
+        if not result or not result.local_path:
+            return
+        if not self.queue_mgr.add_video(result.local_path):
+            return
+        self._queue_project_dirs[result.local_path] = None
+        self.queue_mgr.set_active(result.local_path)
+        self.video_player.load_video(result.local_path)
 
     def action_save_project(self):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:
@@ -2106,6 +2216,7 @@ class MainWindow(QMainWindow):
 
             self.generation_panel.set_video_duration(dur_ms)
             self.generation_panel.check_resumable_state()
+            self._refresh_transcription_context_views()
             
         except Exception as e:
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{str(e)}")
@@ -2125,6 +2236,7 @@ class MainWindow(QMainWindow):
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
             self.project_service.open_project(request.path)
             self.workspace_service.restore_workspace()
+            self._refresh_transcription_context_views()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_MEDIA and request.path:
             if hasattr(self, "queue_mgr"):

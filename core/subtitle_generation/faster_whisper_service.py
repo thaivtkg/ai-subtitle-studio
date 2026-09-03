@@ -80,6 +80,8 @@ class FasterWhisperService:
                 "beam_size": 5,
                 "word_timestamps": request.word_timestamps,
             }
+            if request.prompt_context.strip():
+                transcribe_options["initial_prompt"] = request.prompt_context
             # Every batch is an independent, zero-based audio input.  This
             # keeps VAD compatible with batch processing and makes the offset
             # contract unambiguous for both VAD and non-VAD transcription.

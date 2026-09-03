@@ -4,19 +4,34 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from core.project.project import Project
+from core.project.project_state import ProjectState
+from core.project.transcription_context import TranscriptionContext
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
+from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 
 try:
+    from PySide6.QtWidgets import QApplication
     from ui.Gui import MainWindow
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError, OSError):
+    QApplication = None
     MainWindow = None
 
 
 class TestRecoveryEndToEnd(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.app = (
+            QApplication.instance() or QApplication([])
+            if QApplication is not None
+            else None
+        )
+
     def _manager(self, root, tracker):
         return RecoveryManager(
             root / "sessions", root / "quarantine", tracker, AtomicSnapshotStore(), RecoveryValidator()
@@ -109,6 +124,96 @@ class TestRecoveryEndToEnd(unittest.TestCase):
         _exported = True
         self.assertTrue(_exported)
         self.assertEqual(before, (tracker.edit_revision, tracker.last_saved_revision, tracker.is_dirty))
+
+    @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
+    def test_tc114_transcription_context_edit_participates_in_revision_and_recovery(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        undo_manager = GlobalUndoManager()
+        tracker = RevisionTracker(undo_manager)
+        manager = self._manager(root, tracker)
+        window = MainWindow(tracker, manager, undo_manager)
+        project = Project(
+            project_id="p1",
+            name="P1",
+            created_at="",
+            updated_at="",
+            source=MagicMock(path="video.mp4", fingerprint="f1"),
+            state=ProjectState(),
+            transcription_context=TranscriptionContext("Initial context", ["Term1"]),
+        )
+        window.project_service.current_project = project
+        window.project_service.project_dir = str(root)
+        tracker.reset_for_new_document()
+        self.assertFalse(tracker.is_dirty)
+        initial_revision = tracker.edit_revision
+        new_context = TranscriptionContext("Updated context", ["Term1", "Term2"])
+
+        window.on_transcription_context_committed(new_context)
+
+        self.assertEqual(tracker.edit_revision, initial_revision + 1)
+        self.assertTrue(tracker.is_dirty)
+        self.assertTrue(project.state.dirty)
+
+        window.on_transcription_context_committed(new_context)
+        self.assertEqual(tracker.edit_revision, initial_revision + 1)
+
+        state = window.capture_recovery_working_state()
+        self.assertEqual(state.transcription_context["context"], "Updated context")
+        self.assertEqual(state.transcription_context["glossary"], ["Term1", "Term2"])
+
+    @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
+    def test_tc115_crash_restore_preserves_context_and_dirty_baseline(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        undo_manager = GlobalUndoManager()
+        tracker = RevisionTracker(undo_manager)
+        tracker.restore_from_snapshot(5, 2, 2)
+        manager = self._manager(root, tracker)
+        session = manager.create_session(
+            RecoveryContext(
+                "p1", "C:/fake", "video.mp4", "f1", 0.0, session_id="context-a"
+            )
+        )
+        unsaved_context = {
+            "context": "Unsaved notes",
+            "glossary": ["Kuro", "Shiro"],
+        }
+        state = RecoveryWorkingState(
+            schema_version=2.0,
+            session_id=session.session_id,
+            project_id="p1",
+            project_file_path="C:/fake",
+            video_path="video.mp4",
+            source_fingerprint="f1",
+            edit_revision=5,
+            transcription_context=unsaved_context,
+        )
+        self.assertTrue(manager.write_snapshot(state, force=True))
+
+        tracker.reset_for_new_document()
+        self.assertEqual(tracker.edit_revision, 0)
+        self.assertFalse(tracker.is_dirty)
+
+        window = MainWindow(tracker, manager, undo_manager)
+        window.project_service.current_project = Project(
+            project_id="p1",
+            name="P1",
+            created_at="",
+            updated_at="",
+            source=MagicMock(path="video.mp4", fingerprint="f1"),
+            state=ProjectState(),
+        )
+        window.apply_recovery_working_state(state, linked=True)
+
+        restored = window.project_service.current_project.transcription_context
+        self.assertEqual(restored.context, "Unsaved notes")
+        self.assertEqual(restored.glossary, ["Kuro", "Shiro"])
+        self.assertTrue(tracker.is_dirty)
+        self.assertTrue(tracker.recovered_dirty_baseline)
+        self.assertEqual(tracker.edit_revision, 5)
+        self.assertEqual(tracker.last_saved_revision, 2)
+        self.assertEqual(tracker.last_clean_revision, 2)
 
     @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
     def test_tc105_project_switch_creates_new_session(self):

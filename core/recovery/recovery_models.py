@@ -47,6 +47,7 @@ class RecoveryWorkingState:
     edit_revision: int
     segments: List[Dict[str, Any]] = field(default_factory=list)
     workspace_state: Dict[str, Any] = field(default_factory=dict)
+    transcription_context: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

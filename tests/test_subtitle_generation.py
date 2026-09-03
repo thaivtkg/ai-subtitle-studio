@@ -186,6 +186,7 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
             word_timestamps=False,
             batch_duration_ms=300000,
             overlap_ms=2000,
+            prompt_context="Terminology: P.",
         )
 
     def tearDown(self):
@@ -389,6 +390,14 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         self.assertTrue(os.path.exists(checkpoint))
         self.assertFalse(os.path.exists(artifact.path + ".tmp"))
         self.assertFalse(os.path.exists(checkpoint + ".tmp"))
+
+    def test_checkpoint_and_resume_keep_request_prompt(self):
+        self.service.start_generation(self.request, 300000)
+        checkpoint = self.service.checkpoint_manager.load_checkpoint()
+
+        self.assertEqual(checkpoint.request_data["prompt_context"], "Terminology: P.")
+        self.service.resume_generation()
+        self.assertEqual(self.service.current_request.prompt_context, "Terminology: P.")
 
     def test_04_cancel_does_not_commit_partial_batch(self):
         class CancelWhisper(MockWhisperService):

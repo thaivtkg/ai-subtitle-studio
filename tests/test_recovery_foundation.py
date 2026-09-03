@@ -106,6 +106,27 @@ class TestSourceFingerprint(unittest.TestCase):
 
 
 class TestRecoveryValidator(unittest.TestCase):
+    def test_legacy_recovery_snapshot_without_context_is_still_valid(self):
+        snapshot = make_snapshot()
+
+        self.assertEqual(snapshot.transcription_context, {})
+        self.assertTrue(RecoveryValidator().validate_data(make_manifest(), snapshot).is_valid)
+
+    def test_validator_rejects_malformed_transcription_context(self):
+        manifest = make_manifest()
+        malformed = (
+            "NotADict",
+            {"context": 12345},
+            {"glossary": "NotAList"},
+        )
+
+        for value in malformed:
+            with self.subTest(value=value):
+                snapshot = replace(make_snapshot(), transcription_context=value)
+                self.assertFalse(
+                    RecoveryValidator().validate_data(manifest, snapshot).is_valid
+                )
+
     def test_revision_mismatch_is_invalid(self):
         manifest = make_manifest()
         snapshot = replace(make_snapshot(), edit_revision=4)

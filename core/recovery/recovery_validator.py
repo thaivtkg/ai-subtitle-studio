@@ -34,6 +34,25 @@ class RecoveryValidator:
         if not isinstance(snapshot.workspace_state, dict):
             return RecoveryValidationResult(False, "INVALID_WORKSPACE_SCHEMA")
 
+        context = getattr(snapshot, "transcription_context", None)
+        if context is not None:
+            if not isinstance(context, dict):
+                return RecoveryValidationResult(
+                    False, "INVALID_TRANSCRIPTION_CONTEXT_TYPE"
+                )
+            if "context" in context and not isinstance(context["context"], str):
+                return RecoveryValidationResult(
+                    False, "INVALID_TRANSCRIPTION_CONTEXT_STRING"
+                )
+            glossary = context.get("glossary")
+            if "glossary" in context and (
+                not isinstance(glossary, list)
+                or not all(isinstance(item, str) for item in glossary)
+            ):
+                return RecoveryValidationResult(
+                    False, "INVALID_TRANSCRIPTION_GLOSSARY_LIST"
+                )
+
         for segment in snapshot.segments:
             if not isinstance(segment, dict):
                 return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
