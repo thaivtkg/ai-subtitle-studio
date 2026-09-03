@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -82,12 +82,12 @@ class TourStep:
     step_id: str
     step_type: TourStepType
     callout: CalloutSpec
+    safety: SafetySpec
     surface: Optional[SurfaceSpec] = None
     anchor: Optional[str] = None
     target_policy: TargetPolicy = TargetPolicy.FALLBACK_TO_INFO
     interaction: Optional[InteractionSpec] = None
     demo: Optional[DemoSpec] = None
-    safety: SafetySpec = field(default_factory=lambda: SafetySpec(allow_back=True))
 
 
 @dataclass(frozen=True)

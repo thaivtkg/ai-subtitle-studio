@@ -2,7 +2,7 @@ import unittest
 from dataclasses import FrozenInstanceError
 
 from core.tutorial.catalog import parse_tour_definition
-from core.tutorial.models import CalloutPlacement, TourStepType
+from core.tutorial.models import CalloutPlacement, CalloutSpec, TourStep, TourStepType
 
 
 class TestTourDefinitionParsing(unittest.TestCase):
@@ -56,6 +56,10 @@ class TestTourDefinitionParsing(unittest.TestCase):
         payload["steps"][0]["callout"]["placement"] = "floating-anywhere"
         with self.assertRaises(ValueError):
             parse_tour_definition(payload)
+
+    def test_tour_step_requires_explicit_safety(self):
+        with self.assertRaises(TypeError):
+            TourStep(step_id="open", step_type=TourStepType.ACTION, callout=CalloutSpec("T", "T"))
 
 
 if __name__ == "__main__":
