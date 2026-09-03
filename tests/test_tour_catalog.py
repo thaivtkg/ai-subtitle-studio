@@ -1,5 +1,8 @@
+import json
+import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 from core.tutorial.catalog import TourCatalog, TourParser, parse_tour_definition
 from core.tutorial.models import CalloutSpec, TourStep, TourStepType
@@ -63,7 +66,7 @@ class TestTourDefinitionParsing(unittest.TestCase):
 
     def test_tc136_reject_executable_fields(self):
         for field in ("execute", "callback", "signal"):
-            payload = {"guide_id": "unsafe", "steps": [{
+            payload = {"schema_version": 1, "guide_id": "unsafe", "steps": [{
                 "step_id": "1", "type": "INFO", field: "dangerous", "callout": {},
             }]}
             with self.subTest(field=field):
@@ -72,7 +75,7 @@ class TestTourDefinitionParsing(unittest.TestCase):
 
     def test_tc137_reject_asset_path_traversal_and_absolute_paths(self):
         for asset in ("../hacked.gif", "assets/../hacked.gif", "/var/run/secret.gif", "C:\\secret.gif"):
-            payload = {"guide_id": "unsafe", "steps": [{
+            payload = {"schema_version": 1, "guide_id": "unsafe", "steps": [{
                 "step_id": "1", "type": "DEMO", "demo": {"asset": asset}, "callout": {},
             }]}
             with self.subTest(asset=asset):
@@ -81,17 +84,29 @@ class TestTourDefinitionParsing(unittest.TestCase):
 
 
 class TestTourCatalog(unittest.TestCase):
+    def test_tc137_filesystem_confinement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = TourCatalog(Path(directory))
+            with self.assertRaisesRegex(ValueError, "Guide path traversal detected"):
+                catalog.load_guide("../outside.json")
+
     def test_tc138_catalog_fault_isolation(self):
-        catalog = TourCatalog()
-        catalog.load([
-            {"guide_id": "valid", "steps": [{"step_id": "1", "type": "INFO", "callout": {}}]},
-            {"guide_id": "unsafe", "steps": [{"step_id": "1", "type": "INFO", "callback": "dangerous", "callout": {}}]},
-            {"guide_id": "broken", "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "../out.gif"}, "callout": {}}]},
-        ])
-        self.assertIsNotNone(catalog.get_guide("valid"))
-        self.assertIsNone(catalog.get_guide("unsafe"))
-        self.assertIsNone(catalog.get_guide("broken"))
-        self.assertEqual(len(catalog.get_all_guides()), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valid.json").write_text(json.dumps({
+                "schema_version": 1, "guide_id": "valid",
+                "steps": [{"step_id": "1", "type": "INFO", "callout": {}}],
+            }), encoding="utf-8")
+            (root / "invalid.json").write_text(json.dumps({"schema_version": 99, "steps": []}), encoding="utf-8")
+            (root / "catalog.json").write_text(json.dumps({"guides": ["valid.json", "invalid.json", "missing.json"]}), encoding="utf-8")
+
+            catalog = TourCatalog(root)
+            guides = catalog.load_all()
+
+            self.assertEqual([guide.guide_id for guide in guides], ["valid"])
+            self.assertEqual(len(catalog.errors), 2)
+            self.assertTrue(any("Unsupported schema_version" in error for error in catalog.errors))
+            self.assertTrue(any("Guide file not found" in error for error in catalog.errors))
 
 
 if __name__ == "__main__":
