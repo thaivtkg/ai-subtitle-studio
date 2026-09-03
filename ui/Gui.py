@@ -1,28 +1,30 @@
+import copy
 import os
 import re
 import subprocess
 import sys
 import uuid
-import copy
 from dataclasses import asdict
 
 from PySide6.QtCore import (
-    QEasingCurve,
     QAbstractAnimation,
+    QEasingCurve,
     QEvent,
     QObject,
     QPoint,
     QPropertyAnimation,
-    QVariantAnimation,
     Qt,
     QTimer,
     QUrl,
+    QVariantAnimation,
     Signal,
     Slot,
 )
 from PySide6.QtGui import QAction, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -32,12 +34,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTabWidget,
-    QDockWidget,
-    QDialog,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -45,10 +45,9 @@ from PySide6.QtWidgets import (
 
 from core.artifacts.artifact_store import ArtifactStore
 from core.Backend import is_garbage
+from core.media_import.media_import_service import MediaImportService
+from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
-from core.services.project_service import ProjectService
-from core.services.workspace_service import WorkspaceService
-from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
@@ -56,31 +55,34 @@ from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
-from core.media_import.media_import_service import MediaImportService
+from core.services.project_service import ProjectService
+from core.services.workspace_service import WorkspaceService
+from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
+from core.subtitle_generation.subtitle_generation_request import (
+    SubtitleGenerationRequest,
+)
 from core.timing.timing_batch_service import TimingBatchService
-from core.project.transcription_context import TranscriptionContext
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
 from ui.components.transcription_context_panel import TranscriptionContextPanel
-from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.dialogs.media_import_dialog import MediaImportDialog
-from ui.subtitle_generation_panel import SubtitleGenerationPanel
-from ui.subtitle_inspector_panel import SubtitleInspectorPanel
+from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
+from ui.subtitle_generation_panel import SubtitleGenerationPanel
+from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.theme import Theme
 from ui.toast import Toast
 from utils import load_settings, save_settings
 from workers.TaskQueue import HardsubWorker
-
 
 
 class StreamRedirector(QObject):
@@ -139,7 +141,9 @@ class MainWindow(QMainWindow):
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
         from core.subtitle_generation.faster_whisper_service import FasterWhisperService
-        from core.subtitle_generation.generation_service import SubtitleGenerationService
+        from core.subtitle_generation.generation_service import (
+            SubtitleGenerationService,
+        )
         self.subtitle_whisper_service = FasterWhisperService()
         self.subtitle_generation_service = SubtitleGenerationService(
             self.subtitle_whisper_service, self.project_service
@@ -812,7 +816,7 @@ class MainWindow(QMainWindow):
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 4:
-            default_dir = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
+            default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
         # Cập nhật UI Sidebar
@@ -1333,7 +1337,7 @@ class MainWindow(QMainWindow):
             duration_sec = get_video_duration(video_path)
             if duration_sec > 0:
                 return int(duration_sec * 1000)
-        except Exception as exc:
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
             self.append_log(f"[QUEUE] Không đọc được thời lượng video: {exc}")
         return 3600000
 
@@ -1779,7 +1783,7 @@ class MainWindow(QMainWindow):
         self.page_dashboard.card_status_val.setText("Idle")
 
     def open_output_folder(self):
-        out_d = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
+        out_d = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
@@ -1916,7 +1920,8 @@ class MainWindow(QMainWindow):
             self.worker.wait(1000)
             
         try:
-            import os, subprocess
+            import os
+            import subprocess
             if os.name == 'nt':
                 subprocess.Popen(["taskkill", "/f", "/im", "ffmpeg.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception:
@@ -1948,8 +1953,8 @@ class MainWindow(QMainWindow):
         exported = []
 
         try:
-            from core.subtitle_exporter import SubtitleExportService
             from core.artifacts.artifact_types import ArtifactType
+            from core.subtitle_exporter import SubtitleExportService
             exporter = SubtitleExportService()
         except ImportError:
             Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core. Kiểm tra lại module.")
@@ -2272,6 +2277,7 @@ class MainWindow(QMainWindow):
 
         import uuid
         from datetime import datetime
+
         from core.artifacts.artifact import Artifact
         from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
 

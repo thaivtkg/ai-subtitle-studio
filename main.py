@@ -14,15 +14,20 @@ from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from core.runtime.runtime_paths import RuntimePaths
-from core.runtime.single_instance_guard import IpcAction, IpcRequest, SingleInstanceGuard
+from core.project.source_fingerprint import generate_source_info
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
+from core.recovery.recovery_models import RecoveryContext
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
+from core.runtime.runtime_paths import RuntimePaths
+from core.runtime.single_instance_guard import (
+    IpcAction,
+    IpcRequest,
+    SingleInstanceGuard,
+)
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
-from core.project.source_fingerprint import generate_source_info
-from core.recovery.recovery_models import RecoveryContext
+
 # Import MainWindow từ thư mục ui
 Gui = None
 def build_ipc_request(argv: list[str]) -> IpcRequest:
@@ -113,7 +118,7 @@ def main():
                     candidate.manifest.last_saved_revision,
                     candidate.manifest.last_clean_revision,
                 )
-                recovered_session = recovery_manager.handoff_recovered_state(
+                recovery_manager.handoff_recovered_state(
                     candidate,
                     candidate.snapshot,
                     RecoveryContext(

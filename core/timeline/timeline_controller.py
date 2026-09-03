@@ -133,7 +133,7 @@ class TimelineController(QObject):
 
     def _trigger_split(self):
         track = self.ui.container.track
-        target_id = track.hovered_id if track.hovered_id != "" else (list(track.selected_ids)[0] if track.selected_ids else "")
+        target_id = track.hovered_id if track.hovered_id != "" else next(iter(track.selected_ids), "")
         playhead = track.playhead_ms
         
         if not target_id:
