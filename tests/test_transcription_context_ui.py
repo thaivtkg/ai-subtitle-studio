@@ -36,7 +36,7 @@ class TestTranscriptionContextUI(unittest.TestCase):
         panel.context_edit.setPlainText("Trận chiến tại Demacia")
         panel.glossary_edit.setPlainText("Demacia\nLux\nGaren")
         self.assertEqual(spy.count(), 0)
-        QTest.qWait(50)
+        self.assertTrue(spy.wait(1000))
         self.assertEqual(spy.count(), 1)
         committed_ctx = spy.at(0)[0]
         self.assertIsInstance(committed_ctx, TranscriptionContext)
