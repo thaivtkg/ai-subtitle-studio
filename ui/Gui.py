@@ -6,6 +6,7 @@ import sys
 import threading
 import uuid
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -2262,13 +2263,10 @@ class MainWindow(QMainWindow):
             self.append_log("❌ [DEBUG] Lỗi: Đường dẫn file truyền vào bị rỗng.")
             return
             
-        import os
         if not os.path.exists(path):
             self.append_log(f"❌ [DEBUG] Lỗi: Không tìm thấy file thực tế trên ổ cứng tại: {path}")
             return
 
-        import uuid
-        from datetime import datetime
         from core.artifacts.artifact import Artifact
         from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
 
@@ -2276,8 +2274,8 @@ class MainWindow(QMainWindow):
             artifact_id=str(uuid.uuid4()),
             artifact_type=a_type,
             path=path,
-            created_at=datetime.now().isoformat(),
-            updated_at=datetime.now().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(timezone.utc).isoformat(),
             source_project_id=self.project_service.current_project.project_id,
             status=ArtifactStatus.READY,
             metadata=metadata or {}
