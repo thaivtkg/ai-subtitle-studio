@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "guide_id": "getting_started",
+  "content_version": 1,
+  "title": "Làm quen với AI Subtitle Studio",
+  "description": "Các khái niệm cơ bản và giao diện chính.",
+  "category": "getting_started",
+  "estimated_minutes": 2,
+  "preconditions": [],
+  "steps": [
+    {
+      "step_id": "welcome",
+      "type": "INFO",
+      "callout": {
+        "title": "Chào mừng",
+        "body": "Giao diện chính của ứng dụng AI Subtitle Studio.",
+        "placement": "auto"
+      }
+    }
+  ]
+}

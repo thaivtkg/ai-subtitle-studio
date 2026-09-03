@@ -3,6 +3,7 @@ from .models import (
     CalloutPlacement,
     CalloutSpec,
     DemoSpec,
+    Precondition,
     InteractionKind,
     InteractionSpec,
     SafetySpec,
@@ -16,6 +17,6 @@ from .models import (
 
 __all__ = [
     "parse_tour_definition", "CalloutPlacement", "CalloutSpec", "DemoSpec",
-    "InteractionKind", "InteractionSpec", "SafetySpec", "SurfaceSpec",
+    "InteractionKind", "InteractionSpec", "SafetySpec", "SurfaceSpec", "Precondition",
     "TargetPolicy", "TourDefinition", "TourState", "TourStep", "TourStepType",
 ]

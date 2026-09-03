@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 from core.tutorial.catalog import TourCatalog, TourParser, parse_tour_definition
-from core.tutorial.models import CalloutSpec, TourStep, TourStepType
+from core.tutorial.models import CalloutSpec, Precondition, TourStep, TourStepType
 
 
 class TestTourDefinitionParsing(unittest.TestCase):
@@ -82,6 +82,23 @@ class TestTourDefinitionParsing(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "path traversal detected"):
                     TourParser.parse_guide(payload)
 
+    def test_tc136_reject_nested_unknown_fields_and_null_bypass(self):
+        with self.assertRaisesRegex(ValueError, "Unknown keys"):
+            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "INFO", "callout": {"page_index": 2}}]})
+        with self.assertRaisesRegex(ValueError, "Unknown keys"):
+            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "ACTION", "anchor": "x", "interaction": {"kind": "CLICK", "signal": "clicked"}}]})
+        with self.assertRaisesRegex(ValueError, "valid anchor"):
+            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "ACTION", "anchor": None}]})
+        with self.assertRaisesRegex(ValueError, "demo definition"):
+            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": None}]})
+
+    def test_preconditions_are_parsed_and_validated(self):
+        guide = TourParser.parse_guide({"schema_version": 1, "preconditions": ["PROJECT_OPEN"], "steps": [{"step_id": "1", "type": "INFO", "preconditions": ["MEDIA_LOADED"]}]})
+        self.assertEqual(guide.preconditions, (Precondition.PROJECT_OPEN,))
+        self.assertEqual(guide.steps[0].preconditions, (Precondition.MEDIA_LOADED,))
+        with self.assertRaises(ValueError):
+            TourParser.parse_guide({"schema_version": 1, "preconditions": ["HACK_SYSTEM"], "steps": [{"step_id": "1", "type": "INFO"}]})
+
 
 class TestTourCatalog(unittest.TestCase):
     def test_tc137_filesystem_confinement(self):
@@ -89,6 +106,21 @@ class TestTourCatalog(unittest.TestCase):
             catalog = TourCatalog(Path(directory))
             with self.assertRaisesRegex(ValueError, "Guide path traversal detected"):
                 catalog.load_guide("../outside.json")
+
+    def test_tc137_assets_are_confined_to_assets_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assets").mkdir()
+            valid = {"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "assets/test.gif"}}]}
+            self.assertEqual(TourParser.parse_guide(valid, root).steps[0].demo.asset, "assets/test.gif")
+            invalid = {"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "guide.json"}}]}
+            with self.assertRaisesRegex(ValueError, "strictly confined under 'assets' directory"):
+                TourParser.parse_guide(invalid, root)
+
+    def test_production_catalog_loads(self):
+        root = Path(__file__).parents[1] / "resources" / "tutorials"
+        guides = TourCatalog(root).load_all()
+        self.assertEqual([guide.guide_id for guide in guides], ["getting_started"])
 
     def test_tc138_catalog_fault_isolation(self):
         with tempfile.TemporaryDirectory() as directory:

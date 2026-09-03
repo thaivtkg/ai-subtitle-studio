@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -45,6 +45,12 @@ class TourState(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class Precondition(str, Enum):
+    PROJECT_OPEN = "PROJECT_OPEN"
+    MEDIA_LOADED = "MEDIA_LOADED"
+    NO_BACKGROUND_JOB = "NO_BACKGROUND_JOB"
+
+
 @dataclass(frozen=True)
 class SurfaceSpec:
     route: str
@@ -88,6 +94,7 @@ class TourStep:
     target_policy: TargetPolicy = TargetPolicy.FALLBACK_TO_INFO
     interaction: Optional[InteractionSpec] = None
     demo: Optional[DemoSpec] = None
+    preconditions: Tuple[Precondition, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -100,3 +107,4 @@ class TourDefinition:
     estimated_minutes: int
     steps: Tuple[TourStep, ...]
     description: str = ""
+    preconditions: Tuple[Precondition, ...] = field(default_factory=tuple)
