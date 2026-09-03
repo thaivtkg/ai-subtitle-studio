@@ -17,6 +17,9 @@ _ALLOWED_INTERACTION_KEYS = frozenset(("kind",))
 _ALLOWED_DEMO_KEYS = frozenset(("asset", "media_type", "fit"))
 _ALLOWED_SAFETY_KEYS = frozenset(("allow_back", "allow_skip_step", "allow_skip_tour"))
 _FORBIDDEN_STEP_KEYS = frozenset({"execute", "callback", "signal"})
+_REQUIRED_ROOT_KEYS = frozenset({"schema_version", "guide_id", "content_version", "title", "description", "category", "estimated_minutes", "steps"})
+_VALID_ROUTES = frozenset({"dashboard", "workspace", "queue", "draft_center", "export_center", "settings", "help"})
+_VALID_SUBROUTES = {"workspace": frozenset({"generate", "context", "style", "log"})}
 
 
 def _parse_surface(data: Optional[Mapping[str, Any]]) -> Optional[SurfaceSpec]:
@@ -40,6 +43,8 @@ def _validate_asset_path(asset: Any, root: Path) -> str:
     if posix.is_absolute() or windows.is_absolute() or any(part == ".." for part in (*posix.parts, *windows.parts)):
         raise ValueError(f"Asset path traversal detected: {asset}")
     assets_dir = (root / "assets").resolve()
+    if assets_dir != root and root not in assets_dir.parents:
+        raise ValueError("Tutorial assets directory escapes resource root")
     candidate = (root / asset).resolve()
     if candidate != assets_dir and assets_dir not in candidate.parents:
         raise ValueError(f"Asset path must be strictly confined under 'assets' directory: {asset}")
@@ -73,6 +78,13 @@ def _parse_step(data: Mapping[str, Any], root: Path) -> TourStep:
     surface_data = data.get("surface")
     if surface_data is not None and (not isinstance(surface_data, Mapping) or set(surface_data) - _ALLOWED_SURFACE_KEYS):
         raise ValueError("Unknown keys in surface object")
+    if surface_data is not None:
+        route = surface_data.get("route")
+        if route not in _VALID_ROUTES:
+            raise ValueError(f"Unknown or invalid route: {route}")
+        subroute = surface_data.get("subroute")
+        if subroute and subroute not in _VALID_SUBROUTES.get(route, frozenset()):
+            raise ValueError(f"Unknown or invalid subroute '{subroute}' for route '{route}'")
     safety_data = data.get("safety", {})
     if not isinstance(safety_data, Mapping) or set(safety_data) - _ALLOWED_SAFETY_KEYS:
         raise ValueError("Unknown keys in safety object")
@@ -88,6 +100,10 @@ def _parse_step(data: Mapping[str, Any], root: Path) -> TourStep:
 
 
 def parse_tour_definition(payload: Mapping[str, object], tutorial_root: Optional[Path] = None) -> TourDefinition:
+    if tutorial_root is not None:
+        missing = _REQUIRED_ROOT_KEYS - set(payload)
+        if missing:
+            raise ValueError(f"Missing required guide keys: {sorted(missing)}")
     schema_version = payload.get("schema_version")
     if schema_version != 1:
         raise ValueError(f"Unsupported schema_version: {schema_version}")
@@ -126,8 +142,8 @@ class TourCatalog:
         self._errors: list[str] = []
 
     @property
-    def errors(self) -> list[str]:
-        return self._errors
+    def errors(self) -> tuple[str, ...]:
+        return tuple(self._errors)
 
     def load_guide(self, relative_path: str) -> TourDefinition:
         candidate = (self.tutorial_root / relative_path).resolve()
@@ -150,7 +166,17 @@ class TourCatalog:
         except (OSError, json.JSONDecodeError) as exc:
             self._errors.append(f"Failed to parse catalog.json: {exc}")
             return ()
-        for relative_path in catalog_data.get("guides", []):
+        if catalog_data.get("schema_version") != 1:
+            self._errors.append(f"Unsupported catalog schema_version: {catalog_data.get('schema_version')}")
+            return ()
+        if set(catalog_data) - {"schema_version", "guides"}:
+            self._errors.append("Unknown keys in catalog.json")
+            return ()
+        guides_list = catalog_data.get("guides")
+        if not isinstance(guides_list, list):
+            self._errors.append("'guides' must be a list")
+            return ()
+        for relative_path in guides_list:
             try:
                 guide = self.load_guide(relative_path)
                 if guide.guide_id in self._guides:

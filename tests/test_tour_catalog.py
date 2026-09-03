@@ -99,6 +99,20 @@ class TestTourDefinitionParsing(unittest.TestCase):
         with self.assertRaises(ValueError):
             TourParser.parse_guide({"schema_version": 1, "preconditions": ["HACK_SYSTEM"], "steps": [{"step_id": "1", "type": "INFO"}]})
 
+    def test_required_keys_and_route_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = {"schema_version": 1, "guide_id": "test", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1, "steps": [{"step_id": "1", "type": "INFO"}]}
+            missing = dict(base); del missing["title"]
+            with self.assertRaisesRegex(ValueError, "Missing required guide keys"):
+                TourParser.parse_guide(missing, root)
+            base["steps"] = [{"step_id": "1", "type": "INFO", "surface": {"route": "unknown_page"}}]
+            with self.assertRaisesRegex(ValueError, "Unknown or invalid route"):
+                TourParser.parse_guide(base, root)
+            base["steps"] = [{"step_id": "1", "type": "INFO", "surface": {"route": "workspace", "subroute": "invalid_sub"}}]
+            with self.assertRaisesRegex(ValueError, "Unknown or invalid subroute"):
+                TourParser.parse_guide(base, root)
+
 
 class TestTourCatalog(unittest.TestCase):
     def test_tc137_filesystem_confinement(self):
@@ -111,9 +125,9 @@ class TestTourCatalog(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "assets").mkdir()
-            valid = {"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "assets/test.gif"}}]}
+            valid = {"schema_version": 1, "guide_id": "valid", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "assets/test.gif"}}]}
             self.assertEqual(TourParser.parse_guide(valid, root).steps[0].demo.asset, "assets/test.gif")
-            invalid = {"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "guide.json"}}]}
+            invalid = dict(valid); invalid["steps"] = [{"step_id": "1", "type": "DEMO", "demo": {"asset": "guide.json"}}]
             with self.assertRaisesRegex(ValueError, "strictly confined under 'assets' directory"):
                 TourParser.parse_guide(invalid, root)
 
@@ -126,11 +140,11 @@ class TestTourCatalog(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "valid.json").write_text(json.dumps({
-                "schema_version": 1, "guide_id": "valid",
+                "schema_version": 1, "guide_id": "valid", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1,
                 "steps": [{"step_id": "1", "type": "INFO", "callout": {}}],
             }), encoding="utf-8")
-            (root / "invalid.json").write_text(json.dumps({"schema_version": 99, "steps": []}), encoding="utf-8")
-            (root / "catalog.json").write_text(json.dumps({"guides": ["valid.json", "invalid.json", "missing.json"]}), encoding="utf-8")
+            (root / "invalid.json").write_text(json.dumps({"schema_version": 99, "guide_id": "invalid", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1, "steps": [{"step_id": "1", "type": "INFO"}]}), encoding="utf-8")
+            (root / "catalog.json").write_text(json.dumps({"schema_version": 1, "guides": ["valid.json", "invalid.json", "missing.json"]}), encoding="utf-8")
 
             catalog = TourCatalog(root)
             guides = catalog.load_all()
@@ -139,6 +153,15 @@ class TestTourCatalog(unittest.TestCase):
             self.assertEqual(len(catalog.errors), 2)
             self.assertTrue(any("Unsupported schema_version" in error for error in catalog.errors))
             self.assertTrue(any("Guide file not found" in error for error in catalog.errors))
+
+    def test_tc138_catalog_schema_is_validated_and_errors_are_immutable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "catalog.json").write_text(json.dumps({"schema_version": 99, "guides": []}), encoding="utf-8")
+            catalog = TourCatalog(root)
+            catalog.load_all()
+            self.assertTrue(any("Unsupported catalog schema_version" in error for error in catalog.errors))
+            self.assertIsInstance(catalog.errors, tuple)
 
 
 if __name__ == "__main__":
