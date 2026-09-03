@@ -82,6 +82,7 @@ Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo b�
 │   [ #1 Chào bạn... ]   [ #2 ...          ]                             │
 │          │ (Playhead Đồng bộ Kim thời gian)                            │
 └────────────────────────────────────────────────────────────────────────┘
+```
 
 ## ⌨️ Bảng Phím tắt Toàn cục (Shortcuts)
 
@@ -149,23 +150,22 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Để cài đúng bộ runtime đã ghim phiên bản:
+Để cài bộ runtime đã ghim các dependency chính:
 
 ```bash
 pip install -r requirements-runtime.txt
-
-
+```
 
 ### Bước 4: Cấu hình FFmpeg
 
-1. Tải bản build tĩnh của FFmpeg từ trang chủ hoặc các nguồn uy tín (Gyan.dev).
-2. Đặt `ffmpeg.exe` và `ffprobe.exe` vào thư mục `bin/` hoặc `installer/ffmpeg/` của dự án.
+1. Nếu chạy từ mã nguồn, đặt `ffmpeg.exe` và `ffprobe.exe` vào thư mục `ffmpeg/` của dự án hoặc đưa chúng vào `PATH`.
+2. Bản đóng gói PyInstaller đã kèm thư mục `ffmpeg/` trong gói ứng dụng.
 
 ### Bước 5: Khởi chạy ứng dụng
 
 
 ```bash
-python ui/Gui.py
+python main.py
 
 ```
 
@@ -174,28 +174,23 @@ python ui/Gui.py
 ### 1. Đóng gói mã nguồn thành File thực thi (`PyInstaller`)
 
 
-```bash
-pyinstaller --noconfirm --onedir --windowed ^
-    --name "AI Subtitle Studio" ^
-    --add-data "bin;bin" ^
-    --add-data "resources;resources" ^
-    --collect-all faster_whisper ^
-    ui/Gui.py
+```powershell
+.\scripts\build_windows.ps1
 
 ```
 
 ### 2. Tạo File Setup Cài đặt (`Inno Setup`)
 
 1. Cài đặt công cụ [Inno Setup 6+](https://jrsoftware.org/).
-2. Mở file cấu hình cài đặt `installer/setup_script.iss`.
-3. Nhấn **Compile** (`Ctrl + F9`) để xuất file `AI_Subtitle_Studio_Setup.exe` vào thư mục `release/`.
+2. Chạy `scripts/build_windows.ps1`; script sẽ gọi `installer/setup.iss` nếu Inno Setup đã được cài.
+3. File cài đặt được xuất vào thư mục `release/`.
 
 ## 📂 Cấu trúc thư mục dự án
 
 
 ```
 ai-subtitle-studio/
-├── bin/                          # Binary FFmpeg / FFprobe độc lập
+├── ffmpeg/                       # Binary FFmpeg / FFprobe độc lập
 ├── core/                         # Tầng Logic Xử lý Cốt lõi
 │   ├── artifacts/                # Quản lý Artifact & Vòng đời Subtitle/Draft
 │   ├── subtitle_generation/      # Domain Faster-Whisper, Planner, Reconciler, Checkpoint
@@ -213,7 +208,8 @@ ai-subtitle-studio/
 │   ├── Gui.py                    # Cửa sổ Chính & Điều phối Sự kiện Toàn cục
 │   └── SubEditor.py              # Bảng Biên tập Phụ đề Dạng Lưới
 ├── workers/                      # Background Worker Threads (Hardsub, Subtitle Gen)
-└── requirements.txt              # Danh sách thư viện Python
+├── requirements.txt              # Dependency môi trường phát triển
+└── requirements-runtime.txt      # Dependency runtime đã ghim phiên bản
 
 ```
 
