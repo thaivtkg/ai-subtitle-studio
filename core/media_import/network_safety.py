@@ -1,5 +1,6 @@
 import ipaddress
 import socket
+import threading
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -13,6 +14,44 @@ class SafeResolvedTarget:
     hostname: str
     port: int
     resolved_ips: tuple[str, ...]
+
+
+_patch_lock = threading.Lock()
+_active_policies = []
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _guarded_getaddrinfo(*args, **kwargs):
+    result = _orig_getaddrinfo(*args, **kwargs)
+    with _patch_lock:
+        policies = list(_active_policies)
+    for policy in policies:
+        for item in result:
+            if not policy.is_ip_allowed(item[4][0]):
+                raise socket.gaierror(-2, f"Blocked connection to unsafe IP: {item[4][0]}")
+    return result
+
+
+class SafeSocketContext:
+    def __init__(self, safety_policy: "NetworkSafetyPolicy"):
+        self.safety_policy = safety_policy
+
+    def __enter__(self):
+        global _orig_getaddrinfo
+        with _patch_lock:
+            if not _active_policies:
+                _orig_getaddrinfo = socket.getaddrinfo
+                socket.getaddrinfo = _guarded_getaddrinfo
+            _active_policies.append(self.safety_policy)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        with _patch_lock:
+            if self.safety_policy in _active_policies:
+                _active_policies.remove(self.safety_policy)
+            if not _active_policies:
+                socket.getaddrinfo = _orig_getaddrinfo
+        return False
 
 
 class NetworkSafetyPolicy:
@@ -96,6 +135,17 @@ class NetworkSafetyPolicy:
 
     def validate_redirect(self, url: str) -> SafeResolvedTarget:
         return self.validate_url(url)
+
+    def is_ip_allowed(self, ip_str: str) -> bool:
+        try:
+            address = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        try:
+            self._validate_ip(address)
+        except MediaImportError:
+            return False
+        return True
 
     @classmethod
     def _validate_ip(cls, address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:

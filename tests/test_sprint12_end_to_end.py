@@ -138,6 +138,18 @@ class TestSprint12ProjectOwnedImport(unittest.TestCase):
         project = project_service.create_project(str(bundle), "Demo", result.local_path)
         return bundle, result, project_service, project
 
+    def test_tc128_save_close_reopen_retains_valid_fingerprint(self):
+        bundle, _, project_service, project = self._create_project_for_test()
+        fingerprint_before = project.source.fingerprint
+        self.assertTrue(fingerprint_before)
+
+        project_service.save_project()
+        project_service.current_project = None
+        reopened = project_service.open_project(str(bundle))
+
+        self.assertEqual(reopened.source.fingerprint, fingerprint_before)
+        self.assertTrue(Path(reopened.source.path).exists())
+
     def test_new_project_cancel_or_failure_removes_empty_bundle(self):
         bundle = self.root / "RetryProject.ai-subtitle"
         dialog = MediaImportDialog(self._service(), mode=MODE_NEW_PROJECT)
@@ -242,6 +254,57 @@ class TestSprint12MainWindowIntegration(unittest.TestCase):
         window._on_new_from_url()
         self.assertEqual(Path(project_service.current_project.source.path).resolve(), source.resolve())
         window.video_player.load_video.assert_called_with(str(source))
+        window.close()
+
+    def test_tc129_full_url_e2e_flow(self):
+        bundle = self.root / "Tc129.ai-subtitle"
+        result = MediaImportService(
+            safety_policy=FakeSafetyPolicy(),
+            url_classifier=FakeURLClassifier(),
+            direct_adapter=FakeDownloadAdapter(),
+            ytdlp_adapter=MagicMock(),
+            media_probe=FakeProbe(),
+            storage_root=self.root / "queue-only-storage",
+        ).import_from_url("https://example.com/video.mp4", destination_dir=bundle / "media")
+        project_service = ProjectService(ArtifactStore())
+        project = project_service.create_project(str(bundle), "Tc129", result.local_path)
+        window = MainWindow(project_service=project_service, media_import_service=MagicMock())
+        window.video_player = MagicMock()
+        window.video_player.load_video(project.source.path)
+        window.video_player.load_video.assert_called_with(project.source.path)
+
+        timing_service = TimingBatchService(project_service)
+        with patch("core.timing.timing_batch_service.TimingBatchWorker") as worker_cls:
+            worker_cls.return_value = MagicMock()
+            timing_service._execute_run(
+                0, 5,
+                {"model_size": "tiny", "compute_type": "float32", "use_vad": False,
+                 "min_silence_ms": 300},
+            )
+            request = worker_cls.call_args.args[0]
+        self.assertEqual(Path(request.video_path).resolve(), Path(result.local_path).resolve())
+
+        if SubtitleGenerationPanel is None:
+            self.fail("SubtitleGenerationPanel must be available for TC129 Full E2E verification")
+        generation_service = MagicMock()
+        generation_service.project_service = project_service
+        generation_service.checkpoint_manager.load_checkpoint.return_value = None
+        generation_service.is_running = False
+        generation_service.compile_prompt_context.return_value = SimpleNamespace(text="")
+        panel = SubtitleGenerationPanel(generation_service)
+        panel.set_video_duration(12_000)
+        panel._on_generate_clicked()
+        generation_request = generation_service.start_generation.call_args.args[0]
+        self.assertEqual(
+            Path(generation_request.video_path).resolve(),
+            Path(project.source.path).resolve(),
+        )
+        project_service.save_project()
+        project_dir = project_service.project_dir
+        project_service.current_project = None
+        reopened = project_service.open_project(project_dir)
+        self.assertEqual(Path(reopened.source.path).resolve(), Path(project.source.path).resolve())
+        self.assertTrue(Path(reopened.source.path).exists())
         window.close()
 
 

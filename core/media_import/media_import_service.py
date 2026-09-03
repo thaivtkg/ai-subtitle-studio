@@ -26,7 +26,7 @@ class MediaImportService:
             direct_adapter = DirectHTTPAdapter(self.safety_policy)
         if ytdlp_adapter is None:
             from core.media_import.adapters.yt_dlp_adapter import YtDlpAdapter
-            ytdlp_adapter = YtDlpAdapter()
+            ytdlp_adapter = YtDlpAdapter(self.safety_policy)
         self.direct_adapter = direct_adapter
         self.ytdlp_adapter = ytdlp_adapter
         self.media_probe = media_probe or MediaProbe()
