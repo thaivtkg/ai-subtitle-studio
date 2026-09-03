@@ -28,6 +28,9 @@ class Theme:
             QMainWindow {{
                 background-color: {cls.BG_APP};
             }}
+            QDialog {{
+                background-color: {cls.BG_APP};
+            }}
             QWidget {{
                 color: {cls.TEXT_PRIMARY};
                 font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
@@ -54,6 +57,34 @@ class Theme:
                 border-radius: 6px;
                 padding: 6px 10px;
                 color: {cls.TEXT_PRIMARY};
+            }}
+            QGroupBox {{
+                background-color: {cls.SURFACE};
+                border: 1px solid {cls.BORDER};
+                border-radius: 6px;
+                margin-top: 8px;
+                padding: 8px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                color: {cls.TEXT_SECONDARY};
+            }}
+            QPushButton {{
+                background-color: {cls.SURFACE_ELEVATED};
+                border: 1px solid {cls.BORDER};
+                border-radius: 6px;
+                color: {cls.TEXT_PRIMARY};
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.SURFACE_SOFT};
+                border-color: {cls.CYAN};
+            }}
+            QPushButton:disabled {{
+                background-color: {cls.SURFACE};
+                color: {cls.TEXT_DISABLED};
             }}
             QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
                 border: 1px solid {cls.PRIMARY_PURPLE};

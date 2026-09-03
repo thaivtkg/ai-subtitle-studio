@@ -1,28 +1,30 @@
+import copy
 import os
 import re
 import subprocess
 import sys
 import uuid
-import copy
 from dataclasses import asdict
 
 from PySide6.QtCore import (
-    QEasingCurve,
     QAbstractAnimation,
+    QEasingCurve,
     QEvent,
     QObject,
     QPoint,
     QPropertyAnimation,
-    QVariantAnimation,
     Qt,
     QTimer,
     QUrl,
+    QVariantAnimation,
     Signal,
     Slot,
 )
 from PySide6.QtGui import QAction, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -32,12 +34,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTabWidget,
-    QDockWidget,
-    QDialog,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -45,10 +45,9 @@ from PySide6.QtWidgets import (
 
 from core.artifacts.artifact_store import ArtifactStore
 from core.Backend import is_garbage
+from core.media_import.media_import_service import MediaImportService
+from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
-from core.services.project_service import ProjectService
-from core.services.workspace_service import WorkspaceService
-from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
@@ -56,31 +55,32 @@ from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.runtime.runtime_paths import RuntimePaths
 from core.runtime.single_instance_guard import IpcAction, IpcRequest
-from core.media_import.media_import_service import MediaImportService
+from core.services.project_service import ProjectService
+from core.services.workspace_service import WorkspaceService
+from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
+from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
 from core.timing.timing_batch_service import TimingBatchService
-from core.project.transcription_context import TranscriptionContext
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
 from ui.components.transcription_context_panel import TranscriptionContextPanel
-from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.dialogs.media_import_dialog import MediaImportDialog
-from ui.subtitle_generation_panel import SubtitleGenerationPanel
-from ui.subtitle_inspector_panel import SubtitleInspectorPanel
+from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
+from ui.subtitle_generation_panel import SubtitleGenerationPanel
+from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.theme import Theme
 from ui.toast import Toast
 from utils import load_settings, save_settings
 from workers.TaskQueue import HardsubWorker
-
 
 
 class StreamRedirector(QObject):
@@ -139,7 +139,9 @@ class MainWindow(QMainWindow):
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
         from core.subtitle_generation.faster_whisper_service import FasterWhisperService
-        from core.subtitle_generation.generation_service import SubtitleGenerationService
+        from core.subtitle_generation.generation_service import (
+            SubtitleGenerationService,
+        )
         self.subtitle_whisper_service = FasterWhisperService()
         self.subtitle_generation_service = SubtitleGenerationService(
             self.subtitle_whisper_service, self.project_service
@@ -483,10 +485,10 @@ class MainWindow(QMainWindow):
         self._update_drawer_handle_position()
 
         # --- TẦNG 3: TIMELINE & WAVEFORM ---
-        from ui.timeline.timeline_widget import TimelineWidget
         from core.timeline.timeline_controller import TimelineController
-        from core.timeline.timeline_integration import TimelineVideoSync
         from core.timeline.timeline_data_provider import TimelineDataProvider
+        from core.timeline.timeline_integration import TimelineVideoSync
+        from ui.timeline.timeline_widget import TimelineWidget
 
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.setMinimumHeight(160) # Timeline nay đã nằm dưới cùng, chiếm ưu thế
@@ -812,7 +814,7 @@ class MainWindow(QMainWindow):
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 4:
-            default_dir = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
+            default_dir = self.out_input.text().strip() or (os.path.dirname(next(iter(self.queue_mgr.get_items()))) if self.queue_mgr.get_items() else "")
             self.page_drafts.set_directory(default_dir)
 
         # Cập nhật UI Sidebar
@@ -928,22 +930,18 @@ class MainWindow(QMainWindow):
         self.page_settings.disappear_combo.blockSignals(True)
         self.page_settings.text_effect_combo.blockSignals(True)
 
-        if preset == "minimal":
-            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("fade"))
-            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("fade"))
-            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
-        elif preset == "standard":
-            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("fade"))
-            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("fade"))
-            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
-        elif preset == "dynamic":
-            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("rise"))
-            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("drop"))
-            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("highlight"))
-        elif preset == "off":
-            self.page_settings.appear_combo.setCurrentIndex(self.page_settings.appear_combo.findData("instant"))
-            self.page_settings.disappear_combo.setCurrentIndex(self.page_settings.disappear_combo.findData("instant"))
-            self.page_settings.text_effect_combo.setCurrentIndex(self.page_settings.text_effect_combo.findData("normal"))
+        preset_values = {
+            "minimal": ("fade", "fade", "normal"),
+            "standard": ("fade", "fade", "normal"),
+            "dynamic": ("rise", "drop", "highlight"),
+            "off": ("instant", "instant", "normal"),
+        }.get(preset)
+        if preset_values:
+            for combo, value in zip(
+                (self.page_settings.appear_combo, self.page_settings.disappear_combo, self.page_settings.text_effect_combo),
+                preset_values,
+            ):
+                combo.setCurrentIndex(combo.findData(value))
 
         self.page_settings.appear_combo.blockSignals(False)
         self.page_settings.disappear_combo.blockSignals(False)
@@ -1001,7 +999,7 @@ class MainWindow(QMainWindow):
                 vram_str = f"{alloc:.1f} / {total:.1f} GB"
             else:
                 gpu_name, vram_str = "CPU Only", "N/A"
-        except Exception:
+        except (ImportError, RuntimeError, AttributeError):
             gpu_name, vram_str = "RTX GPU", "--"
 
         self.page_dashboard.update_hardware(gpu_name, vram_str, self.page_dashboard.card_cpu_val.text(), self.page_dashboard.card_status_val.text())
@@ -1011,8 +1009,8 @@ class MainWindow(QMainWindow):
             import psutil
             cpu_str = f"{psutil.cpu_percent(interval=None):.1f}%"
             self.page_dashboard.card_cpu_val.setText(cpu_str)
-        except Exception:
-            pass
+        except (ImportError, OSError, RuntimeError):
+            return
 
     def _start_metadata_worker(self, video_paths):
         if not video_paths: return
@@ -1779,7 +1777,7 @@ class MainWindow(QMainWindow):
         self.page_dashboard.card_status_val.setText("Idle")
 
     def open_output_folder(self):
-        out_d = self.out_input.text().strip() or (os.path.dirname(list(self.queue_mgr.get_items().keys())[0]) if self.queue_mgr.get_items() else "")
+        out_d = self.out_input.text().strip() or (os.path.dirname(next(iter(self.queue_mgr.get_items()))) if self.queue_mgr.get_items() else "")
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
@@ -1919,7 +1917,7 @@ class MainWindow(QMainWindow):
             import os, subprocess
             if os.name == 'nt':
                 subprocess.Popen(["taskkill", "/f", "/im", "ffmpeg.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        except Exception:
+        except OSError:
             pass
             
         event.accept()

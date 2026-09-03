@@ -44,6 +44,10 @@ class TestMediaImportUI(unittest.TestCase):
             self.dialog._on_succeeded(result)
             self.assertIs(self.dialog.result, result)
 
+    def test_dialog_uses_dark_theme_stylesheet(self):
+        self.assertIn("QDialog", self.dialog.styleSheet())
+        self.assertIn("QPushButton", self.dialog.styleSheet())
+
     def test_indeterminate_progress_sets_range_zero(self):
         self.dialog._set_state(MediaImportDialogState.DOWNLOADING)
         self.dialog._on_progress(MediaImportProgress(MediaImportStage.DOWNLOADING, downloaded_bytes=1024))

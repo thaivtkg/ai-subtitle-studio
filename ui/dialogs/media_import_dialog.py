@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from core.media_import.media_import_errors import MediaImportError, MediaImportErrorCode
 from core.media_import.media_import_models import MediaImportProgress, MediaImportResult, MediaImportStage
 from workers.media_import_worker import MediaImportWorker
+from ui.theme import Theme
 from core.runtime.runtime_paths import RuntimePaths
 
 
@@ -71,6 +72,7 @@ def translate_error(error: MediaImportError) -> str:
 class MediaImportDialog(QDialog):
     def __init__(self, service, parent=None, mode=MODE_NEW_PROJECT):
         super().__init__(parent)
+        self.setStyleSheet(Theme.get_global_stylesheet())
         if mode not in {MODE_NEW_PROJECT, MODE_QUEUE}:
             raise ValueError(f"Unsupported media import mode: {mode}")
         self.service = service
