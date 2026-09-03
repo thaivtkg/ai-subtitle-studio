@@ -63,6 +63,7 @@ from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
 from core.timing.timing_batch_service import TimingBatchService
+from core.project.transcription_context import TranscriptionContext
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
