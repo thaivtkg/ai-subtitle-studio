@@ -154,6 +154,8 @@ class MainWindow(QMainWindow):
 
         self.action_new_from_url = QAction("New from URL...", self)
         self.action_new_from_url.triggered.connect(self._on_new_from_url)
+        self.action_add_url_to_queue = QAction("Add URL to Queue...", self)
+        self.action_add_url_to_queue.triggered.connect(self._on_add_url_to_queue)
         
         self.shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
         self.shortcut_open.setContext(Qt.ApplicationShortcut)
@@ -219,6 +221,7 @@ class MainWindow(QMainWindow):
         btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
         sidebar_layout.addWidget(btn_new_project)
         sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
+        sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
         
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
@@ -2071,6 +2074,19 @@ class MainWindow(QMainWindow):
             self._refresh_transcription_context_views()
         except Exception as exc:
             QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
+
+    def _on_add_url_to_queue(self):
+        dialog = MediaImportDialog(self.media_import_service, self, mode="queue")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.get_result()
+        if not result or not result.local_path:
+            return
+        if not self.queue_mgr.add_video(result.local_path):
+            return
+        self._queue_project_dirs[result.local_path] = None
+        self.queue_mgr.set_active(result.local_path)
+        self.video_player.load_video(result.local_path)
 
     def action_save_project(self):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:

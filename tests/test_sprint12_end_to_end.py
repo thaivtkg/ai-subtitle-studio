@@ -13,6 +13,7 @@ from core.media_import.media_import_models import MediaImportResult
 from core.media_import.media_import_service import MediaImportService
 from core.media_import.media_probe import ProbeResult
 from core.media_import.url_classifier import MediaURLType
+from core.queue_manager import QueueManager
 from core.services.project_service import ProjectService
 from core.timing.timing_batch_service import TimingBatchService
 from ui.dialogs.media_import_dialog import MODE_NEW_PROJECT, MediaImportDialog, MediaImportDialogState
@@ -154,6 +155,52 @@ class TestSprint12ProjectOwnedImport(unittest.TestCase):
         dialog._on_worker_thread_finished()
         self.assertFalse(bundle.exists())
         self.assertTrue(dialog._prepare_destination())
+
+
+class TestQueueOnlyUrlImport(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.media_imports_dir = self.root / "media_imports"
+        self.media_imports_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _make_default_service(self):
+        return MediaImportService(
+            safety_policy=FakeSafetyPolicy(),
+            url_classifier=FakeURLClassifier(),
+            direct_adapter=FakeDownloadAdapter(),
+            ytdlp_adapter=MagicMock(),
+            media_probe=FakeProbe(),
+            storage_root=self.media_imports_dir,
+        )
+
+    def test_tc130_default_import_uses_durable_runtime_paths(self):
+        result = self._make_default_service().import_from_url(
+            "https://example.com/video.mp4", destination_dir=None
+        )
+        actual_path = Path(result.local_path).resolve()
+        expected_root = self.media_imports_dir.resolve()
+
+        self.assertEqual(actual_path.parent.parent, expected_root)
+        self.assertEqual(actual_path.name, "source.mp4")
+        self.assertTrue(actual_path.is_file())
+        self.assertNotIn(".ai-subtitle", str(actual_path))
+
+    def test_tc130_remove_queue_item_does_not_delete_media(self):
+        result = self._make_default_service().import_from_url(
+            "https://example.com/video.mp4", destination_dir=None
+        )
+        media = Path(result.local_path)
+        self.assertTrue(media.exists())
+
+        queue = QueueManager()
+        self.assertTrue(queue.add_video(str(media)))
+        queue.remove_video(str(media))
+
+        self.assertTrue(media.exists())
 
 
 @unittest.skipIf(MainWindow is None, "ui.Gui unavailable in this environment")
