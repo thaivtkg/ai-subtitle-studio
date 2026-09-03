@@ -1,8 +1,8 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from core.tutorial.catalog import parse_tour_definition
-from core.tutorial.models import CalloutPlacement, CalloutSpec, TourStep, TourStepType
+from core.tutorial.catalog import TourCatalog, TourParser, parse_tour_definition
+from core.tutorial.models import CalloutSpec, TourStep, TourStepType
 
 
 class TestTourDefinitionParsing(unittest.TestCase):
@@ -60,6 +60,38 @@ class TestTourDefinitionParsing(unittest.TestCase):
     def test_tour_step_requires_explicit_safety(self):
         with self.assertRaises(TypeError):
             TourStep(step_id="open", step_type=TourStepType.ACTION, callout=CalloutSpec("T", "T"))
+
+    def test_tc136_reject_executable_fields(self):
+        for field in ("execute", "callback", "signal"):
+            payload = {"guide_id": "unsafe", "steps": [{
+                "step_id": "1", "type": "INFO", field: "dangerous", "callout": {},
+            }]}
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, "forbidden executable fields"):
+                    TourParser.parse_guide(payload)
+
+    def test_tc137_reject_asset_path_traversal_and_absolute_paths(self):
+        for asset in ("../hacked.gif", "assets/../hacked.gif", "/var/run/secret.gif", "C:\\secret.gif"):
+            payload = {"guide_id": "unsafe", "steps": [{
+                "step_id": "1", "type": "DEMO", "demo": {"asset": asset}, "callout": {},
+            }]}
+            with self.subTest(asset=asset):
+                with self.assertRaisesRegex(ValueError, "path traversal detected"):
+                    TourParser.parse_guide(payload)
+
+
+class TestTourCatalog(unittest.TestCase):
+    def test_tc138_catalog_fault_isolation(self):
+        catalog = TourCatalog()
+        catalog.load([
+            {"guide_id": "valid", "steps": [{"step_id": "1", "type": "INFO", "callout": {}}]},
+            {"guide_id": "unsafe", "steps": [{"step_id": "1", "type": "INFO", "callback": "dangerous", "callout": {}}]},
+            {"guide_id": "broken", "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "../out.gif"}, "callout": {}}]},
+        ])
+        self.assertIsNotNone(catalog.get_guide("valid"))
+        self.assertIsNone(catalog.get_guide("unsafe"))
+        self.assertIsNone(catalog.get_guide("broken"))
+        self.assertEqual(len(catalog.get_all_guides()), 1)
 
 
 if __name__ == "__main__":
