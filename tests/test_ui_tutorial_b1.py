@@ -269,6 +269,59 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.assertEqual(window.stack.current_index, 1)
         self.assertEqual(window.dock_tabs.currentIndex(), 1)
 
+    def test_tc144_c_route_only_workspace_allows_hidden_drawer(self):
+        from unittest.mock import MagicMock
+        from ui.Gui import MainWindow
+
+        window = MainWindow(
+            project_service=MagicMock(), media_import_service=MagicMock()
+        )
+        self.widgets.append(window)
+        window.show()
+        window.generation_dock.hide()
+        router = MainWindowRouter(window)
+        nav = NavigationAdapter(router)
+        emitted = []
+        nav.surface_ready.connect(lambda *args: emitted.append(args))
+
+        nav.navigate(SurfaceSpec("workspace"), session_id="c", generation=1, request_id="c-1")
+        loop = QEventLoop()
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
+
+        self.assertEqual(emitted, [("c", 1, "c-1")])
+        self.assertEqual(window.stack.current_index, 1)
+        self.assertFalse(window.generation_dock.isVisible())
+
+    def test_tc144_d_hidden_real_drawer_opens_and_settles(self):
+        from unittest.mock import MagicMock
+        from ui.Gui import MainWindow
+
+        window = MainWindow(
+            project_service=MagicMock(), media_import_service=MagicMock()
+        )
+        self.widgets.append(window)
+        window.show()
+        window.generation_dock.hide()
+        router = MainWindowRouter(window)
+        nav = NavigationAdapter(router)
+        emitted = []
+        nav.surface_ready.connect(lambda *args: emitted.append(args))
+
+        nav.navigate(
+            SurfaceSpec("workspace", "context"),
+            session_id="d",
+            generation=1,
+            request_id="d-1",
+        )
+        loop = QEventLoop()
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
+
+        self.assertEqual(emitted, [("d", 1, "d-1")])
+        self.assertTrue(window.generation_dock.isVisible())
+        self.assertEqual(window.dock_tabs.currentIndex(), 1)
+
     def test_tc144_a_hidden_drawer_settles_before_ready(self):
         emitted = []
         self.router._index = 1

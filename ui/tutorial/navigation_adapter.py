@@ -132,7 +132,7 @@ class MainWindowRouter(AppRouter):
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self._check_settled)
-        self._settle_target: Optional[Tuple[str, int]] = None
+        self._settle_target: Optional[Tuple[str, int, Optional[str]]] = None
 
     def current_index(self) -> int:
         return self._stack.current_index
@@ -152,7 +152,7 @@ class MainWindowRouter(AppRouter):
         operation_id = f"op-{next(self._ids)}"
         self._active_operation_id = operation_id
         self._settle_timer.stop()
-        self._settle_target = (operation_id, index)
+        self._settle_target = (operation_id, index, subroute)
         if index == NavigationAdapter.ROUTE_MAP["workspace"] and subroute in self.SUBROUTE_TO_TAB:
             self._window.dock_tabs.setCurrentIndex(self.SUBROUTE_TO_TAB[subroute])
             dock = getattr(self._window, "generation_dock", None)
@@ -179,7 +179,7 @@ class MainWindowRouter(AppRouter):
     def _check_settled(self) -> None:
         if self._settle_target is None:
             return
-        operation_id, index = self._settle_target
+        operation_id, index, subroute = self._settle_target
         if operation_id != self._active_operation_id:
             return
         drawer_anim = getattr(self._window, "drawer_anim", None)
@@ -189,8 +189,11 @@ class MainWindowRouter(AppRouter):
             and drawer_anim.state() == QAbstractAnimation.Running
         )
         dock = getattr(self._window, "generation_dock", None)
-        drawer_settled = index != NavigationAdapter.ROUTE_MAP["workspace"] or (
-            dock is not None and dock.isVisible() and not drawer_animating
+        drawer_settled = subroute is None or (
+            dock is not None
+            and dock.isVisible()
+            and not drawer_animating
+            and self.TAB_TO_SUBROUTE.get(self._window.dock_tabs.currentIndex()) == subroute
         )
         if self.current_index() != index or stack_animating or not drawer_settled:
             self._settle_timer.start(50)
