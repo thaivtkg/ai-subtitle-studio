@@ -1,7 +1,6 @@
 import copy
 import os
 import re
-import subprocess
 import sys
 import threading
 import uuid
@@ -61,7 +60,9 @@ from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
-from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
+from core.subtitle_generation.subtitle_generation_request import (
+    SubtitleGenerationRequest,
+)
 from core.timing.timing_batch_service import TimingBatchService
 from core.video_metadata import MetadataWorker, VideoMetadataExtractor
 from player.video_player import VideoPlayerWidget
@@ -1914,7 +1915,8 @@ class MainWindow(QMainWindow):
             self.worker.wait(1000)
             
         try:
-            import os, subprocess
+            import os
+            import subprocess
             if os.name == 'nt':
                 subprocess.Popen(["taskkill", "/f", "/im", "ffmpeg.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         except OSError:
@@ -1946,8 +1948,8 @@ class MainWindow(QMainWindow):
         exported = []
 
         try:
-            from core.subtitle_exporter import SubtitleExportService
             from core.artifacts.artifact_types import ArtifactType
+            from core.subtitle_exporter import SubtitleExportService
             exporter = SubtitleExportService()
         except ImportError:
             Toast.show_error(self, "Lỗi nạp SubtitleExportService từ core. Kiểm tra lại module.")
@@ -2248,7 +2250,7 @@ class MainWindow(QMainWindow):
         dialog = ModelManagerDialog(self)
         dialog.exec()
 
-    def _register_artifact(self, path: str, a_type, metadata: dict = None) -> None:
+    def _register_artifact(self, path: str, a_type, metadata: dict | None = None) -> None:
         self.append_log(f"\n[DEBUG] Đang thử đăng ký Artifact: {path}")
         
         if not getattr(self, 'project_service', None):
