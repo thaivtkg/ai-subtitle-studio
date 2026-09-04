@@ -15,10 +15,6 @@ from core.tutorial.tour_engine import TourEngine, TourState
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 
-
-APP = QCoreApplication.instance() or QCoreApplication(sys.argv)
-
-
 class TestTourEngineCoreContracts(unittest.TestCase):
     def test_anchor_resolution_default(self):
         resolution = AnchorResolution(AnchorStatus.NOT_FOUND)
@@ -102,6 +98,10 @@ class FakeProgressStore:
 
 
 class TestTourEngineA4(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+
     def setUp(self):
         self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
         self.observer = FakeObserver(); self.dialog = FakeDialogObserver()
@@ -256,6 +256,10 @@ class TestTourEngineA4(unittest.TestCase):
 
 
 class TestTourEngineA5Async(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+
     def setUp(self):
         self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
         self.observer = FakeObserver(); self.navigation = FakeNavigation()
@@ -318,7 +322,12 @@ class TestTourEngineA5Async(unittest.TestCase):
         self.assertEqual(self.engine.current_step().step_id, "action")
 
         self.registry.status = AnchorStatus.NOT_FOUND
-        self._run_loop()
+        loop = QEventLoop()
+        self.engine.state_changed.connect(
+            lambda state: loop.quit() if state is TourState.COMPLETED else None
+        )
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
         self.assertEqual(self.engine.state(), TourState.COMPLETED)
 
     def test_late_action_callback_after_cancel_is_ignored(self):
