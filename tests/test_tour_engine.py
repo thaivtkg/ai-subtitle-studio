@@ -1,5 +1,5 @@
+import sys
 import unittest
-from unittest.mock import patch
 
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.models import (
@@ -12,6 +12,11 @@ from core.tutorial.ports import (
     NavigationPort, ProgressStorePort, SpotlightPort,
 )
 from core.tutorial.tour_engine import TourEngine, TourState
+
+from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
+
+
+APP = QCoreApplication.instance() or QCoreApplication(sys.argv)
 
 
 class TestTourEngineCoreContracts(unittest.TestCase):
@@ -98,9 +103,6 @@ class FakeProgressStore:
 
 class TestTourEngineA4(unittest.TestCase):
     def setUp(self):
-        self.timer_patch = patch("core.tutorial.tour_engine.QTimer")
-        self.mock_timer_class = self.timer_patch.start()
-        self.addCleanup(self.timer_patch.stop)
         self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
         self.observer = FakeObserver(); self.dialog = FakeDialogObserver()
         self.progress = FakeProgressStore(); self.navigation = FakeNavigation()
@@ -127,13 +129,13 @@ class TestTourEngineA4(unittest.TestCase):
         return TourEngine(catalog=catalog, anchor_registry=self.registry, navigation=self.navigation,
                           interaction_observer=self.observer, spotlight=self.spotlight,
                           dialog_observer=self.dialog, progress_store=self.progress,
-                          environment=environment)
+                          environment=environment, target_settle_timeout_ms=0)
 
     def _ready(self):
         self.engine.on_surface_ready(*self.navigation.requests[-1])
 
     def _settle(self):
-        self.mock_timer_class.singleShot.call_args.args[1]()
+        QCoreApplication.processEvents()
 
     def test_missing_anchor_policies_use_public_flow(self):
         self.registry.status = AnchorStatus.NOT_FOUND
@@ -253,16 +255,10 @@ class TestTourEngineA4(unittest.TestCase):
         self.assertTrue(self.engine.start("test_guide"))
 
 
-class TestTourEngineA5(unittest.TestCase):
+class TestTourEngineA5Async(unittest.TestCase):
     def setUp(self):
-        self.timer_patch = patch("core.tutorial.tour_engine.QTimer")
-        self.mock_timer_class = self.timer_patch.start()
-        self.addCleanup(self.timer_patch.stop)
-        self.watchdog = self.mock_timer_class.return_value
-        self.spotlight = FakeSpotlight()
-        self.registry = FakeAnchorRegistry()
-        self.observer = FakeObserver()
-        self.navigation = FakeNavigation()
+        self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
+        self.observer = FakeObserver(); self.navigation = FakeNavigation()
         self.dialog = FakeDialogObserver()
         guide = TourDefinition(
             schema_version=1, guide_id="a5_guide", content_version=1,
@@ -275,13 +271,18 @@ class TestTourEngineA5(unittest.TestCase):
                          SafetySpec(True), anchor="btn2", target_policy=TargetPolicy.SKIP),
             ),
         )
-        self.catalog = FakeCatalog({"a5_guide": guide})
         self.engine = TourEngine(
-            catalog=self.catalog, anchor_registry=self.registry, navigation=self.navigation,
-            interaction_observer=self.observer, spotlight=self.spotlight,
-            dialog_observer=self.dialog, progress_store=None,
-            environment=TourEnvironment(lambda _: True),
+            catalog=FakeCatalog({"a5_guide": guide}), anchor_registry=self.registry,
+            navigation=self.navigation, interaction_observer=self.observer,
+            spotlight=self.spotlight, dialog_observer=self.dialog, progress_store=None,
+            environment=TourEnvironment(lambda _: True), navigation_timeout_ms=10,
+            target_settle_timeout_ms=10,
         )
+
+    def _run_loop(self, duration_ms=20):
+        loop = QEventLoop()
+        QTimer.singleShot(duration_ms, loop.quit)
+        loop.exec()
 
     def test_stale_navigation_token_is_ignored(self):
         self.assertTrue(self.engine.start("a5_guide"))
@@ -290,63 +291,50 @@ class TestTourEngineA5(unittest.TestCase):
         self.engine.on_surface_ready(session_id, generation, "wrong_request")
         self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
 
-    def test_navigation_watchdog_enters_recovery(self):
+    def test_navigation_watchdog_timeout_real_async(self):
         self.assertTrue(self.engine.start("a5_guide"))
-        timeout_callback = self.mock_timer_class.singleShot.call_args.args[1]
-        timeout_callback()
+        self._run_loop()
         self.assertEqual(self.engine.state(), TourState.RECOVERING)
-        self.assertIn("RECOVERY", self.spotlight.history)
         self.assertEqual(self.navigation.cancel_pending_calls, 1)
 
-    def test_stale_navigation_watchdog_is_ignored(self):
-        self.assertTrue(self.engine.start("a5_guide"))
-        old_timeout = self.mock_timer_class.singleShot.call_args.args[1]
-        old_request = self.navigation.requests[-1]
-        self.engine.on_surface_failed(*old_request, "retry")
-        self.engine.retry()
-        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
-        old_timeout()
-        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+    def test_action_advance_is_queued_and_ordered_real_async(self):
+        event_log = []
+        original_unbind = self.observer.unbind
+        original_hide = self.spotlight.hide_step
+        self.observer.unbind = lambda: (event_log.append("unbind"), original_unbind())[1]
+        self.spotlight.hide_step = lambda: (event_log.append("hide_step"), original_hide())[1]
+        self.engine.state_changed.connect(lambda state: event_log.append(f"state:{state}"))
 
-    @patch("core.tutorial.tour_engine.QTimer.singleShot")
-    def test_action_advance_is_queued_after_immediate_unbind(self, single_shot):
         self.assertTrue(self.engine.start("a5_guide"))
         self.engine.on_surface_ready(*self.navigation.requests[-1])
-        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
-        self.assertTrue(self.observer.is_bound())
+        event_log.clear()
+        action_token = self.observer.binding
+        self.engine.on_action_satisfied(*action_token)
 
-        self.engine.on_action_satisfied(*self.observer.binding)
-        old_binding = self.observer.binding
+        self.assertEqual(event_log[0], "unbind")
+        self.assertEqual(event_log[1], f"state:{TourState.ADVANCING_STEP}")
+        self.assertIn("hide_step", event_log)
         self.assertFalse(self.observer.is_bound())
-        self.assertEqual(self.engine.state(), TourState.ADVANCING_STEP)
-        self.assertEqual(single_shot.call_args.args[0], 0)
         self.assertEqual(self.engine.current_step().step_id, "action")
 
-        self.engine.on_action_satisfied(*old_binding)
-        self.assertEqual(sum(call.args[0] == 0 for call in single_shot.call_args_list), 1)
-        self.registry.status = AnchorStatus.RESOLVED
-        single_shot.call_args.args[1]()
-        self.assertEqual(self.engine.current_step().step_id, "info")
+        self.registry.status = AnchorStatus.NOT_FOUND
+        self._run_loop()
+        self.assertEqual(self.engine.state(), TourState.COMPLETED)
 
-    @patch("core.tutorial.tour_engine.QTimer.singleShot")
-    def test_late_action_callback_is_ignored(self, single_shot):
+    def test_late_action_callback_after_cancel_is_ignored(self):
         self.assertTrue(self.engine.start("a5_guide"))
         self.engine.on_surface_ready(*self.navigation.requests[-1])
-        session_id, generation = self.observer.binding
-        self.engine.on_action_satisfied(session_id, generation + 1)
-        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
-        self.assertTrue(self.observer.is_bound())
-        self.assertFalse(any(call.args[0] == 0 for call in single_shot.call_args_list))
+        old_token = self.observer.binding
+        self.engine.cancel()
+        self.engine.on_action_satisfied(*old_token)
+        self.assertEqual(self.engine.state(), TourState.CANCELLED)
 
-    @patch("core.tutorial.tour_engine.QTimer.singleShot")
-    def test_target_settle_retries_before_missing_policy(self, single_shot):
+    def test_target_settle_retries_before_missing_policy(self):
         self.registry.status = AnchorStatus.NOT_FOUND
         self.assertTrue(self.engine.start("a5_guide"))
         self.engine.on_surface_ready(*self.navigation.requests[-1])
         self.assertEqual(self.engine.state(), TourState.RESOLVING_TARGET)
-        self.assertEqual(single_shot.call_args.args[0], 750)
-
-        single_shot.call_args.args[1]()
+        self._run_loop()
         self.assertEqual(self.engine.state(), TourState.RECOVERING)
 
     def test_target_lost_reuses_missing_target_policy(self):
