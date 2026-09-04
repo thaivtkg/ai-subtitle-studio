@@ -3,10 +3,11 @@ from typing import Any, List, Optional, Tuple
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QDialog, QWidget
 
 from core.tutorial.models import AnchorHandle, InteractionKind, InteractionSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
+from ui.tutorial.dialog_observer import DialogLifecycleObserver
 
 
 class InteractionObserverAdapter(QObject):
@@ -15,9 +16,15 @@ class InteractionObserverAdapter(QObject):
     action_satisfied = Signal(str, int)
     target_lost = Signal(str, int, str)
 
-    def __init__(self, registry: AnchorRegistry, parent: Optional[QObject] = None):
+    def __init__(
+        self,
+        registry: AnchorRegistry,
+        dialog_observer: Optional[DialogLifecycleObserver] = None,
+        parent: Optional[QObject] = None,
+    ):
         super().__init__(parent)
         self._registry = registry
+        self._dialog_observer = dialog_observer
         self._bound_widget_ref: Optional[weakref.ReferenceType[QWidget]] = None
         self._session_id = ""
         self._generation = 0
@@ -50,10 +57,6 @@ class InteractionObserverAdapter(QObject):
     ) -> Any:
         self.unbind()
         kind = self._normalize_kind(interaction)
-        if kind is InteractionKind.DIALOG_ACCEPTED:
-            raise NotImplementedError(
-                "DIALOG_ACCEPTED is deferred to B3 DialogLifecycleObserver"
-            )
         widget = self._registry.get_widget(anchor)
         if widget is None or not shiboken6.isValid(widget):
             self.target_lost.emit(session_id, generation, "Target widget not found or invalid")
@@ -65,7 +68,19 @@ class InteractionObserverAdapter(QObject):
         self._interaction_kind = kind
         widget.installEventFilter(self)
         self._connect_signal(widget.destroyed, self._on_widget_destroyed)
-        if kind is InteractionKind.TEXT_COMMITTED:
+        if kind is InteractionKind.DIALOG_ACCEPTED:
+            dialog = widget if isinstance(widget, QDialog) else widget.window()
+            signal = getattr(dialog, "accepted", None) if isinstance(dialog, QDialog) else None
+            if signal is None and isinstance(dialog, QDialog) and self._dialog_observer is not None:
+                signal = self._dialog_observer.dialog_accepted
+            if signal is None or not self._connect_signal(signal, self._on_semantic_action):
+                self.unbind()
+                self.target_lost.emit(
+                    session_id, generation,
+                    "INTERACTION_BIND_FAILED: Target is not an observable dialog",
+                )
+                return None
+        elif kind is InteractionKind.TEXT_COMMITTED:
             signal = getattr(widget, "editingFinished", None)
             if signal is None:
                 signal = getattr(widget, "returnPressed", None)
@@ -75,6 +90,7 @@ class InteractionObserverAdapter(QObject):
                     session_id, generation,
                     "INTERACTION_BIND_FAILED: Widget does not support text commit signals",
                 )
+                return None
         elif kind is InteractionKind.SELECTION_CHANGED:
             bound_signal = False
             for name in ("currentIndexChanged", "itemSelectionChanged", "selectionChanged"):
@@ -89,6 +105,7 @@ class InteractionObserverAdapter(QObject):
                     session_id, generation,
                     "INTERACTION_BIND_FAILED: Widget does not support selection signals",
                 )
+                return None
         return None
 
     def unbind(self) -> None:

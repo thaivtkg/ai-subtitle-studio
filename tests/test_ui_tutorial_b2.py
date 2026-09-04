@@ -239,19 +239,19 @@ class TestMilestoneB2InteractionObserver(unittest.TestCase):
         self.assertFalse(self.observer.is_bound())
         self.assertEqual(engine.state(), TourState.RECOVERING)
 
-    def test_dialog_accepted_is_deferred_to_b3(self):
-        button = QPushButton("Dialog")
+    def test_dialog_accepted_is_supported_by_b3_observer(self):
+        from PySide6.QtWidgets import QDialog
+        button = QDialog()
         self.widgets.append(button)
         button.show()
+        self.app.processEvents()
         self.registry.register("dialog", button)
         handle = self.registry.resolve("dialog").handle
-        with self.assertRaises(NotImplementedError):
-            self.observer.bind(
-                handle,
-                InteractionSpec(InteractionKind.DIALOG_ACCEPTED),
-                session_id="s",
-                generation=1,
-            )
+        emitted = []
+        self.observer.action_satisfied.connect(lambda *args: emitted.append(args))
+        self.observer.bind(handle, InteractionSpec(InteractionKind.DIALOG_ACCEPTED), session_id="s", generation=1)
+        button.accept()
+        self.assertEqual(emitted, [("s", 1)])
 
     def test_text_commit_without_semantic_signal_fails_safe(self):
         text_edit = QTextEdit()
