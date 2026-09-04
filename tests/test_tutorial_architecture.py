@@ -10,33 +10,60 @@ class TestTutorialArchitectureGuards(unittest.TestCase):
         self.project_root = Path(__file__).resolve().parent.parent
         self.core_tutorial_dir = self.project_root / "core" / "tutorial"
         self.tests_dir = self.project_root / "tests"
-
-    def test_core_tutorial_has_no_forbidden_dependencies(self):
-        forbidden_imports = {
+        self.forbidden_imports = {
             "PySide6.QtWidgets", "PySide6.QtGui", "core.services.project_service",
             "workers", "core.media_import", "core.subtitle_generation", "ui",
         }
+
+    def _check_source_code_for_violations(self, source_code: str, file_name: str) -> list[str]:
+        try:
+            tree = ast.parse(source_code, file_name)
+        except SyntaxError:
+            return []
+
+        violations = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                imported = ([base] if base else []) + [
+                    f"{base}.{alias.name}" if base else alias.name
+                    for alias in node.names
+                ]
+            else:
+                continue
+            for path in imported:
+                if any(path == forbidden or path.startswith(forbidden + ".")
+                       for forbidden in self.forbidden_imports):
+                    violations.append(f"{file_name} imports '{path}'")
+        return violations
+
+    def test_architecture_guard_catches_importfrom_bypasses(self):
+        snippets = {
+            "from core.services import project_service": "core.services.project_service",
+            "from core import media_import": "core.media_import",
+            "from core import subtitle_generation, unrelated": "core.subtitle_generation",
+            "from PySide6.QtWidgets import QPushButton": "PySide6.QtWidgets",
+            "import workers.foo": "workers.foo",
+        }
+        for source, expected in snippets.items():
+            violations = self._check_source_code_for_violations(source, "dummy.py")
+            self.assertTrue(
+                any(expected in violation for violation in violations),
+                f"Guard failed to catch '{expected}' in snippet: {source}",
+            )
+
+    def test_core_tutorial_has_no_forbidden_dependencies(self):
         violations = []
         for root, _, files in os.walk(self.core_tutorial_dir):
             for filename in files:
                 if not filename.endswith(".py"):
                     continue
                 file_path = Path(root) / filename
-                tree = ast.parse(file_path.read_text(encoding="utf-8"), str(file_path))
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        imported = [alias.name for alias in node.names]
-                    elif isinstance(node, ast.ImportFrom):
-                        imported = [
-                            f"{node.module}.{alias.name}" if node.module == "PySide6" else node.module or ""
-                            for alias in node.names
-                        ]
-                    else:
-                        continue
-                    for name in imported:
-                        if any(name == forbidden or name.startswith(forbidden + ".")
-                               for forbidden in forbidden_imports):
-                            violations.append(f"{file_path.name} imports '{name}'")
+                violations.extend(self._check_source_code_for_violations(
+                    file_path.read_text(encoding="utf-8"), file_path.name
+                ))
         self.assertEqual(violations, [], "Architecture Violations found:\n" + "\n".join(violations))
 
     def test_core_ports_are_protocols_only(self):
