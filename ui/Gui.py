@@ -16,7 +16,6 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     Qt,
     QTimer,
-    QUrl,
     QVariantAnimation,
     Signal,
     Slot,
@@ -37,7 +36,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -45,7 +43,6 @@ from PySide6.QtWidgets import (
 )
 
 from core.artifacts.artifact_store import ArtifactStore
-from core.Backend import is_garbage
 from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
@@ -64,7 +61,7 @@ from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
 from core.timing.timing_batch_service import TimingBatchService
-from core.video_metadata import MetadataWorker, VideoMetadataExtractor
+from core.video_metadata import MetadataWorker
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
