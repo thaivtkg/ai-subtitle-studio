@@ -1,11 +1,15 @@
 import unittest
 
-from core.tutorial.models import AnchorHandle, AnchorResolution, AnchorStatus
 from core.tutorial.environment import TourEnvironment
-from core.tutorial.ports import (
-    NavigationPort, AnchorRegistryPort, InteractionObserverPort,
-    SpotlightPort, DialogObserverPort, ProgressStorePort,
+from core.tutorial.models import (
+    AnchorHandle, AnchorResolution, AnchorStatus, CalloutSpec, InteractionSpec,
+    SafetySpec, SurfaceSpec, TargetPolicy, TourDefinition, TourStep, TourStepType,
 )
+from core.tutorial.ports import (
+    AnchorRegistryPort, DialogObserverPort, InteractionObserverPort,
+    NavigationPort, ProgressStorePort, SpotlightPort,
+)
+from core.tutorial.tour_engine import TourEngine, TourState
 
 
 class TestTourEngineCoreContracts(unittest.TestCase):
@@ -29,15 +33,174 @@ class TestTourEngineCoreContracts(unittest.TestCase):
 
     def test_protocols_interface_present(self):
         for protocol, method in (
-            (NavigationPort, "navigate"),
-            (AnchorRegistryPort, "resolve"),
-            (InteractionObserverPort, "bind"),
-            (SpotlightPort, "show_target"),
-            (DialogObserverPort, "start"),
-            (ProgressStorePort, "is_completed"),
+            (NavigationPort, "navigate"), (AnchorRegistryPort, "resolve"),
+            (InteractionObserverPort, "bind"), (SpotlightPort, "show_target"),
+            (DialogObserverPort, "start"), (ProgressStorePort, "is_completed"),
         ):
             self.assertTrue(hasattr(protocol, method))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class FakeCatalog:
+    def __init__(self, guides): self.guides = guides
+    def get_guide(self, guide_id): return self.guides.get(guide_id)
+
+
+class FakeAnchorRegistry:
+    def __init__(self): self.status = AnchorStatus.RESOLVED
+    def resolve(self, anchor_id):
+        if self.status is AnchorStatus.RESOLVED:
+            return AnchorResolution(self.status, AnchorHandle(anchor_id, "host", 1))
+        return AnchorResolution(self.status)
+
+
+class FakeNavigation:
+    def __init__(self): self.requests = []; self.cancel_pending_calls = 0
+    def navigate(self, surface, *, session_id, generation, request_id):
+        self.requests.append((session_id, generation, request_id))
+    def current_surface(self): return None
+    def cancel_pending(self): self.cancel_pending_calls += 1
+
+
+class FakeObserver:
+    def __init__(self): self.bound = False; self.unbind_calls = 0
+    def bind(self, anchor, interaction, *, session_id, generation): self.bound = True
+    def unbind(self): self.bound = False; self.unbind_calls += 1
+    def is_bound(self): return self.bound
+
+
+class FakeSpotlight:
+    def __init__(self): self.history = []
+    def attach_host(self, host): return True
+    def detach_host(self): self.history.append("DETACH_HOST")
+    def hide_step(self): self.history.append("HIDE_STEP")
+    def show_recovery(self, message, *, retry_enabled, skip_enabled): self.history.append("RECOVERY")
+    def show_info_without_target(self, callout, controls): self.history.append("INFO_NO_TARGET")
+    def show_target(self, anchor, callout, controls): self.history.append("TARGET"); return True
+    def show_demo(self, demo, callout, controls): self.history.append("DEMO"); return True
+
+
+class FakeDialogObserver:
+    def __init__(self): self.started = []; self.stop_calls = 0
+    def start(self, session_id): self.started.append(session_id)
+    def stop(self): self.stop_calls += 1
+    def active_modal_handle(self): return None
+
+
+class FakeProgressStore:
+    def __init__(self): self.completed = []
+    def is_completed(self, guide_id, content_version): return False
+    def mark_completed(self, guide_id, content_version): self.completed.append((guide_id, content_version))
+    def mark_dismissed(self, guide_id, content_version): pass
+
+
+class TestTourEngineA4(unittest.TestCase):
+    def setUp(self):
+        self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
+        self.observer = FakeObserver(); self.dialog = FakeDialogObserver()
+        self.progress = FakeProgressStore(); self.navigation = FakeNavigation()
+        guide = TourDefinition(
+            schema_version=1, guide_id="test_guide", content_version=1,
+            title="Test", category="test", estimated_minutes=1,
+            steps=(
+                TourStep("required", TourStepType.ACTION, CalloutSpec("T1", "B1"), SafetySpec(True),
+                         surface=SurfaceSpec("dash"), anchor="b1", target_policy=TargetPolicy.REQUIRED,
+                         interaction=InteractionSpec("CLICK")),
+                TourStep("skip", TourStepType.INFO, CalloutSpec("T2", "B2"), SafetySpec(True),
+                         surface=SurfaceSpec("other"), anchor="b2", target_policy=TargetPolicy.SKIP),
+                TourStep("fallback", TourStepType.ACTION, CalloutSpec("T3", "B3"), SafetySpec(False),
+                         anchor="b3", target_policy=TargetPolicy.FALLBACK_TO_INFO,
+                         interaction=InteractionSpec("CLICK")),
+                TourStep("demo", TourStepType.DEMO, CalloutSpec("T4", "B4"), SafetySpec(True),
+                         anchor="b4", target_policy=TargetPolicy.FALLBACK_TO_INFO),
+            ),
+        )
+        self.catalog = FakeCatalog({"test_guide": guide})
+        self.engine = self._new_engine(self.catalog, TourEnvironment(lambda _: True))
+
+    def _new_engine(self, catalog, environment):
+        return TourEngine(catalog=catalog, anchor_registry=self.registry, navigation=self.navigation,
+                          interaction_observer=self.observer, spotlight=self.spotlight,
+                          dialog_observer=self.dialog, progress_store=self.progress,
+                          environment=environment)
+
+    def _ready(self):
+        self.engine.on_surface_ready(*self.navigation.requests[-1])
+
+    def test_missing_anchor_policies_use_public_flow(self):
+        self.registry.status = AnchorStatus.NOT_FOUND
+        self.assertTrue(self.engine.start("test_guide"))
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+        self._ready()
+        self.assertEqual(self.engine.state(), TourState.RECOVERING)
+        self.engine.skip_step()
+        self._ready()
+        self.assertEqual(self.engine.state(), TourState.SHOWING_INFO)
+        self.assertFalse(self.observer.is_bound())
+        self.assertIn("INFO_NO_TARGET", self.spotlight.history)
+
+    def test_back_rebuilds_previous_info_or_demo_step(self):
+        self.assertTrue(self.engine.start("test_guide")); self._ready()
+        self.engine.next(); self.engine.next(); self.engine.next()
+        self.assertEqual(self.engine.current_step().step_id, "demo")
+        self.engine.back()
+        self.assertEqual(self.engine.current_step().step_id, "fallback")
+        self.assertIn("HIDE_STEP", self.spotlight.history)
+
+    def test_action_back_disabled_leaves_step_unchanged(self):
+        self.assertTrue(self.engine.start("test_guide")); self._ready()
+        self.engine.next(); self.engine.next()
+        self.assertEqual(self.engine.current_step().step_id, "fallback")
+        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
+        self.engine.back()
+        self.assertEqual(self.engine.current_step().step_id, "fallback")
+
+    def test_cancel_is_idempotent_and_invalidates_session(self):
+        self.assertTrue(self.engine.start("test_guide")); old_request = self.navigation.requests[-1]
+        self.engine.cancel("TEST_REASON")
+        self.assertFalse(self.engine.is_running())
+        self.assertEqual(self.engine.state(), TourState.CANCELLED)
+        self.assertEqual(self.observer.unbind_calls, 1)
+        self.assertIn("HIDE_STEP", self.spotlight.history)
+        self.engine.cancel("REASON_2")
+        self.assertEqual(self.observer.unbind_calls, 1)
+        self.engine.on_surface_ready(*old_request)
+        self.assertEqual(self.engine.state(), TourState.CANCELLED)
+
+    def test_surface_request_token_rejects_late_signal(self):
+        self.assertTrue(self.engine.start("test_guide")); old_request = self.navigation.requests[-1]
+        self.engine.next()
+        self.assertEqual(self.engine.current_step().step_id, "skip")
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+        self.engine.on_surface_ready(*old_request)
+        self.assertEqual(self.engine.current_step().step_id, "skip")
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+
+    def test_surface_failure_recovery_retry_restarts_navigation(self):
+        self.assertTrue(self.engine.start("test_guide"))
+        failed_request = self.navigation.requests[-1]
+        self.engine.on_surface_failed(*failed_request, "timeout")
+        self.assertEqual(self.engine.state(), TourState.RECOVERING)
+
+        self.engine.retry()
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+        self.assertNotEqual(self.navigation.requests[-1], failed_request)
+
+    def test_start_rejects_failed_precondition(self):
+        guide = self.catalog.get_guide("test_guide")
+        blocked = TourDefinition(guide.schema_version, "blocked", guide.content_version, guide.title,
+                                 guide.category, guide.estimated_minutes, guide.steps,
+                                 preconditions=("BLOCKED",))
+        blocked_catalog = FakeCatalog({"blocked": blocked})
+        blocked_engine = self._new_engine(blocked_catalog, TourEnvironment(lambda _: False))
+        self.assertFalse(blocked_engine.start("blocked"))
+        self.assertEqual(blocked_engine.state(), TourState.IDLE)
+
+    def test_completion_persists_progress_and_allows_new_session(self):
+        self.assertTrue(self.engine.start("test_guide")); self._ready()
+        for _ in range(4): self.engine.next()
+        self.assertEqual(self.engine.state(), TourState.COMPLETED)
+        self.assertEqual(self.progress.completed, [("test_guide", 1)])
+        self.assertTrue(self.engine.start("test_guide"))
+
+
+if __name__ == "__main__": unittest.main()
