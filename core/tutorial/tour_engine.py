@@ -1,7 +1,7 @@
 import uuid
 from typing import Any, Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from .environment import TourEnvironment
 from .models import (
@@ -24,6 +24,7 @@ from .ports import (
 
 
 class TourEngine(QObject):
+    NAVIGATION_TIMEOUT_MS = 2500
     state_changed = Signal(object)
     tour_started = Signal(str)
     step_changed = Signal(str, str, int, int)
@@ -41,6 +42,7 @@ class TourEngine(QObject):
         progress_store: Optional[ProgressStorePort],
         environment: TourEnvironment,
         parent: Optional[QObject] = None,
+        navigation_timeout_ms: int = NAVIGATION_TIMEOUT_MS,
     ) -> None:
         super().__init__(parent)
         self._catalog = catalog
@@ -57,12 +59,19 @@ class TourEngine(QObject):
         self._session_id = ""
         self._generation = 0
         self._current_nav_request_id = ""
+        self._nav_watchdog = QTimer(self)
+        self._nav_watchdog.setSingleShot(True)
+        self._nav_watchdog.setInterval(navigation_timeout_ms)
+        self._nav_watchdog.timeout.connect(self._on_nav_timeout)
 
         for name, handler in (("surface_ready", self.on_surface_ready),
                               ("surface_failed", self.on_surface_failed)):
             signal = getattr(self._navigation, name, None)
             if signal is not None and hasattr(signal, "connect"):
                 signal.connect(handler)
+        action_signal = getattr(self._interaction_observer, "action_satisfied", None)
+        if action_signal is not None and hasattr(action_signal, "connect"):
+            action_signal.connect(self.on_action_satisfied)
 
     def state(self) -> TourState:
         return self._state
@@ -87,6 +96,7 @@ class TourEngine(QObject):
         self._navigation.cancel_pending()
         self._current_nav_request_id = ""
         self._spotlight.hide_step()
+        self._nav_watchdog.stop()
 
     def start(self, guide_id: str) -> bool:
         if self.is_running():
@@ -180,6 +190,7 @@ class TourEngine(QObject):
         self.step_changed.emit(self._session_id, step.step_id, self._current_step_index, self._generation)
         if step.surface is not None:
             self._current_nav_request_id = str(uuid.uuid4())
+            self._nav_watchdog.start()
             self._navigation.navigate(
                 step.surface,
                 session_id=self._session_id,
@@ -196,9 +207,19 @@ class TourEngine(QObject):
                 and generation == self._generation
                 and request_id == self._current_nav_request_id)
 
+    def _on_nav_timeout(self) -> None:
+        if self._state != TourState.PREPARING_SURFACE:
+            return
+        self._nav_watchdog.stop()
+        self._current_nav_request_id = ""
+        self._navigation.cancel_pending()
+        self._set_state(TourState.RECOVERING)
+        self._spotlight.show_recovery("Navigation Timeout", retry_enabled=True, skip_enabled=True)
+
     def on_surface_ready(self, session_id: str, generation: int, request_id: str) -> None:
         if not self._valid_navigation_signal(session_id, generation, request_id):
             return
+        self._nav_watchdog.stop()
         self._current_nav_request_id = ""
         self._set_state(TourState.RESOLVING_TARGET)
         step = self.current_step()
@@ -208,9 +229,28 @@ class TourEngine(QObject):
     def on_surface_failed(self, session_id: str, generation: int, request_id: str, reason: str) -> None:
         if not self._valid_navigation_signal(session_id, generation, request_id):
             return
+        self._nav_watchdog.stop()
         self._current_nav_request_id = ""
         self._set_state(TourState.RECOVERING)
         self._spotlight.show_recovery("Navigation Failed", retry_enabled=True, skip_enabled=True)
+
+    def on_action_satisfied(self, session_id: str, generation: int) -> None:
+        if (session_id != self._session_id or generation != self._generation
+                or self._state != TourState.WAITING_ACTION):
+            return
+        self._set_state(TourState.ADVANCING_STEP)
+        self._cleanup_step_scope()
+        QTimer.singleShot(
+            0, lambda: self._queued_advance(session_id, generation)
+        )
+
+    def _queued_advance(self, session_id: str, generation: int) -> None:
+        if (session_id != self._session_id or generation != self._generation
+                or self._state != TourState.ADVANCING_STEP):
+            return
+        self._current_step_index += 1
+        self._generation += 1
+        self._process_current_step()
 
     def _resolve_target_and_present(self, step: TourStep) -> None:
         if not step.anchor:
