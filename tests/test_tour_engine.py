@@ -137,7 +137,7 @@ class TestTourEngineA4(unittest.TestCase):
     def _settle(self):
         QCoreApplication.processEvents()
 
-    def test_missing_anchor_policies_use_public_flow(self):
+    def test_tc147_missing_anchor_policy(self):
         self.registry.status = AnchorStatus.NOT_FOUND
         self.assertTrue(self.engine.start("test_guide"))
         self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
@@ -188,7 +188,7 @@ class TestTourEngineA4(unittest.TestCase):
         self.assertTrue(self.engine.start("bad_guide"))
         self.assertEqual(self.engine.state(), ModelTourState.RECOVERING)
 
-    def test_back_rebuilds_previous_info_or_demo_step(self):
+    def test_tc155_info_demo_back(self):
         self.assertTrue(self.engine.start("test_guide")); self._ready()
         self.engine.skip_step(); self._ready()
         self.engine.next(); self.engine.skip_step()
@@ -197,7 +197,7 @@ class TestTourEngineA4(unittest.TestCase):
         self.assertEqual(self.engine.current_step().step_id, "fallback")
         self.assertIn("HIDE_STEP", self.spotlight.history)
 
-    def test_action_back_disabled_leaves_step_unchanged(self):
+    def test_tc156_action_back_disabled(self):
         self.assertTrue(self.engine.start("test_guide")); self._ready()
         self.engine.skip_step(); self._ready(); self.engine.next()
         self.assertEqual(self.engine.current_step().step_id, "fallback")
@@ -205,7 +205,7 @@ class TestTourEngineA4(unittest.TestCase):
         self.engine.back()
         self.assertEqual(self.engine.current_step().step_id, "fallback")
 
-    def test_cancel_is_idempotent_and_invalidates_session(self):
+    def test_tc157_cancel_cleanup(self):
         self.assertTrue(self.engine.start("test_guide")); old_request = self.navigation.requests[-1]
         self.engine.cancel("TEST_REASON")
         self.assertFalse(self.engine.is_running())
@@ -288,20 +288,20 @@ class TestTourEngineA5Async(unittest.TestCase):
         QTimer.singleShot(duration_ms, loop.quit)
         loop.exec()
 
-    def test_stale_navigation_token_is_ignored(self):
+    def test_tc145_stale_navigation_token(self):
         self.assertTrue(self.engine.start("a5_guide"))
         session_id, generation, request_id = self.navigation.requests[-1]
         self.engine.on_surface_ready("wrong_session", generation, request_id)
         self.engine.on_surface_ready(session_id, generation, "wrong_request")
         self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
 
-    def test_navigation_watchdog_timeout_real_async(self):
+    def test_tc146_navigation_watchdog(self):
         self.assertTrue(self.engine.start("a5_guide"))
         self._run_loop()
         self.assertEqual(self.engine.state(), TourState.RECOVERING)
         self.assertEqual(self.navigation.cancel_pending_calls, 1)
 
-    def test_action_advance_is_queued_and_ordered_real_async(self):
+    def test_tc152_tc153_queued_action_advance_ordering(self):
         event_log = []
         original_unbind = self.observer.unbind
         original_hide = self.spotlight.hide_step
@@ -330,7 +330,7 @@ class TestTourEngineA5Async(unittest.TestCase):
         loop.exec()
         self.assertEqual(self.engine.state(), TourState.COMPLETED)
 
-    def test_late_action_callback_after_cancel_is_ignored(self):
+    def test_tc154_stale_action_callback(self):
         self.assertTrue(self.engine.start("a5_guide"))
         self.engine.on_surface_ready(*self.navigation.requests[-1])
         old_token = self.observer.binding
