@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.models import (
@@ -132,14 +132,20 @@ class TestTourEngineA4(unittest.TestCase):
     def _ready(self):
         self.engine.on_surface_ready(*self.navigation.requests[-1])
 
+    def _settle(self):
+        self.mock_timer_class.singleShot.call_args.args[1]()
+
     def test_missing_anchor_policies_use_public_flow(self):
         self.registry.status = AnchorStatus.NOT_FOUND
         self.assertTrue(self.engine.start("test_guide"))
         self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
         self._ready()
+        self._settle()
         self.assertEqual(self.engine.state(), TourState.RECOVERING)
         self.engine.skip_step()
         self._ready()
+        self._settle()
+        self._settle()
         self.assertEqual(self.engine.state(), TourState.SHOWING_INFO)
         self.assertFalse(self.observer.is_bound())
         self.assertIn("INFO_NO_TARGET", self.spotlight.history)
@@ -286,12 +292,21 @@ class TestTourEngineA5(unittest.TestCase):
 
     def test_navigation_watchdog_enters_recovery(self):
         self.assertTrue(self.engine.start("a5_guide"))
-        timeout_callback = self.watchdog.timeout.connect.call_args.args[0]
+        timeout_callback = self.mock_timer_class.singleShot.call_args.args[1]
         timeout_callback()
         self.assertEqual(self.engine.state(), TourState.RECOVERING)
         self.assertIn("RECOVERY", self.spotlight.history)
         self.assertEqual(self.navigation.cancel_pending_calls, 1)
-        self.watchdog.stop.assert_called()
+
+    def test_stale_navigation_watchdog_is_ignored(self):
+        self.assertTrue(self.engine.start("a5_guide"))
+        old_timeout = self.mock_timer_class.singleShot.call_args.args[1]
+        old_request = self.navigation.requests[-1]
+        self.engine.on_surface_failed(*old_request, "retry")
+        self.engine.retry()
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+        old_timeout()
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
 
     @patch("core.tutorial.tour_engine.QTimer.singleShot")
     def test_action_advance_is_queued_after_immediate_unbind(self, single_shot):
@@ -301,14 +316,17 @@ class TestTourEngineA5(unittest.TestCase):
         self.assertTrue(self.observer.is_bound())
 
         self.engine.on_action_satisfied(*self.observer.binding)
+        old_binding = self.observer.binding
         self.assertFalse(self.observer.is_bound())
         self.assertEqual(self.engine.state(), TourState.ADVANCING_STEP)
-        single_shot.assert_called_once_with(0, ANY)
+        self.assertEqual(single_shot.call_args.args[0], 0)
         self.assertEqual(self.engine.current_step().step_id, "action")
 
-        self.registry.status = AnchorStatus.NOT_FOUND
+        self.engine.on_action_satisfied(*old_binding)
+        self.assertEqual(sum(call.args[0] == 0 for call in single_shot.call_args_list), 1)
+        self.registry.status = AnchorStatus.RESOLVED
         single_shot.call_args.args[1]()
-        self.assertEqual(self.engine.state(), TourState.COMPLETED)
+        self.assertEqual(self.engine.current_step().step_id, "info")
 
     @patch("core.tutorial.tour_engine.QTimer.singleShot")
     def test_late_action_callback_is_ignored(self, single_shot):
@@ -318,7 +336,25 @@ class TestTourEngineA5(unittest.TestCase):
         self.engine.on_action_satisfied(session_id, generation + 1)
         self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
         self.assertTrue(self.observer.is_bound())
-        single_shot.assert_not_called()
+        self.assertFalse(any(call.args[0] == 0 for call in single_shot.call_args_list))
+
+    @patch("core.tutorial.tour_engine.QTimer.singleShot")
+    def test_target_settle_retries_before_missing_policy(self, single_shot):
+        self.registry.status = AnchorStatus.NOT_FOUND
+        self.assertTrue(self.engine.start("a5_guide"))
+        self.engine.on_surface_ready(*self.navigation.requests[-1])
+        self.assertEqual(self.engine.state(), TourState.RESOLVING_TARGET)
+        self.assertEqual(single_shot.call_args.args[0], 750)
+
+        single_shot.call_args.args[1]()
+        self.assertEqual(self.engine.state(), TourState.RECOVERING)
+
+    def test_target_lost_reuses_missing_target_policy(self):
+        self.assertTrue(self.engine.start("a5_guide"))
+        self.engine.on_surface_ready(*self.navigation.requests[-1])
+        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
+        self.engine.on_target_lost(*self.observer.binding, "closed")
+        self.assertEqual(self.engine.state(), TourState.RECOVERING)
 
 
 if __name__ == "__main__": unittest.main()
