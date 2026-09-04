@@ -104,7 +104,7 @@ class TourProgressStore:
 
     @staticmethod
     def _decode_v1(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        guides = payload.get("progress", payload.get("guides", {}))
+        guides = payload.get("guides", payload.get("progress", {}))
         if not isinstance(guides, dict):
             raise ValueError("guides must be an object")
         decoded: dict[str, dict[str, Any]] = {}
@@ -147,7 +147,7 @@ class TourProgressStore:
         payload = {
             "schema_version": self.SCHEMA_VERSION,
             "updated_at": self._now(),
-            "progress": guides,
+            "guides": guides,
         }
         temporary = self._file_path.with_name(
             f"{self._file_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
