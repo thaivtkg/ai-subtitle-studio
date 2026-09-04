@@ -1,31 +1,26 @@
 import uuid
-from enum import Enum
 from typing import Any, Optional
 
 from PySide6.QtCore import QObject, Signal
 
+from .environment import TourEnvironment
 from .models import (
-    AnchorHandle,
     AnchorResolution,
     AnchorStatus,
     TargetPolicy,
     TourDefinition,
     TourStep,
     TourStepType,
+    TourState,
 )
-
-
-class TourState(str, Enum):
-    IDLE = "IDLE"
-    PREPARING_SURFACE = "PREPARING_SURFACE"
-    RESOLVING_TARGET = "RESOLVING_TARGET"
-    SHOWING_INFO = "SHOWING_INFO"
-    WAITING_ACTION = "WAITING_ACTION"
-    SHOWING_DEMO = "SHOWING_DEMO"
-    ADVANCING_STEP = "ADVANCING_STEP"
-    RECOVERING = "RECOVERING"
-    COMPLETED = "COMPLETED"
-    CANCELLED = "CANCELLED"
+from .ports import (
+    AnchorRegistryPort,
+    DialogObserverPort,
+    InteractionObserverPort,
+    NavigationPort,
+    ProgressStorePort,
+    SpotlightPort,
+)
 
 
 class TourEngine(QObject):
@@ -38,13 +33,13 @@ class TourEngine(QObject):
     def __init__(
         self,
         catalog: Any,
-        anchor_registry: Any,
-        navigation: Any,
-        interaction_observer: Any,
-        spotlight: Any,
-        dialog_observer: Any,
-        progress_store: Any,
-        environment: Any,
+        anchor_registry: AnchorRegistryPort,
+        navigation: NavigationPort,
+        interaction_observer: InteractionObserverPort,
+        spotlight: SpotlightPort,
+        dialog_observer: DialogObserverPort,
+        progress_store: Optional[ProgressStorePort],
+        environment: TourEnvironment,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -144,7 +139,7 @@ class TourEngine(QObject):
         self.tour_completed.emit(guide_id)
 
     def next(self) -> None:
-        if self.is_running():
+        if self._state in (TourState.SHOWING_INFO, TourState.SHOWING_DEMO):
             self._advance_current_step()
 
     def skip_step(self) -> None:
@@ -218,6 +213,23 @@ class TourEngine(QObject):
         self._spotlight.show_recovery("Navigation Failed", retry_enabled=True, skip_enabled=True)
 
     def _resolve_target_and_present(self, step: TourStep) -> None:
+        if not step.anchor:
+            if step.step_type is TourStepType.INFO:
+                self._set_state(TourState.SHOWING_INFO)
+                self._spotlight.show_info_without_target(step.callout, None)
+            elif step.step_type is TourStepType.DEMO:
+                self._set_state(TourState.SHOWING_DEMO)
+                if step.demo is not None:
+                    self._spotlight.show_demo(step.demo, step.callout, None)
+            else:
+                self._set_state(TourState.RECOVERING)
+                self._spotlight.show_recovery(
+                    "Hành động yêu cầu mục tiêu nhưng không có.",
+                    retry_enabled=False,
+                    skip_enabled=True,
+                )
+            return
+
         resolution = AnchorResolution(AnchorStatus.NOT_FOUND)
         if step.anchor:
             resolution = self._anchor_registry.resolve(step.anchor)

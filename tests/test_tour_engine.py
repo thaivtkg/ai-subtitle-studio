@@ -2,8 +2,9 @@ import unittest
 
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.models import (
-    AnchorHandle, AnchorResolution, AnchorStatus, CalloutSpec, InteractionSpec,
+    AnchorHandle, AnchorResolution, AnchorStatus, CalloutSpec, DemoSpec, InteractionSpec,
     SafetySpec, SurfaceSpec, TargetPolicy, TourDefinition, TourStep, TourStepType,
+    TourState as ModelTourState,
 )
 from core.tutorial.ports import (
     AnchorRegistryPort, DialogObserverPort, InteractionObserverPort,
@@ -138,9 +139,46 @@ class TestTourEngineA4(unittest.TestCase):
         self.assertFalse(self.observer.is_bound())
         self.assertIn("INFO_NO_TARGET", self.spotlight.history)
 
+    def test_tour_state_identity(self):
+        from core.tutorial.tour_engine import TourState as EngineTourState
+        self.assertIs(ModelTourState.CANCELLED, EngineTourState.CANCELLED)
+
+    def test_action_and_navigation_cannot_be_bypassed_by_next(self):
+        self.assertTrue(self.engine.start("test_guide"))
+        self.assertEqual(self.engine.state(), ModelTourState.PREPARING_SURFACE)
+        self.engine.next()
+        self.assertEqual(self.engine.state(), ModelTourState.PREPARING_SURFACE)
+
+        self._ready()
+        self.assertEqual(self.engine.state(), ModelTourState.WAITING_ACTION)
+        self.engine.next()
+        self.assertEqual(self.engine.state(), ModelTourState.WAITING_ACTION)
+
+    def test_anchorless_demo_displays_demo(self):
+        self.catalog.guides["demo_guide"] = TourDefinition(
+            schema_version=1, guide_id="demo_guide", content_version=1,
+            title="Demo", category="test", estimated_minutes=1,
+            steps=(TourStep("demo", TourStepType.DEMO, CalloutSpec("T", "B"),
+                            SafetySpec(True), demo=DemoSpec("asset", "IMAGE")),),
+        )
+        self.assertTrue(self.engine.start("demo_guide"))
+        self.assertEqual(self.engine.state(), ModelTourState.SHOWING_DEMO)
+        self.assertIn("DEMO", self.spotlight.history)
+
+    def test_anchorless_action_enters_recovery(self):
+        self.catalog.guides["bad_guide"] = TourDefinition(
+            schema_version=1, guide_id="bad_guide", content_version=1,
+            title="Bad", category="test", estimated_minutes=1,
+            steps=(TourStep("action", TourStepType.ACTION, CalloutSpec("T", "B"),
+                            SafetySpec(True), anchor=None),),
+        )
+        self.assertTrue(self.engine.start("bad_guide"))
+        self.assertEqual(self.engine.state(), ModelTourState.RECOVERING)
+
     def test_back_rebuilds_previous_info_or_demo_step(self):
         self.assertTrue(self.engine.start("test_guide")); self._ready()
-        self.engine.next(); self.engine.next(); self.engine.next()
+        self.engine.skip_step(); self._ready()
+        self.engine.next(); self.engine.skip_step()
         self.assertEqual(self.engine.current_step().step_id, "demo")
         self.engine.back()
         self.assertEqual(self.engine.current_step().step_id, "fallback")
@@ -148,7 +186,7 @@ class TestTourEngineA4(unittest.TestCase):
 
     def test_action_back_disabled_leaves_step_unchanged(self):
         self.assertTrue(self.engine.start("test_guide")); self._ready()
-        self.engine.next(); self.engine.next()
+        self.engine.skip_step(); self._ready(); self.engine.next()
         self.assertEqual(self.engine.current_step().step_id, "fallback")
         self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
         self.engine.back()
@@ -168,7 +206,7 @@ class TestTourEngineA4(unittest.TestCase):
 
     def test_surface_request_token_rejects_late_signal(self):
         self.assertTrue(self.engine.start("test_guide")); old_request = self.navigation.requests[-1]
-        self.engine.next()
+        self.engine.skip_step()
         self.assertEqual(self.engine.current_step().step_id, "skip")
         self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
         self.engine.on_surface_ready(*old_request)
@@ -197,7 +235,8 @@ class TestTourEngineA4(unittest.TestCase):
 
     def test_completion_persists_progress_and_allows_new_session(self):
         self.assertTrue(self.engine.start("test_guide")); self._ready()
-        for _ in range(4): self.engine.next()
+        self.engine.skip_step(); self._ready(); self.engine.next()
+        self.engine.skip_step(); self.engine.next()
         self.assertEqual(self.engine.state(), TourState.COMPLETED)
         self.assertEqual(self.progress.completed, [("test_guide", 1)])
         self.assertTrue(self.engine.start("test_guide"))
