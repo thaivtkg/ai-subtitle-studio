@@ -48,5 +48,8 @@ class TestDrawerUI(unittest.TestCase):
         )
         self.assertEqual(dock.maximumWidth(), 390)
 
+    def test_drawer_title_matches_main_title_bar_height(self):
+        self.assertEqual(self.window.dock_title_bar.height(), self.window.topbar.height())
+
     def tearDown(self):
         self.window.close()

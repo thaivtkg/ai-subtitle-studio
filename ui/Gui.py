@@ -271,6 +271,7 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(0)
 
         topbar = QFrame()
+        self.topbar = topbar
         topbar.setObjectName("TopbarFrame")
         topbar.setFixedHeight(42)
         topbar.setStyleSheet(f"#TopbarFrame {{ background-color: {Theme.BG_APP}; border-bottom: 1px solid {Theme.BORDER}; }}")
@@ -403,6 +404,24 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid {Theme.BORDER};
             }}
         """)
+        dock_title = QFrame()
+        dock_title.setObjectName("SubtitleGenerationDockTitle")
+        dock_title.setFixedHeight(topbar.height())
+        dock_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        dock_title.setStyleSheet(
+            f"#SubtitleGenerationDockTitle {{ background: {Theme.SURFACE}; "
+            f"border-bottom: 1px solid {Theme.BORDER}; }}"
+        )
+        dock_title_layout = QHBoxLayout(dock_title)
+        dock_title_layout.setContentsMargins(10, 0, 10, 0)
+        dock_title_label = QLabel("AI Workspace")
+        dock_title_label.setStyleSheet(
+            f"color: {Theme.TEXT_PRIMARY}; font-weight: bold; border: none;"
+        )
+        dock_title_layout.addWidget(dock_title_label)
+        dock_title_layout.addStretch()
+        self.dock_title_bar = dock_title
+        self.generation_dock.setTitleBarWidget(dock_title)
         dock_tabs = QTabWidget()
         dock_tabs.setStyleSheet(f"""
             QTabWidget::pane {{
