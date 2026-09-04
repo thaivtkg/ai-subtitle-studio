@@ -166,9 +166,13 @@ class SubtitleEditorWidget(QWidget):
         
         # --- THANH ĐIỀU HƯỚNG PHÂN TRANG (PAGINATION BAR) ---
         page_layout = QHBoxLayout()
+        self.pagination_layout = page_layout
+        page_layout.setContentsMargins(8, 6, 8, 6)
+        page_layout.setSpacing(8)
         page_layout.addWidget(QLabel("Hiển thị:", styleSheet=f"font-weight:bold; color:{Theme.TEXT_MUTED};"))
         
         self.group_combo = QComboBox()
+        self.group_combo.setMinimumHeight(32)
         self.group_combo.addItems(["Tất cả", "1 dòng", "5 dòng", "10 dòng", "20 dòng", "50 dòng"])
         self.group_combo.currentIndexChanged.connect(self.change_group_size)
         page_layout.addWidget(self.group_combo)
@@ -176,6 +180,7 @@ class SubtitleEditorWidget(QWidget):
         
         self.btn_prev = QPushButton("◀ Trước")
         self.btn_prev.setObjectName("btn_secondary")
+        self.btn_prev.setMinimumHeight(32)
         self.btn_prev.clicked.connect(self.prev_page)
         page_layout.addWidget(self.btn_prev)
         
@@ -185,6 +190,7 @@ class SubtitleEditorWidget(QWidget):
         
         self.btn_next = QPushButton("Sau ▶")
         self.btn_next.setObjectName("btn_secondary")
+        self.btn_next.setMinimumHeight(32)
         self.btn_next.clicked.connect(self.next_page)
         page_layout.addWidget(self.btn_next)
         

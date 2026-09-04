@@ -284,13 +284,13 @@ class MainWindow(QMainWindow):
 
         btn_minimize = QPushButton("—")
         btn_minimize.setToolTip("Thu nhỏ cửa sổ")
-        btn_minimize.setFixedSize(28, 24)
+        btn_minimize.setFixedSize(36, 32)
         btn_minimize.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
         btn_minimize.clicked.connect(self.showMinimized)
 
         btn_close = QPushButton("✕")
         btn_close.setToolTip("Đóng ứng dụng")
-        btn_close.setFixedSize(28, 24)
+        btn_close.setFixedSize(36, 32)
         btn_close.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
         btn_close.clicked.connect(self.close)
 
@@ -397,11 +397,13 @@ class MainWindow(QMainWindow):
             }}
             QDockWidget::title {{
                 background: {Theme.SURFACE};
-                padding: 6px 10px;
+                min-height: 30px;
+                padding: 5px 10px;
                 border-bottom: 1px solid {Theme.BORDER};
             }}
         """)
         dock_tabs = QTabWidget()
+        dock_tabs.tabBar().setFixedHeight(42)
         dock_tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border-top: 1px solid {Theme.BORDER};

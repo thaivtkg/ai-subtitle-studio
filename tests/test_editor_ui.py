@@ -74,5 +74,15 @@ class TestSubtitleEditorUI(unittest.TestCase):
         self.editor.all_segments[0]["start"] = "00:00:01,000"
         self.assertTrue(self.editor._has_blocking_validation_errors())
 
+    def test_pagination_controls_have_edge_spacing(self):
+        margins = self.editor.pagination_layout.contentsMargins()
+        self.assertGreaterEqual(margins.left(), 8)
+        self.assertGreaterEqual(margins.right(), 8)
+        self.assertGreaterEqual(margins.top(), 6)
+        self.assertGreaterEqual(margins.bottom(), 6)
+        self.assertGreaterEqual(self.editor.group_combo.minimumHeight(), 32)
+        self.assertGreaterEqual(self.editor.btn_prev.minimumHeight(), 32)
+        self.assertGreaterEqual(self.editor.btn_next.minimumHeight(), 32)
+
     def tearDown(self):
         self.editor.deleteLater()
