@@ -51,6 +51,13 @@ class Precondition(str, Enum):
     NO_BACKGROUND_JOB = "NO_BACKGROUND_JOB"
 
 
+class AnchorStatus(str, Enum):
+    RESOLVED = "RESOLVED"
+    NOT_FOUND = "NOT_FOUND"
+    INVALID = "INVALID"
+    NOT_VISIBLE = "NOT_VISIBLE"
+
+
 @dataclass(frozen=True)
 class SurfaceSpec:
     route: str
@@ -108,3 +115,22 @@ class TourDefinition:
     steps: Tuple[TourStep, ...]
     description: str = ""
     preconditions: Tuple[Precondition, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class AnchorHandle:
+    """Opaque identity for a safely resolved UI anchor."""
+    anchor_id: str
+    host_id: str
+    resolution_generation: int
+
+
+@dataclass(frozen=True)
+class AnchorResolution:
+    status: AnchorStatus
+    handle: Optional[AnchorHandle]
+    reason: Optional[str] = None
+
+
+# Backward-compatible short name used by the tour contract.
+StepType = TourStepType
