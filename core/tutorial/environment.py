@@ -1,8 +1,11 @@
-from .models import Precondition
+from collections.abc import Callable
 
 
 class TourEnvironment:
-    """Read-only semantic precondition checker."""
+    """Read-only semantic precondition checker backed by a delegate."""
 
-    def check(self, precondition: Precondition) -> bool:
-        raise NotImplementedError
+    def __init__(self, checker: Callable[[str], bool]) -> None:
+        self._checker = checker
+
+    def check(self, precondition: str) -> bool:
+        return bool(self._checker(precondition))
