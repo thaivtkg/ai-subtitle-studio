@@ -1,6 +1,7 @@
 import sys
 import weakref
 import gc
+import sys
 import unittest
 
 import shiboken6
@@ -9,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout, Q
 
 from core.tutorial.models import AnchorStatus, SurfaceSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
-from ui.tutorial.navigation_adapter import AppRouter, NavigationAdapter
+from ui.tutorial.navigation_adapter import AppRouter, MainWindowRouter, NavigationAdapter
 
 
 class MockAppRouter(AppRouter):
@@ -17,6 +18,7 @@ class MockAppRouter(AppRouter):
         super().__init__()
         self._index = 0
         self._subroute = None
+        self._operation = 0
 
     def current_index(self):
         return self._index
@@ -25,9 +27,15 @@ class MockAppRouter(AppRouter):
         return self._subroute
 
     def navigate_to_index(self, index: int, subroute: str = None):
+        self._operation += 1
+        operation_id = f"op-{self._operation}"
+        # Tests deliver transition completion explicitly, without timer races.
+        return operation_id
+
+    def finish(self, operation_id: str, index: int, subroute: str = None):
         self._index = index
         self._subroute = subroute
-        # Tests deliver transition completion explicitly, without timer races.
+        self.transition_finished.emit(operation_id, index)
 
 
 class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
@@ -144,7 +152,7 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.assertEqual(emitted, [])
 
         loop = QEventLoop()
-        QTimer.singleShot(0, lambda: self.router.transition_finished.emit(1))
+        QTimer.singleShot(0, lambda: self.router.finish("op-1", 1, "generate"))
         QTimer.singleShot(20, loop.quit)
         loop.exec()
 
@@ -181,10 +189,30 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.nav.surface_failed.connect(lambda *args: emitted.append(args))
         self.nav.navigate(SurfaceSpec("workspace"), session_id="A", generation=1, request_id="A")
         self.nav.navigate(SurfaceSpec("settings"), session_id="B", generation=1, request_id="B")
-        self.router.transition_finished.emit(1)
+        self.router.finish("op-1", 1)
         self.assertEqual(emitted, [])
-        self.router.transition_finished.emit(5)
+        self.router.finish("op-2", 5)
         self.assertEqual(emitted, [("B", 1, "B")])
+
+    def test_same_index_stale_finish_is_ignored(self):
+        emitted = []
+        self.nav.surface_ready.connect(lambda *args: emitted.append(args))
+        self.nav.navigate(SurfaceSpec("workspace"), session_id="A", generation=1, request_id="A")
+        self.nav.navigate(SurfaceSpec("workspace"), session_id="B", generation=1, request_id="B")
+        self.router.finish("op-1", 1)
+        self.assertEqual(emitted, [])
+        self.router.finish("op-2", 1)
+        self.assertEqual(emitted, [("B", 1, "B")])
+
+    def test_late_failure_is_ignored(self):
+        emitted = []
+        self.nav.surface_failed.connect(lambda *args: emitted.append(args))
+        self.nav.navigate(SurfaceSpec("workspace"), session_id="A", generation=1, request_id="A")
+        self.nav.navigate(SurfaceSpec("settings"), session_id="B", generation=1, request_id="B")
+        self.router.transition_failed.emit("op-1", "old failure")
+        self.assertEqual(emitted, [])
+        self.router.transition_failed.emit("op-2", "new failure")
+        self.assertEqual(emitted, [("B", 1, "B", "new failure")])
 
     def test_cancel_queued_ready_and_failure(self):
         emitted = []
@@ -204,3 +232,30 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.assertEqual(emitted, [])
         self.app.processEvents()
         self.assertEqual(emitted, [("s", 1, "r", "Unknown route")])
+
+    def test_main_window_router_settles_workspace_subroute(self):
+        from unittest.mock import MagicMock
+        from ui.Gui import MainWindow
+
+        window = MainWindow(
+            project_service=MagicMock(), media_import_service=MagicMock()
+        )
+        self.widgets.append(window)
+        router = MainWindowRouter(window)
+        nav = NavigationAdapter(router)
+        emitted = []
+        nav.surface_ready.connect(lambda *args: emitted.append(args))
+
+        nav.navigate(
+            SurfaceSpec("workspace", "context"),
+            session_id="real",
+            generation=1,
+            request_id="real-1",
+        )
+        loop = QEventLoop()
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
+
+        self.assertEqual(emitted, [("real", 1, "real-1")])
+        self.assertEqual(window.stack.current_index, 1)
+        self.assertEqual(window.dock_tabs.currentIndex(), 1)
