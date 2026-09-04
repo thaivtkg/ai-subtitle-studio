@@ -84,17 +84,20 @@ class Toast(QWidget):
             parent_rect = self.parent().geometry()
             self.adjustSize() # Ép Qt tính toán kích thước thực trước khi lấy size
             toast_size = self.size()
+
+            for toast in self.parent().findChildren(Toast):
+                if toast is self:
+                    continue
+                toast.timer.stop()
+                toast.anim_in.stop()
+                toast.anim_out.stop()
+                toast.close()
+                toast.deleteLater()
             
             # [FIX] Dời vị trí sang Góc Dưới - Bên Phải (Cách lề phải 24px)
             x = parent_rect.x() + parent_rect.width() - toast_size.width() - 24
             # [FIX] Nâng lên 140px để nhảy vọt qua toàn bộ thanh Bottom Control Bar
             y = parent_rect.y() + parent_rect.height() - toast_size.height() - 140
-            visible_toasts = [
-                toast
-                for toast in self.parent().findChildren(Toast)
-                if toast is not self and toast.isVisible()
-            ]
-            y -= sum(toast.height() + 8 for toast in visible_toasts)
 
             self.move(x, y)
             

@@ -23,13 +23,16 @@ class TestToastUI(unittest.TestCase):
         self.parent.resize(800, 600)
         self.parent.show()
 
-    def test_visible_toasts_stack_without_overlap(self):
+    def test_new_toast_replaces_previous_toast(self):
         first = Toast(self.parent, "First")
         first.show_toast()
         second = Toast(self.parent, "Second")
         second.show_toast()
 
-        self.assertLessEqual(second.geometry().bottom(), first.geometry().top() - 8)
+        self.assertFalse(first.isVisible())
+        self.assertTrue(second.isVisible())
+        visible_toasts = [toast for toast in self.parent.findChildren(Toast) if toast.isVisible()]
+        self.assertEqual(visible_toasts, [second])
 
     def tearDown(self):
         self.parent.close()
