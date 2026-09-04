@@ -130,7 +130,3 @@ class AnchorResolution:
     status: AnchorStatus
     handle: Optional[AnchorHandle] = None
     reason: Optional[str] = None
-
-
-# Backward-compatible short name used by the tour contract.
-StepType = TourStepType

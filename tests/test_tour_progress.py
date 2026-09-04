@@ -31,7 +31,7 @@ class TestTourProgressStore(unittest.TestCase):
         self.assertEqual(restored.status("done", 2).status, GuideProgressStatus.COMPLETED)
         self.assertEqual(restored.status("dismissed", 1).status, GuideProgressStatus.DISMISSED)
 
-    def test_tc167_corrupt_json_is_quarantined(self):
+    def test_tc168_corrupt_json_is_quarantined(self):
         self.path.write_text("{broken", encoding="utf-8")
         store = TourProgressStore(self.path)
         self.assertEqual(store.status("g", 1).status, GuideProgressStatus.NOT_STARTED)
@@ -43,7 +43,7 @@ class TestTourProgressStore(unittest.TestCase):
         self.assertEqual(store.status("g", 1).status, GuideProgressStatus.NOT_STARTED)
         self.assertFalse(self.path.exists())
 
-    def test_tc168_replace_failure_keeps_snapshot_and_bytes(self):
+    def test_tc167_replace_failure_keeps_snapshot_and_bytes(self):
         store = TourProgressStore(self.path)
         self.assertTrue(store.mark_completed("g", 1))
         old_bytes = self.path.read_bytes()

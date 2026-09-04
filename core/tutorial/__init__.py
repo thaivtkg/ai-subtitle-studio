@@ -17,13 +17,12 @@ from .models import (
     AnchorStatus,
     AnchorHandle,
     AnchorResolution,
-    StepType,
 )
 
 __all__ = [
     "parse_tour_definition", "CalloutPlacement", "CalloutSpec", "DemoSpec",
     "InteractionKind", "InteractionSpec", "SafetySpec", "SurfaceSpec", "Precondition",
     "TargetPolicy", "TourDefinition", "TourState", "TourStep", "TourStepType",
-    "AnchorStatus", "AnchorHandle", "AnchorResolution", "StepType",
+    "AnchorStatus", "AnchorHandle", "AnchorResolution",
     "GuideProgress", "GuideProgressStatus", "ProgressStatus", "TourProgressStore",
 ]
