@@ -128,7 +128,7 @@ class AnchorHandle:
 @dataclass(frozen=True)
 class AnchorResolution:
     status: AnchorStatus
-    handle: Optional[AnchorHandle]
+    handle: Optional[AnchorHandle] = None
     reason: Optional[str] = None
 
 
