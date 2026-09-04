@@ -1,11 +1,11 @@
 import weakref
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
-from core.tutorial.models import AnchorHandle, InteractionSpec
+from core.tutorial.models import AnchorHandle, InteractionKind, InteractionSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
 
 
@@ -21,7 +21,24 @@ class InteractionObserverAdapter(QObject):
         self._bound_widget_ref: Optional[weakref.ReferenceType[QWidget]] = None
         self._session_id = ""
         self._generation = 0
-        self._interaction: Optional[InteractionSpec] = None
+        self._interaction_kind: Optional[InteractionKind] = None
+        self._signal_connections: List[Tuple[Any, Any]] = []
+        self._has_semantic_signal = False
+
+    @staticmethod
+    def _normalize_kind(interaction: InteractionSpec) -> InteractionKind:
+        kind = interaction.kind
+        if not isinstance(kind, InteractionKind):
+            raise ValueError(f"Invalid interaction kind: {kind!r}")
+        return kind
+
+    def _connect_signal(self, signal: Any, slot: Any) -> bool:
+        try:
+            signal.connect(slot)
+        except (RuntimeError, TypeError):
+            return False
+        self._signal_connections.append((signal, slot))
+        return True
 
     def bind(
         self,
@@ -32,6 +49,11 @@ class InteractionObserverAdapter(QObject):
         generation: int,
     ) -> Any:
         self.unbind()
+        kind = self._normalize_kind(interaction)
+        if kind is InteractionKind.DIALOG_ACCEPTED:
+            raise NotImplementedError(
+                "DIALOG_ACCEPTED is deferred to B3 DialogLifecycleObserver"
+            )
         widget = self._registry.get_widget(anchor)
         if widget is None or not shiboken6.isValid(widget):
             self.target_lost.emit(session_id, generation, "Target widget not found or invalid")
@@ -40,9 +62,26 @@ class InteractionObserverAdapter(QObject):
         self._bound_widget_ref = weakref.ref(widget)
         self._session_id = session_id
         self._generation = generation
-        self._interaction = interaction
+        self._interaction_kind = kind
         widget.installEventFilter(self)
-        widget.destroyed.connect(self._on_widget_destroyed)
+        self._connect_signal(widget.destroyed, self._on_widget_destroyed)
+        if kind is InteractionKind.TEXT_COMMITTED:
+            signal = getattr(widget, "editingFinished", None)
+            if signal is None:
+                signal = getattr(widget, "returnPressed", None)
+            if signal is not None:
+                self._has_semantic_signal = self._connect_signal(
+                    signal, self._on_semantic_action
+                )
+        elif kind is InteractionKind.SELECTION_CHANGED:
+            for name in ("currentIndexChanged", "itemSelectionChanged", "selectionChanged"):
+                signal = getattr(widget, name, None)
+                if signal is not None:
+                    self._has_semantic_signal = self._connect_signal(
+                        signal, self._on_semantic_action
+                    )
+                    if self._has_semantic_signal:
+                        break
         return None
 
     def unbind(self) -> None:
@@ -50,18 +89,17 @@ class InteractionObserverAdapter(QObject):
         self._bound_widget_ref = None
         self._session_id = ""
         self._generation = 0
-        self._interaction = None
-        if widget_ref is None:
-            return
-
-        widget = widget_ref()
-        if widget is None or not shiboken6.isValid(widget):
-            return
-        widget.removeEventFilter(self)
-        try:
-            widget.destroyed.disconnect(self._on_widget_destroyed)
-        except (RuntimeError, TypeError):
-            pass
+        self._interaction_kind = None
+        self._has_semantic_signal = False
+        widget = widget_ref() if widget_ref is not None else None
+        if widget is not None and shiboken6.isValid(widget):
+            widget.removeEventFilter(self)
+        for signal, slot in self._signal_connections:
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        self._signal_connections.clear()
 
     def is_bound(self) -> bool:
         return self._bound_widget_ref is not None
@@ -69,35 +107,35 @@ class InteractionObserverAdapter(QObject):
     def _on_widget_destroyed(self, _object: Optional[QObject] = None) -> None:
         session_id, generation = self._session_id, self._generation
         self.unbind()
-        if session_id:
-            self.target_lost.emit(
-                session_id, generation, "Target widget destroyed by application"
-            )
+        self.target_lost.emit(
+            session_id, generation, "Target widget destroyed by application"
+        )
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         widget_ref = self._bound_widget_ref
         widget = widget_ref() if widget_ref else None
         if widget is None or not shiboken6.isValid(widget):
             return False
-        if obj is widget and self._interaction and self._match_event(
-            event, self._interaction.kind
-        ):
-            self.action_satisfied.emit(self._session_id, self._generation)
+        if obj is widget and self._interaction_kind is not None:
+            if self._interaction_kind is InteractionKind.CLICK:
+                matched = (
+                    event.type() == QEvent.Type.MouseButtonRelease
+                    and event.button() == Qt.MouseButton.LeftButton
+                )
+            elif self._interaction_kind is InteractionKind.FOCUS:
+                matched = event.type() == QEvent.Type.FocusIn
+            elif self._interaction_kind is InteractionKind.TEXT_COMMITTED:
+                matched = (
+                    not self._has_semantic_signal
+                    and event.type() == QEvent.Type.KeyPress
+                    and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                )
+            else:
+                matched = False
+            if matched:
+                self.action_satisfied.emit(self._session_id, self._generation)
         return False
 
-    @staticmethod
-    def _match_event(event: QEvent, interaction_kind: Any) -> bool:
-        kind = getattr(interaction_kind, "value", interaction_kind)
-        kind = str(kind).lower()
-        if kind == "click":
-            return (
-                event.type() == QEvent.Type.MouseButtonRelease
-                and event.button() == Qt.MouseButton.LeftButton
-            )
-        if kind in {"input", "type", "text_committed"}:
-            return event.type() == QEvent.Type.KeyPress
-        if kind in {"hover", "enter"}:
-            return event.type() == QEvent.Type.Enter
-        if kind == "focus":
-            return event.type() == QEvent.Type.FocusIn
-        return False
+    def _on_semantic_action(self, *args: Any) -> None:
+        if self._bound_widget_ref is not None and self._session_id:
+            self.action_satisfied.emit(self._session_id, self._generation)
