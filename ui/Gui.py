@@ -397,13 +397,13 @@ class MainWindow(QMainWindow):
             }}
             QDockWidget::title {{
                 background: {Theme.SURFACE};
-                min-height: 30px;
-                padding: 5px 10px;
+                min-height: 42px;
+                max-height: 42px;
+                padding: 0 10px;
                 border-bottom: 1px solid {Theme.BORDER};
             }}
         """)
         dock_tabs = QTabWidget()
-        dock_tabs.tabBar().setFixedHeight(42)
         dock_tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border-top: 1px solid {Theme.BORDER};
