@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import ANY, patch
 
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.models import (
@@ -63,8 +64,9 @@ class FakeNavigation:
 
 
 class FakeObserver:
-    def __init__(self): self.bound = False; self.unbind_calls = 0
-    def bind(self, anchor, interaction, *, session_id, generation): self.bound = True
+    def __init__(self): self.bound = False; self.unbind_calls = 0; self.binding = None
+    def bind(self, anchor, interaction, *, session_id, generation):
+        self.bound = True; self.binding = (session_id, generation)
     def unbind(self): self.bound = False; self.unbind_calls += 1
     def is_bound(self): return self.bound
 
@@ -96,6 +98,9 @@ class FakeProgressStore:
 
 class TestTourEngineA4(unittest.TestCase):
     def setUp(self):
+        self.timer_patch = patch("core.tutorial.tour_engine.QTimer")
+        self.mock_timer_class = self.timer_patch.start()
+        self.addCleanup(self.timer_patch.stop)
         self.spotlight = FakeSpotlight(); self.registry = FakeAnchorRegistry()
         self.observer = FakeObserver(); self.dialog = FakeDialogObserver()
         self.progress = FakeProgressStore(); self.navigation = FakeNavigation()
@@ -240,6 +245,80 @@ class TestTourEngineA4(unittest.TestCase):
         self.assertEqual(self.engine.state(), TourState.COMPLETED)
         self.assertEqual(self.progress.completed, [("test_guide", 1)])
         self.assertTrue(self.engine.start("test_guide"))
+
+
+class TestTourEngineA5(unittest.TestCase):
+    def setUp(self):
+        self.timer_patch = patch("core.tutorial.tour_engine.QTimer")
+        self.mock_timer_class = self.timer_patch.start()
+        self.addCleanup(self.timer_patch.stop)
+        self.watchdog = self.mock_timer_class.return_value
+        self.spotlight = FakeSpotlight()
+        self.registry = FakeAnchorRegistry()
+        self.observer = FakeObserver()
+        self.navigation = FakeNavigation()
+        self.dialog = FakeDialogObserver()
+        guide = TourDefinition(
+            schema_version=1, guide_id="a5_guide", content_version=1,
+            title="A5", category="test", estimated_minutes=1,
+            steps=(
+                TourStep("action", TourStepType.ACTION, CalloutSpec("T1", "B1"),
+                         SafetySpec(False), surface=SurfaceSpec("dash"), anchor="btn1",
+                         target_policy=TargetPolicy.REQUIRED, interaction=InteractionSpec("CLICK")),
+                TourStep("info", TourStepType.INFO, CalloutSpec("T2", "B2"),
+                         SafetySpec(True), anchor="btn2", target_policy=TargetPolicy.SKIP),
+            ),
+        )
+        self.catalog = FakeCatalog({"a5_guide": guide})
+        self.engine = TourEngine(
+            catalog=self.catalog, anchor_registry=self.registry, navigation=self.navigation,
+            interaction_observer=self.observer, spotlight=self.spotlight,
+            dialog_observer=self.dialog, progress_store=None,
+            environment=TourEnvironment(lambda _: True),
+        )
+
+    def test_stale_navigation_token_is_ignored(self):
+        self.assertTrue(self.engine.start("a5_guide"))
+        session_id, generation, request_id = self.navigation.requests[-1]
+        self.engine.on_surface_ready("wrong_session", generation, request_id)
+        self.engine.on_surface_ready(session_id, generation, "wrong_request")
+        self.assertEqual(self.engine.state(), TourState.PREPARING_SURFACE)
+
+    def test_navigation_watchdog_enters_recovery(self):
+        self.assertTrue(self.engine.start("a5_guide"))
+        timeout_callback = self.watchdog.timeout.connect.call_args.args[0]
+        timeout_callback()
+        self.assertEqual(self.engine.state(), TourState.RECOVERING)
+        self.assertIn("RECOVERY", self.spotlight.history)
+        self.assertEqual(self.navigation.cancel_pending_calls, 1)
+        self.watchdog.stop.assert_called()
+
+    @patch("core.tutorial.tour_engine.QTimer.singleShot")
+    def test_action_advance_is_queued_after_immediate_unbind(self, single_shot):
+        self.assertTrue(self.engine.start("a5_guide"))
+        self.engine.on_surface_ready(*self.navigation.requests[-1])
+        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
+        self.assertTrue(self.observer.is_bound())
+
+        self.engine.on_action_satisfied(*self.observer.binding)
+        self.assertFalse(self.observer.is_bound())
+        self.assertEqual(self.engine.state(), TourState.ADVANCING_STEP)
+        single_shot.assert_called_once_with(0, ANY)
+        self.assertEqual(self.engine.current_step().step_id, "action")
+
+        self.registry.status = AnchorStatus.NOT_FOUND
+        single_shot.call_args.args[1]()
+        self.assertEqual(self.engine.state(), TourState.COMPLETED)
+
+    @patch("core.tutorial.tour_engine.QTimer.singleShot")
+    def test_late_action_callback_is_ignored(self, single_shot):
+        self.assertTrue(self.engine.start("a5_guide"))
+        self.engine.on_surface_ready(*self.navigation.requests[-1])
+        session_id, generation = self.observer.binding
+        self.engine.on_action_satisfied(session_id, generation + 1)
+        self.assertEqual(self.engine.state(), TourState.WAITING_ACTION)
+        self.assertTrue(self.observer.is_bound())
+        single_shot.assert_not_called()
 
 
 if __name__ == "__main__": unittest.main()
