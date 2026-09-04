@@ -15,10 +15,26 @@ class AnchorRegistry:
         self._handle_map: Dict[AnchorHandle, weakref.ReferenceType[QWidget]] = {}
         self._generation = 0
 
+    def register(self, anchor_id: str, widget: QWidget) -> None:
+        """Register a static widget without retaining its Python wrapper."""
+        self.register_resolver(anchor_id, weakref.ref(widget))
+
     def register_resolver(
         self, anchor_id: str, resolver: Callable[[], Optional[QWidget]]
     ) -> None:
+        """Dynamic resolvers must use weak captures for widgets and UI owners."""
+        self.unregister(anchor_id)
         self._resolvers[anchor_id] = resolver
+
+    def unregister(self, anchor_id: str) -> None:
+        self._resolvers.pop(anchor_id, None)
+        for handle in list(self._handle_map):
+            if handle.anchor_id == anchor_id:
+                del self._handle_map[handle]
+
+    def clear(self) -> None:
+        self._resolvers.clear()
+        self._handle_map.clear()
 
     def resolve(self, anchor_id: str) -> AnchorResolution:
         resolver = self._resolvers.get(anchor_id)
@@ -27,11 +43,13 @@ class AnchorRegistry:
 
         try:
             widget = resolver()
-        except Exception:
-            return AnchorResolution(status=AnchorStatus.NOT_FOUND)
+        except Exception as error:
+            return AnchorResolution(status=AnchorStatus.NOT_FOUND, reason=str(error))
 
-        if widget is None or not shiboken6.isValid(widget):
+        if widget is None:
             return AnchorResolution(status=AnchorStatus.NOT_FOUND)
+        if not isinstance(widget, QWidget) or not shiboken6.isValid(widget):
+            return AnchorResolution(status=AnchorStatus.INVALID)
         if not widget.isVisible() or widget.size().isEmpty():
             return AnchorResolution(status=AnchorStatus.NOT_VISIBLE)
 
