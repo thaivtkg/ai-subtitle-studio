@@ -1,4 +1,5 @@
 from .catalog import parse_tour_definition
+from .progress_store import GuideProgress, GuideProgressStatus, TourProgressStore
 from .models import (
     CalloutPlacement,
     CalloutSpec,
@@ -24,4 +25,5 @@ __all__ = [
     "InteractionKind", "InteractionSpec", "SafetySpec", "SurfaceSpec", "Precondition",
     "TargetPolicy", "TourDefinition", "TourState", "TourStep", "TourStepType",
     "AnchorStatus", "AnchorHandle", "AnchorResolution", "StepType",
+    "GuideProgress", "GuideProgressStatus", "TourProgressStore",
 ]

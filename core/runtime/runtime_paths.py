@@ -92,6 +92,10 @@ class RuntimePaths:
         return RuntimePaths.get_user_data_dir() / "settings.json"
 
     @staticmethod
+    def get_tutorial_progress_file() -> Path:
+        return RuntimePaths.get_user_data_dir() / "tutorial_progress.json"
+
+    @staticmethod
     def get_recovery_dir() -> Path:
         return RuntimePaths.get_user_data_dir() / "recovery"
 
