@@ -23,9 +23,9 @@ class TestTourProgressStore(unittest.TestCase):
 
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertIn("updated_at", raw)
-        self.assertIn("completed_at", raw["progress"]["done"])
-        self.assertNotIn("dismissed_at", raw["progress"]["done"])
-        self.assertIn("dismissed_at", raw["progress"]["dismissed"])
+        self.assertIn("completed_at", raw["guides"]["done"])
+        self.assertNotIn("dismissed_at", raw["guides"]["done"])
+        self.assertIn("dismissed_at", raw["guides"]["dismissed"])
 
         restored = TourProgressStore(self.path)
         self.assertEqual(restored.status("done", 2).status, GuideProgressStatus.COMPLETED)
