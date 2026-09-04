@@ -1,4 +1,3 @@
-import sys
 import weakref
 import gc
 import sys
@@ -21,6 +20,7 @@ class MockAppRouter(AppRouter):
         self._operation = 0
         self.drawer_hidden = False
         self.drawer_animating = False
+        self.cancelled = 0
 
     def current_index(self):
         return self._index
@@ -44,6 +44,9 @@ class MockAppRouter(AppRouter):
         self._subroute = subroute
         self.drawer_animating = False
         self.transition_finished.emit(operation_id, index)
+
+    def cancel_operation(self):
+        self.cancelled += 1
 
 
 class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
@@ -212,6 +215,16 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.router.finish("op-2", 1)
         self.assertEqual(emitted, [("B", 1, "B")])
 
+    def test_route_only_same_surface_ignores_current_subroute(self):
+        emitted = []
+        self.router._index = 1
+        self.router._subroute = "context"
+        self.nav.surface_ready.connect(lambda *args: emitted.append(args))
+        self.nav.navigate(SurfaceSpec("workspace"), session_id="s", generation=1, request_id="r")
+        self.assertEqual(self.router._operation, 0)
+        self.app.processEvents()
+        self.assertEqual(emitted, [("s", 1, "r")])
+
     def test_late_failure_is_ignored(self):
         emitted = []
         self.nav.surface_failed.connect(lambda *args: emitted.append(args))
@@ -232,6 +245,11 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
             self.nav.cancel_pending()
             self.app.processEvents()
             self.assertEqual(emitted, [])
+
+    def test_cancel_pending_stops_router_settling(self):
+        self.nav.navigate(SurfaceSpec("workspace"), session_id="s", generation=1, request_id="r")
+        self.nav.cancel_pending()
+        self.assertEqual(self.router.cancelled, 2)
 
     def test_unknown_route_queued_failure(self):
         emitted = []
@@ -292,6 +310,31 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.assertEqual(emitted, [("c", 1, "c-1")])
         self.assertEqual(window.stack.current_index, 1)
         self.assertFalse(window.generation_dock.isVisible())
+
+    def test_tc144_e_route_only_workspace_keeps_visible_drawer_tab(self):
+        from unittest.mock import MagicMock
+        from ui.Gui import MainWindow
+
+        window = MainWindow(
+            project_service=MagicMock(), media_import_service=MagicMock()
+        )
+        self.widgets.append(window)
+        window.show()
+        window.dock_tabs.setCurrentIndex(1)
+        router = MainWindowRouter(window)
+        nav = NavigationAdapter(router)
+        emitted = []
+        nav.surface_ready.connect(lambda *args: emitted.append(args))
+
+        nav.navigate(SurfaceSpec("workspace"), session_id="e", generation=1, request_id="e-1")
+        loop = QEventLoop()
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
+
+        self.assertEqual(emitted, [("e", 1, "e-1")])
+        self.assertEqual(window.stack.current_index, 1)
+        self.assertTrue(window.generation_dock.isVisible())
+        self.assertEqual(window.dock_tabs.currentIndex(), 1)
 
     def test_tc144_d_hidden_real_drawer_opens_and_settles(self):
         from unittest.mock import MagicMock

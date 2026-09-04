@@ -21,6 +21,9 @@ class AppRouter(QObject):
     def navigate_to_index(self, index: int, subroute: Optional[str]) -> str:
         raise NotImplementedError
 
+    def cancel_operation(self) -> None:
+        """Cancel router-owned settling work, if any."""
+
 
 class NavigationAdapter(QObject):
     # Physical stack indices, not MainWindow's sidebar navigation indices.
@@ -60,7 +63,7 @@ class NavigationAdapter(QObject):
             self._queued_reason = "Unknown route"
             self._queued.start(0)
             return
-        if self.current_surface() == surface:
+        if self._surface_matches(self.current_surface(), surface):
             self._pending_request = (session_id, generation, request_id, surface, target_index, "")
             self._queued.start(0)
             return
@@ -76,6 +79,7 @@ class NavigationAdapter(QObject):
         )
 
     def cancel_pending(self) -> None:
+        self._router.cancel_operation()
         self._queued.stop()
         self._queued_reason = None
         self._pending_request = None
@@ -98,12 +102,18 @@ class NavigationAdapter(QObject):
         if operation_id != pending_operation_id or destination_index != target_index:
             return
         self._pending_request = None
-        if self.current_surface() == target:
+        if self._surface_matches(self.current_surface(), target):
             self.surface_ready.emit(session_id, generation, request_id)
         else:
             self.surface_failed.emit(
                 session_id, generation, request_id, "Route mismatch after transition"
             )
+
+    @staticmethod
+    def _surface_matches(current: SurfaceSpec, target: SurfaceSpec) -> bool:
+        return current.route == target.route and (
+            target.subroute is None or current.subroute == target.subroute
+        )
 
     def _on_transition_failed(self, operation_id: str, reason: str) -> None:
         if self._pending_request is None or self._queued.isActive():
@@ -201,3 +211,8 @@ class MainWindowRouter(AppRouter):
         self._settle_target = None
         self._active_operation_id = None
         self.transition_finished.emit(operation_id, index)
+
+    def cancel_operation(self) -> None:
+        self._settle_timer.stop()
+        self._settle_target = None
+        self._active_operation_id = None
