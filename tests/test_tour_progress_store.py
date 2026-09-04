@@ -21,6 +21,12 @@ class TestTourProgressStore(unittest.TestCase):
         self.assertTrue(store.mark_dismissed("dismissed", 1))
         self.assertFalse(list(self.path.parent.glob("*.tmp.*")))
 
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIn("updated_at", raw)
+        self.assertIn("completed_at", raw["progress"]["done"])
+        self.assertNotIn("dismissed_at", raw["progress"]["done"])
+        self.assertIn("dismissed_at", raw["progress"]["dismissed"])
+
         restored = TourProgressStore(self.path)
         self.assertEqual(restored.status("done", 2).status, GuideProgressStatus.COMPLETED)
         self.assertEqual(restored.status("dismissed", 1).status, GuideProgressStatus.DISMISSED)
@@ -31,6 +37,11 @@ class TestTourProgressStore(unittest.TestCase):
         self.assertEqual(store.status("g", 1).status, GuideProgressStatus.NOT_STARTED)
         self.assertFalse(self.path.exists())
         self.assertEqual(len(list(self.path.parent.glob("tutorial_progress.corrupt.*.json"))), 1)
+
+        self.path.write_text("[]", encoding="utf-8")
+        store = TourProgressStore(self.path)
+        self.assertEqual(store.status("g", 1).status, GuideProgressStatus.NOT_STARTED)
+        self.assertFalse(self.path.exists())
 
     def test_tc168_replace_failure_keeps_snapshot_and_bytes(self):
         store = TourProgressStore(self.path)
