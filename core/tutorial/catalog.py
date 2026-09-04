@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from .models import (
     CalloutPlacement, CalloutSpec, DemoSpec, InteractionKind, InteractionSpec,
@@ -64,8 +64,8 @@ def _parse_step(data: Mapping[str, Any], root: Path) -> TourStep:
     step_type = TourStepType(data["type"])
     if step_type is TourStepType.ACTION and not data.get("anchor"):
         raise ValueError("ACTION step requires an anchor; valid anchor required")
-    if step_type is TourStepType.ACTION and "interaction" not in data:
-        raise ValueError("ACTION step requires an interaction")
+    if step_type is TourStepType.ACTION and not data.get("interaction"):
+        raise ValueError("ACTION step requires an interaction; valid interaction required")
     if step_type is TourStepType.INFO and "interaction" in data:
         raise ValueError("INFO steps cannot contain interaction definitions")
     if step_type is TourStepType.DEMO and not data.get("demo"):
@@ -100,10 +100,9 @@ def _parse_step(data: Mapping[str, Any], root: Path) -> TourStep:
 
 
 def parse_tour_definition(payload: Mapping[str, object], tutorial_root: Optional[Path] = None) -> TourDefinition:
-    if tutorial_root is not None:
-        missing = _REQUIRED_ROOT_KEYS - set(payload)
-        if missing:
-            raise ValueError(f"Missing required guide keys: {sorted(missing)}")
+    missing = _REQUIRED_ROOT_KEYS - set(payload)
+    if missing:
+        raise ValueError(f"Missing required guide keys: {sorted(missing)}")
     schema_version = payload.get("schema_version")
     if schema_version != 1:
         raise ValueError(f"Unsupported schema_version: {schema_version}")

@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
@@ -66,38 +67,54 @@ class TestTourDefinitionParsing(unittest.TestCase):
 
     def test_tc136_reject_executable_fields(self):
         for field in ("execute", "callback", "signal"):
-            payload = {"schema_version": 1, "guide_id": "unsafe", "steps": [{
+            payload = self._valid_payload()
+            payload["guide_id"] = "unsafe"
+            payload["steps"] = [{
                 "step_id": "1", "type": "INFO", field: "dangerous", "callout": {},
-            }]}
+            }]
             with self.subTest(field=field):
                 with self.assertRaisesRegex(ValueError, "forbidden executable fields"):
                     TourParser.parse_guide(payload)
 
     def test_tc137_reject_asset_path_traversal_and_absolute_paths(self):
         for asset in ("../hacked.gif", "assets/../hacked.gif", "/var/run/secret.gif", "C:\\secret.gif"):
-            payload = {"schema_version": 1, "guide_id": "unsafe", "steps": [{
+            payload = self._valid_payload()
+            payload["guide_id"] = "unsafe"
+            payload["steps"] = [{
                 "step_id": "1", "type": "DEMO", "demo": {"asset": asset}, "callout": {},
-            }]}
+            }]
             with self.subTest(asset=asset):
                 with self.assertRaisesRegex(ValueError, "path traversal detected"):
                     TourParser.parse_guide(payload)
 
     def test_tc136_reject_nested_unknown_fields_and_null_bypass(self):
+        def payload(step):
+            data = self._valid_payload()
+            data["steps"] = [step]
+            return data
+
         with self.assertRaisesRegex(ValueError, "Unknown keys"):
-            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "INFO", "callout": {"page_index": 2}}]})
+            TourParser.parse_guide(payload({"step_id": "1", "type": "INFO", "callout": {"page_index": 2}}))
         with self.assertRaisesRegex(ValueError, "Unknown keys"):
-            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "ACTION", "anchor": "x", "interaction": {"kind": "CLICK", "signal": "clicked"}}]})
+            TourParser.parse_guide(payload({"step_id": "1", "type": "ACTION", "anchor": "x", "interaction": {"kind": "CLICK", "signal": "clicked"}}))
         with self.assertRaisesRegex(ValueError, "valid anchor"):
-            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "ACTION", "anchor": None}]})
+            TourParser.parse_guide(payload({"step_id": "1", "type": "ACTION", "anchor": None}))
         with self.assertRaisesRegex(ValueError, "demo definition"):
-            TourParser.parse_guide({"schema_version": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": None}]})
+            TourParser.parse_guide(payload({"step_id": "1", "type": "DEMO", "demo": None}))
+        with self.assertRaisesRegex(ValueError, "valid interaction"):
+            TourParser.parse_guide(payload({"step_id": "1", "type": "ACTION", "anchor": "x", "interaction": None}))
 
     def test_preconditions_are_parsed_and_validated(self):
-        guide = TourParser.parse_guide({"schema_version": 1, "preconditions": ["PROJECT_OPEN"], "steps": [{"step_id": "1", "type": "INFO", "preconditions": ["MEDIA_LOADED"]}]})
+        data = self._valid_payload()
+        data["preconditions"] = ["PROJECT_OPEN"]
+        data["steps"] = [{"step_id": "1", "type": "INFO", "preconditions": ["MEDIA_LOADED"]}]
+        guide = TourParser.parse_guide(data)
         self.assertEqual(guide.preconditions, (Precondition.PROJECT_OPEN,))
         self.assertEqual(guide.steps[0].preconditions, (Precondition.MEDIA_LOADED,))
         with self.assertRaises(ValueError):
-            TourParser.parse_guide({"schema_version": 1, "preconditions": ["HACK_SYSTEM"], "steps": [{"step_id": "1", "type": "INFO"}]})
+            data = self._valid_payload()
+            data["preconditions"] = ["HACK_SYSTEM"]
+            TourParser.parse_guide(data)
 
     def test_required_keys_and_route_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,6 +147,18 @@ class TestTourCatalog(unittest.TestCase):
             invalid = dict(valid); invalid["steps"] = [{"step_id": "1", "type": "DEMO", "demo": {"asset": "guide.json"}}]
             with self.assertRaisesRegex(ValueError, "strictly confined under 'assets' directory"):
                 TourParser.parse_guide(invalid, root)
+
+    def test_tc137_real_symlink_resource_root_escape(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root, outside_path = Path(directory), Path(outside)
+            assets_link = root / "assets"
+            try:
+                os.symlink(outside_path, assets_link, target_is_directory=True)
+            except OSError:
+                self.skipTest("Symlink creation unavailable on this system")
+            payload = {"schema_version": 1, "guide_id": "test", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "assets/test.gif"}}]}
+            with self.assertRaisesRegex(ValueError, "Tutorial assets directory escapes resource root"):
+                TourParser.parse_guide(payload, root)
 
     def test_production_catalog_loads(self):
         root = Path(__file__).parents[1] / "resources" / "tutorials"
