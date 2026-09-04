@@ -169,7 +169,7 @@ class SettingsCenterPage(QWidget):
         card_gen = QFrame()
         card_gen.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
         l_g = QVBoxLayout(card_gen)
-        l_g.addWidget(QLabel("AI Subtitle Studio — Architecture", styleSheet=f"color: {Theme.CYAN}; font-weight: bold;"))
+        l_g.addWidget(QLabel("AI Subtitle Studio", styleSheet=f"color: {Theme.CYAN}; font-weight: bold;"))
         l_g.addWidget(QLabel("Theme: Deep Navy Dark Mode (Standard SaaS Desktop)", styleSheet=f"color: {Theme.TEXT_MUTED};"))
         l_gen.addWidget(card_gen)
         l_gen.addStretch()
