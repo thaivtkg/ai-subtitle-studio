@@ -5,7 +5,7 @@ import unittest
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
 
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.models import (
@@ -252,6 +252,42 @@ class TestMilestoneB2InteractionObserver(unittest.TestCase):
                 session_id="s",
                 generation=1,
             )
+
+    def test_text_commit_without_semantic_signal_fails_safe(self):
+        text_edit = QTextEdit()
+        self.widgets.append(text_edit)
+        text_edit.show()
+        self.registry.register("text_edit", text_edit)
+        handle = self.registry.resolve("text_edit").handle
+        lost = []
+        self.observer.target_lost.connect(lambda *args: lost.append(args))
+
+        self.observer.bind(
+            handle,
+            InteractionSpec(InteractionKind.TEXT_COMMITTED),
+            session_id="s",
+            generation=1,
+        )
+        self.assertFalse(self.observer.is_bound())
+        self.assertIn("INTERACTION_BIND_FAILED", lost[0][2])
+
+    def test_selection_without_semantic_signal_fails_safe(self):
+        button = QPushButton("No selection")
+        self.widgets.append(button)
+        button.show()
+        self.registry.register("no_selection", button)
+        handle = self.registry.resolve("no_selection").handle
+        lost = []
+        self.observer.target_lost.connect(lambda *args: lost.append(args))
+
+        self.observer.bind(
+            handle,
+            InteractionSpec(InteractionKind.SELECTION_CHANGED),
+            session_id="s",
+            generation=1,
+        )
+        self.assertFalse(self.observer.is_bound())
+        self.assertIn("INTERACTION_BIND_FAILED", lost[0][2])
 
     def test_non_schema_interaction_alias_is_rejected(self):
         button = QPushButton("Alias")

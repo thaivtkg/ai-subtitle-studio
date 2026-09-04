@@ -69,19 +69,26 @@ class InteractionObserverAdapter(QObject):
             signal = getattr(widget, "editingFinished", None)
             if signal is None:
                 signal = getattr(widget, "returnPressed", None)
-            if signal is not None:
-                self._has_semantic_signal = self._connect_signal(
-                    signal, self._on_semantic_action
+            if signal is None or not self._connect_signal(signal, self._on_semantic_action):
+                self.unbind()
+                self.target_lost.emit(
+                    session_id, generation,
+                    "INTERACTION_BIND_FAILED: Widget does not support text commit signals",
                 )
         elif kind is InteractionKind.SELECTION_CHANGED:
+            bound_signal = False
             for name in ("currentIndexChanged", "itemSelectionChanged", "selectionChanged"):
                 signal = getattr(widget, name, None)
                 if signal is not None:
-                    self._has_semantic_signal = self._connect_signal(
-                        signal, self._on_semantic_action
-                    )
-                    if self._has_semantic_signal:
+                    bound_signal = self._connect_signal(signal, self._on_semantic_action)
+                    if bound_signal:
                         break
+            if not bound_signal:
+                self.unbind()
+                self.target_lost.emit(
+                    session_id, generation,
+                    "INTERACTION_BIND_FAILED: Widget does not support selection signals",
+                )
         return None
 
     def unbind(self) -> None:
@@ -125,11 +132,7 @@ class InteractionObserverAdapter(QObject):
             elif self._interaction_kind is InteractionKind.FOCUS:
                 matched = event.type() == QEvent.Type.FocusIn
             elif self._interaction_kind is InteractionKind.TEXT_COMMITTED:
-                matched = (
-                    not self._has_semantic_signal
-                    and event.type() == QEvent.Type.KeyPress
-                    and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                )
+                matched = False
             else:
                 matched = False
             if matched:
