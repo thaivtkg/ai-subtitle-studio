@@ -2,6 +2,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from core.media_import.media_import_models import MediaImportProgress, MediaImportStage
@@ -47,6 +48,13 @@ class TestMediaImportUI(unittest.TestCase):
     def test_dialog_uses_dark_theme_stylesheet(self):
         self.assertIn("QDialog", self.dialog.styleSheet())
         self.assertIn("QPushButton", self.dialog.styleSheet())
+
+    def test_close_button_is_available_in_both_modes(self):
+        for mode in ("new_project", "queue"):
+            with self.subTest(mode=mode):
+                dialog = MediaImportDialog(self.mock_service, mode=mode)
+                self.assertTrue(dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint)
+                dialog.close()
 
     def test_indeterminate_progress_sets_range_zero(self):
         self.dialog._set_state(MediaImportDialogState.DOWNLOADING)

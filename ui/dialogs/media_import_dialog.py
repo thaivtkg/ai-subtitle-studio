@@ -89,7 +89,8 @@ class MediaImportDialog(QDialog):
     def _setup_ui(self):
         self.setWindowTitle("Import Media")
         self.setMinimumWidth(500)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, True)
         layout = QVBoxLayout(self)
         url_layout = QHBoxLayout()
         url_layout.addWidget(QLabel("URL:"))
