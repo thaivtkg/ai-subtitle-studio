@@ -19,14 +19,21 @@ class MockAppRouter(AppRouter):
         self._index = 0
         self._subroute = None
         self._operation = 0
+        self.drawer_hidden = False
+        self.drawer_animating = False
 
     def current_index(self):
         return self._index
 
     def current_subroute(self):
+        if self._index == 1 and (self.drawer_hidden or self.drawer_animating):
+            return None
         return self._subroute
 
     def navigate_to_index(self, index: int, subroute: str = None):
+        if index == 1 and subroute:
+            self.drawer_hidden = False
+            self.drawer_animating = True
         self._operation += 1
         operation_id = f"op-{self._operation}"
         # Tests deliver transition completion explicitly, without timer races.
@@ -35,6 +42,7 @@ class MockAppRouter(AppRouter):
     def finish(self, operation_id: str, index: int, subroute: str = None):
         self._index = index
         self._subroute = subroute
+        self.drawer_animating = False
         self.transition_finished.emit(operation_id, index)
 
 
@@ -241,6 +249,7 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
             project_service=MagicMock(), media_import_service=MagicMock()
         )
         self.widgets.append(window)
+        window.show()
         router = MainWindowRouter(window)
         nav = NavigationAdapter(router)
         emitted = []
@@ -259,3 +268,31 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         self.assertEqual(emitted, [("real", 1, "real-1")])
         self.assertEqual(window.stack.current_index, 1)
         self.assertEqual(window.dock_tabs.currentIndex(), 1)
+
+    def test_tc144_a_hidden_drawer_settles_before_ready(self):
+        emitted = []
+        self.router._index = 1
+        self.router._subroute = "context"
+        self.router.drawer_hidden = True
+        self.nav.surface_ready.connect(lambda *args: emitted.append(args))
+
+        self.assertIsNone(self.nav.current_surface().subroute)
+        self.nav.navigate(
+            SurfaceSpec("workspace", "context"),
+            session_id="s",
+            generation=1,
+            request_id="r",
+        )
+        self.assertEqual(emitted, [])
+        self.assertTrue(self.router.drawer_animating)
+        QTimer.singleShot(20, lambda: self.router.finish("op-1", 1, "context"))
+        loop = QEventLoop()
+        QTimer.singleShot(40, loop.quit)
+        loop.exec()
+        self.assertEqual(emitted, [("s", 1, "r")])
+
+    def test_tc144_b_animating_drawer_is_not_settled(self):
+        self.router._index = 1
+        self.router._subroute = "context"
+        self.router.drawer_animating = True
+        self.assertIsNone(self.nav.current_surface().subroute)

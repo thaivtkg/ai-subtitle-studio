@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 from itertools import count
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QAbstractAnimation, QObject, QTimer, Signal
 
 from core.tutorial.models import SurfaceSpec
 
@@ -18,7 +18,7 @@ class AppRouter(QObject):
     def current_subroute(self) -> Optional[str]:
         raise NotImplementedError
 
-    def navigate_to_index(self, index: int, subroute: Optional[str]) -> None:
+    def navigate_to_index(self, index: int, subroute: Optional[str]) -> str:
         raise NotImplementedError
 
 
@@ -27,6 +27,7 @@ class NavigationAdapter(QObject):
     ROUTE_MAP = {
         "dashboard": 0, "workspace": 1, "queue": 2,
         "draft_center": 3, "export_center": 4, "settings": 5,
+        "help": 6,
     }
     INDEX_MAP = {index: route for route, index in ROUTE_MAP.items()}
 
@@ -128,6 +129,10 @@ class MainWindowRouter(AppRouter):
         self._active_operation_id: Optional[str] = None
         self._stack = window.stack
         self._stack.anim_group.finished.connect(self._on_transition_finished)
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.timeout.connect(self._check_settled)
+        self._settle_target: Optional[Tuple[str, int]] = None
 
     def current_index(self) -> int:
         return self._stack.current_index
@@ -135,31 +140,61 @@ class MainWindowRouter(AppRouter):
     def current_subroute(self) -> Optional[str]:
         if self.current_index() != NavigationAdapter.ROUTE_MAP["workspace"]:
             return None
+        dock = getattr(self._window, "generation_dock", None)
+        drawer_anim = getattr(self._window, "drawer_anim", None)
+        if dock is None or not dock.isVisible():
+            return None
+        if drawer_anim is not None and drawer_anim.state() == QAbstractAnimation.Running:
+            return None
         return self.TAB_TO_SUBROUTE.get(self._window.dock_tabs.currentIndex())
 
     def navigate_to_index(self, index: int, subroute: Optional[str]) -> str:
         operation_id = f"op-{next(self._ids)}"
         self._active_operation_id = operation_id
+        self._settle_timer.stop()
+        self._settle_target = (operation_id, index)
         if index == NavigationAdapter.ROUTE_MAP["workspace"] and subroute in self.SUBROUTE_TO_TAB:
             self._window.dock_tabs.setCurrentIndex(self.SUBROUTE_TO_TAB[subroute])
+            dock = getattr(self._window, "generation_dock", None)
+            if dock is not None and not dock.isVisible():
+                toggle = getattr(self._window, "_toggle_ai_drawer", None)
+                if toggle is not None:
+                    toggle()
+                else:
+                    dock.show()
         nav_index = self.INDEX_TO_NAV_INDEX.get(index)
         if nav_index is None:
+            self._settle_target = None
             QTimer.singleShot(0, lambda: self.transition_failed.emit(operation_id, "Unknown index"))
         else:
             self._window.switch_page(nav_index)
-            if index == self.current_index():
-                QTimer.singleShot(0, lambda: self._finish_operation(operation_id, index))
+            self._settle_timer.start(0)
         return operation_id
 
     def _on_transition_finished(self) -> None:
         if self._active_operation_id is None:
             return
-        operation_id = self._active_operation_id
-        self._active_operation_id = None
-        self.transition_finished.emit(operation_id, self.current_index())
+        self._settle_timer.start(0)
 
-    def _finish_operation(self, operation_id: str, index: int) -> None:
+    def _check_settled(self) -> None:
+        if self._settle_target is None:
+            return
+        operation_id, index = self._settle_target
         if operation_id != self._active_operation_id:
             return
+        drawer_anim = getattr(self._window, "drawer_anim", None)
+        stack_animating = self._stack.anim_group.state() == QAbstractAnimation.Running
+        drawer_animating = (
+            drawer_anim is not None
+            and drawer_anim.state() == QAbstractAnimation.Running
+        )
+        dock = getattr(self._window, "generation_dock", None)
+        drawer_settled = index != NavigationAdapter.ROUTE_MAP["workspace"] or (
+            dock is not None and dock.isVisible() and not drawer_animating
+        )
+        if self.current_index() != index or stack_animating or not drawer_settled:
+            self._settle_timer.start(50)
+            return
+        self._settle_target = None
         self._active_operation_id = None
         self.transition_finished.emit(operation_id, index)
