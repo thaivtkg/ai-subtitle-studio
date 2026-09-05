@@ -7,6 +7,7 @@ from core.help.guide_card_policy import (
     build_guide_card_view_model,
 )
 from core.help.help_center_controller import HelpCenterController
+from core.help.shortcut_provider import RuntimeShortcutProvider
 
 
 def guide():
@@ -110,6 +111,28 @@ class TestHelpCenterController(unittest.TestCase):
         self.assertEqual(published, [])
         scheduled[1][1]()
         self.assertEqual([card.guide_id for card in published[0]], ["getting_started"])
+
+
+class TestRuntimeShortcutProvider(unittest.TestCase):
+    def test_tc177_reads_current_shortcuts_in_stable_order(self):
+        class Shortcut:
+            def __init__(self, name, sequence):
+                self.name, self._sequence = name, sequence
+
+            def objectName(self):
+                return self.name
+
+            def key_sequence(self):
+                return self._sequence
+
+        provider = RuntimeShortcutProvider(
+            lambda: [Shortcut("save", "Ctrl+S"), Shortcut("open", "Ctrl+O")]
+        )
+
+        self.assertEqual(
+            provider.entries(),
+            (("save", "Ctrl+S"), ("open", "Ctrl+O")),
+        )
 
 
 if __name__ == "__main__":
