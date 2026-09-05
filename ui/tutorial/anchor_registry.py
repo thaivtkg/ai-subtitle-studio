@@ -1,7 +1,10 @@
 import weakref
 from typing import Callable, Dict, Optional
 
-import shiboken6
+try:
+    import shiboken6
+except ImportError:
+    from PySide6 import shiboken6
 from PySide6.QtWidgets import QWidget
 
 from core.tutorial.models import AnchorHandle, AnchorResolution, AnchorStatus

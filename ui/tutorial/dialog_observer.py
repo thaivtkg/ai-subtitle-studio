@@ -28,7 +28,7 @@ class DialogLifecycleObserver(QObject):
         self._dialog_stack: List[str] = []
         self._dialogs: Dict[str, weakref.ReferenceType[QDialog]] = {}
         self._widget_id_to_handle: Dict[int, str] = {}
-        self._connections: Dict[str, List[Tuple[object, object]]] = {}
+        self._connections: Dict[str, List[Tuple[object, object, str]]] = {}
 
     def start(self, session_id: str) -> None:
         self.stop()
@@ -44,7 +44,7 @@ class DialogLifecycleObserver(QObject):
         if app is not None:
             app.removeEventFilter(self)
         for connections in self._connections.values():
-            for signal, slot in connections:
+            for signal, slot, _kind in connections:
                 try:
                     signal.disconnect(slot)
                 except (RuntimeError, TypeError):
@@ -92,21 +92,25 @@ class DialogLifecycleObserver(QObject):
             self._track_dialog(watched)
         return False
 
-    def _connect(self, dialog_id: str, signal: object, slot: object) -> None:
+    def _connect(self, dialog_id: str, signal: object, slot: object, kind: str) -> None:
         try:
             signal.connect(slot)
         except (RuntimeError, TypeError):
             return
-        self._connections.setdefault(dialog_id, []).append((signal, slot))
+        self._connections.setdefault(dialog_id, []).append((signal, slot, kind))
 
     def _track_dialog(self, dialog: QDialog) -> None:
         widget_id = id(dialog)
-        if widget_id in self._widget_id_to_handle:
+        existing_id = self._widget_id_to_handle.get(widget_id)
+        if existing_id is not None and existing_id in self._dialog_stack:
             return
 
         was_modal = bool(self._dialog_stack)
-        self._dialog_counter += 1
-        dialog_id = f"dlg-{self._dialog_counter}"
+        if existing_id is None:
+            self._dialog_counter += 1
+            dialog_id = f"dlg-{self._dialog_counter}"
+        else:
+            dialog_id = existing_id
         self._widget_id_to_handle[widget_id] = dialog_id
         self._dialogs[dialog_id] = weakref.ref(dialog)
         self._dialog_stack.append(dialog_id)
@@ -115,22 +119,39 @@ class DialogLifecycleObserver(QObject):
             dialog_id,
             dialog.finished,
             lambda result, ref=dialog_ref, handle=dialog_id: self._on_dialog_finished(ref, handle, result),
+            "finished",
         )
         self._connect(
             dialog_id,
             dialog.destroyed,
             lambda _object=None, handle=dialog_id, wid=widget_id: self._on_dialog_destroyed(handle, wid),
+            "destroyed",
         )
         self.dialog_shown.emit(dialog_id)
         if not was_modal:
             self.modal_active_changed.emit(True)
 
     def _disconnect_dialog(self, dialog_id: str) -> None:
-        for signal, slot in self._connections.pop(dialog_id, []):
+        for signal, slot, _kind in self._connections.pop(dialog_id, []):
             try:
                 signal.disconnect(slot)
             except (RuntimeError, TypeError):
                 pass
+
+    def _disconnect_finished(self, dialog_id: str) -> None:
+        remaining = []
+        for signal, slot, kind in self._connections.get(dialog_id, []):
+            if kind == "finished":
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+            else:
+                remaining.append((signal, slot, kind))
+        if remaining:
+            self._connections[dialog_id] = remaining
+        else:
+            self._connections.pop(dialog_id, None)
 
     def _on_dialog_finished(
         self, dialog_ref: weakref.ReferenceType[QDialog], dialog_id: str, result: int
@@ -138,10 +159,7 @@ class DialogLifecycleObserver(QObject):
         was_modal = bool(self._dialog_stack)
         dialog = dialog_ref()
         self._dialog_stack = [handle for handle in self._dialog_stack if handle != dialog_id]
-        self._dialogs.pop(dialog_id, None)
-        if dialog is not None:
-            self._widget_id_to_handle.pop(id(dialog), None)
-        self._disconnect_dialog(dialog_id)
+        self._disconnect_finished(dialog_id)
 
         result_code = int(result)
         self.dialog_finished.emit(dialog_id, result_code)
