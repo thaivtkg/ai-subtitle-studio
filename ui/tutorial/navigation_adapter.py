@@ -101,6 +101,21 @@ class NavigationAdapter(QObject):
         session_id, generation, request_id, target, target_index, pending_operation_id = self._pending_request
         if operation_id != pending_operation_id or destination_index != target_index:
             return
+        QTimer.singleShot(
+            0,
+            lambda: self._confirm_transition(
+                operation_id, session_id, generation, request_id, target, target_index
+            ),
+        )
+
+    def _confirm_transition(
+        self, operation_id, session_id, generation, request_id, target, target_index
+    ):
+        if self._pending_request is None or self._queued.isActive():
+            return
+        pending = self._pending_request
+        if pending[5] != operation_id or pending[4] != target_index:
+            return
         self._pending_request = None
         if self._surface_matches(self.current_surface(), target):
             self.surface_ready.emit(session_id, generation, request_id)
