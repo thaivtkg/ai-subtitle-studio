@@ -54,6 +54,12 @@ class TestC2FirstRunUI(unittest.TestCase):
             target_content_version=2,
         )
 
+    def test_banner_starts_hidden_before_policy_evaluation(self):
+        banner = FirstRunBanner()
+        self.assertTrue(banner.isHidden())
+        banner.deleteLater()
+        self.app.processEvents()
+
     def tearDown(self):
         self.banner.deleteLater()
         self.app.processEvents()

@@ -1,6 +1,8 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from ui.theme import Theme
+
 
 class FirstRunBanner(QWidget):
     """Non-blocking first-run invitation banner."""
@@ -10,8 +12,9 @@ class FirstRunBanner(QWidget):
         self.setObjectName("first_run_banner")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            "#first_run_banner { background-color: #e3f2fd; "
-            "border: 1px solid #90caf9; border-radius: 4px; }"
+            f"#first_run_banner {{ background-color: {Theme.SURFACE_ELEVATED}; "
+            f"border: 1px solid {Theme.BORDER}; border-radius: 6px; "
+            f"color: {Theme.TEXT_PRIMARY}; }}"
         )
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 8, 16, 8)
@@ -21,3 +24,4 @@ class FirstRunBanner(QWidget):
         self.dismiss_btn = QPushButton("Để sau", self)
         layout.addWidget(self.start_btn)
         layout.addWidget(self.dismiss_btn)
+        self.hide()
