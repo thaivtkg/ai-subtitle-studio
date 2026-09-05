@@ -169,6 +169,25 @@ class TestMilestoneB4SpotlightLayer(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.spotlight._top_dim.geometry(), QRect(0, 0, 800, 200))
 
+    def test_tc165_ancestor_move_updates_hole(self):
+        container = QWidget(self.host)
+        container.setGeometry(50, 50, 250, 200)
+        target = QPushButton("Nested target", container)
+        target.setGeometry(20, 20, 100, 40)
+        container.show()
+        self.registry.register("nested_target", target)
+        result = self.registry.resolve("nested_target")
+        self.spotlight.show_target(result.handle, CalloutSpec("T", "B"), MockStepControls())
+        self.app.processEvents()
+        self.assertEqual(self.spotlight._top_dim.geometry(), QRect(0, 0, 800, 70))
+
+        target_local_geometry = target.geometry()
+        container.move(50, 150)
+        self.app.processEvents()
+
+        self.assertEqual(target.geometry(), target_local_geometry)
+        self.assertEqual(self.spotlight._top_dim.geometry(), QRect(0, 0, 800, 170))
+
     def test_callout_placement_and_cancel_control(self):
         result = self.registry.resolve("target_btn")
         self.spotlight.show_target(
