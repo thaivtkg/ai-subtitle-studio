@@ -39,14 +39,15 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         dialog = QDialog()
         self.widgets.append(dialog)
         opened = []
-        self.dialog_observer.dialog_opened.connect(opened.append)
+        self.dialog_observer.dialog_shown.connect(opened.append)
 
         dialog.show()
         self.app.processEvents()
 
-        self.assertEqual(opened, [dialog])
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(opened[0].startswith("dlg-"))
         self.assertIs(self.dialog_observer.active_dialog(), dialog)
-        self.assertEqual(self.dialog_observer.active_modal_handle(), "")
+        self.assertEqual(self.dialog_observer.active_modal_handle(), opened[0])
 
     def test_tc159_reject_removes_dialog_immediately(self):
         self.dialog_observer.start("s159")
@@ -54,16 +55,17 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         self.widgets.append(dialog)
         dialog.show()
         self.app.processEvents()
+        handle = self.dialog_observer.active_modal_handle()
         closed = []
         rejected = []
-        self.dialog_observer.dialog_closed.connect(lambda d, r: closed.append((d, r)))
+        self.dialog_observer.dialog_finished.connect(lambda d_id, r: closed.append((d_id, r)))
         self.dialog_observer.dialog_rejected.connect(rejected.append)
 
         dialog.reject()
 
         self.assertFalse(self.dialog_observer.has_active_dialog())
-        self.assertEqual(rejected, [dialog])
-        self.assertEqual(closed, [(dialog, QDialog.DialogCode.Rejected)])
+        self.assertEqual(rejected, [handle])
+        self.assertEqual(closed, [(handle, QDialog.DialogCode.Rejected)])
 
     def test_tc160_dialog_accepted_satisfies_interaction(self):
         dialog = QDialog()
@@ -84,6 +86,28 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         dialog.accept()
 
         self.assertEqual(emitted, [("s160", 1)])
+
+    def test_tc160_reject_emits_target_lost(self):
+        dialog = QDialog()
+        self.widgets.append(dialog)
+        dialog.show()
+        self.app.processEvents()
+        self.registry.register("reject_dialog", dialog)
+        handle = self.registry.resolve("reject_dialog").handle
+        lost = []
+        self.interaction_observer.target_lost.connect(lambda *args: lost.append(args))
+
+        self.interaction_observer.bind(
+            handle,
+            InteractionSpec(InteractionKind.DIALOG_ACCEPTED),
+            session_id="s160-reject",
+            generation=2,
+        )
+        dialog.reject()
+
+        self.assertFalse(self.interaction_observer.is_bound())
+        self.assertEqual(lost[0][:2], ("s160-reject", 2))
+        self.assertIn("DIALOG_CLOSED_WITHOUT_ACCEPT", lost[0][2])
 
     def test_tc161_nested_dialogs_unwind_lifo_and_destroy_safely(self):
         self.dialog_observer.start("s161")

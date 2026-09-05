@@ -1,9 +1,13 @@
 import weakref
 from typing import Any, List, Optional, Tuple
 
-import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QDialog, QWidget
+
+try:
+    import shiboken6
+except ImportError:
+    from PySide6 import shiboken6
 
 from core.tutorial.models import AnchorHandle, InteractionKind, InteractionSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
@@ -70,17 +74,33 @@ class InteractionObserverAdapter(QObject):
         self._connect_signal(widget.destroyed, self._on_widget_destroyed)
         if kind is InteractionKind.DIALOG_ACCEPTED:
             dialog = widget if isinstance(widget, QDialog) else widget.window()
-            signal = getattr(dialog, "accepted", None) if isinstance(dialog, QDialog) else None
-            if signal is None and isinstance(dialog, QDialog) and self._dialog_observer is not None:
-                signal = self._dialog_observer.dialog_accepted
-            if signal is None or not self._connect_signal(signal, self._on_semantic_action):
+            if not isinstance(dialog, QDialog) or not shiboken6.isValid(dialog):
                 self.unbind()
                 self.target_lost.emit(
                     session_id, generation,
                     "INTERACTION_BIND_FAILED: Target is not an observable dialog",
                 )
                 return None
-        elif kind is InteractionKind.TEXT_COMMITTED:
+            accepted = getattr(dialog, "accepted", None)
+            if accepted is None or not self._connect_signal(accepted, self._on_semantic_action):
+                if self._dialog_observer is None or not self._connect_signal(
+                    self._dialog_observer.dialog_accepted, self._on_semantic_action
+                ):
+                    self.unbind()
+                    self.target_lost.emit(
+                        session_id,
+                        generation,
+                        "INTERACTION_BIND_FAILED: Dialog has no accepted signal",
+                    )
+                    return None
+            self._connect_signal(dialog.finished, self._on_dialog_finished)
+            return None
+
+        # A target inside a dialog must not leave WAITING_ACTION when its window closes.
+        window = widget.window()
+        if isinstance(window, QDialog):
+            self._connect_signal(window.finished, self._on_target_window_finished)
+        if kind is InteractionKind.TEXT_COMMITTED:
             signal = getattr(widget, "editingFinished", None)
             if signal is None:
                 signal = getattr(widget, "returnPressed", None)
@@ -91,7 +111,7 @@ class InteractionObserverAdapter(QObject):
                     "INTERACTION_BIND_FAILED: Widget does not support text commit signals",
                 )
                 return None
-        elif kind is InteractionKind.SELECTION_CHANGED:
+        if kind is InteractionKind.SELECTION_CHANGED:
             bound_signal = False
             for name in ("currentIndexChanged", "itemSelectionChanged", "selectionChanged"):
                 signal = getattr(widget, name, None)
@@ -159,3 +179,27 @@ class InteractionObserverAdapter(QObject):
     def _on_semantic_action(self, *args: Any) -> None:
         if self._bound_widget_ref is not None and self._session_id:
             self.action_satisfied.emit(self._session_id, self._generation)
+
+    def _on_dialog_finished(self, result: int) -> None:
+        if self._interaction_kind is not InteractionKind.DIALOG_ACCEPTED:
+            return
+        if int(result) == int(QDialog.DialogCode.Accepted):
+            return
+        session_id, generation = self._session_id, self._generation
+        self.unbind()
+        self.target_lost.emit(
+            session_id,
+            generation,
+            f"DIALOG_CLOSED_WITHOUT_ACCEPT: result={int(result)}",
+        )
+
+    def _on_target_window_finished(self, result: int) -> None:
+        if not self._session_id:
+            return
+        session_id, generation = self._session_id, self._generation
+        self.unbind()
+        self.target_lost.emit(
+            session_id,
+            generation,
+            f"TARGET_WINDOW_CLOSED: result={int(result)}",
+        )
