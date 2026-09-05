@@ -92,6 +92,25 @@ class TestHelpCenterController(unittest.TestCase):
         self.assertEqual(started, [other])
         self.assertFalse(controller.start_guide("missing"))
 
+    def test_tc176_debounces_search_and_publishes_only_latest_query(self):
+        scheduled = []
+        published = []
+        controller = HelpCenterController(
+            [guide()],
+            lambda item: GuideProgress(GuideProgressStatus.NOT_STARTED),
+            lambda item: None,
+            published.append,
+        )
+
+        controller.schedule_search("get", lambda delay, callback: scheduled.append((delay, callback)))
+        controller.schedule_search("started", lambda delay, callback: scheduled.append((delay, callback)))
+
+        self.assertEqual([delay for delay, _ in scheduled], [175, 175])
+        scheduled[0][1]()
+        self.assertEqual(published, [])
+        scheduled[1][1]()
+        self.assertEqual([card.guide_id for card in published[0]], ["getting_started"])
+
 
 if __name__ == "__main__":
     unittest.main()
