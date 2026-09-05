@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QWidget
 from core.tutorial.models import CalloutPlacement, CalloutSpec, SafetySpec, TourState
 from core.tutorial.tour_engine import TourControlsFacade
 from ui.tutorial.anchor_registry import AnchorRegistry
-from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
+from ui.tutorial.spotlight_layer import DimWidget, SpotlightLayerAdapter
 
 
 class MockStepControls:
