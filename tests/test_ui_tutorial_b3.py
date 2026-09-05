@@ -119,6 +119,7 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         self.dialog_observer.start("s158-e2e")
         open_button = QPushButton("Open")
         self.widgets.append(open_button)
+        open_button.show()
         dialog = QDialog()
         confirm_button = QPushButton("Confirm", dialog)
         confirm_button.setObjectName("confirm")
@@ -178,7 +179,6 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
                 )
 
         QTimer.singleShot(20, click_confirm_inside_modal)
-        open_button.show()
         self.app.processEvents()
         for event_type in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
             self.app.sendEvent(
