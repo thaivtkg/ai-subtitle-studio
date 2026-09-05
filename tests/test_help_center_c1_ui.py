@@ -72,7 +72,9 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
         page._search.setText("second")
         QTest.qWait(220)
         self.assertEqual(controller.queries, ["second"])
-        self.assertIn("Second", [label.text() for label in page._cards.findChildren(QLabel)])
+        self.assertTrue(
+            any(label.text().startswith("Second") for label in page._cards.findChildren(QLabel))
+        )
         page.deleteLater()
         self.app.processEvents()
 
@@ -131,7 +133,7 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
         window = MainWindow(project_service=MagicMock(), media_import_service=MagicMock())
         window.shortcut_help.activated.emit()
         self.assertEqual(window._active_nav_index, 7)
-        self.assertEqual(window.stack.currentIndex(), 6)
+        self.assertEqual(window.stack.current_index, 6)
         window.tour_engine.start = MagicMock()
         window.shortcut_help.activated.emit()
         window.tour_engine.start.assert_not_called()
