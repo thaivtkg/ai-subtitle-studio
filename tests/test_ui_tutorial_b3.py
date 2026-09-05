@@ -179,6 +179,8 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
                 )
 
         QTimer.singleShot(20, click_confirm_inside_modal)
+        # Prevent a failed callback from leaving the nested modal loop alive forever.
+        QTimer.singleShot(2000, dialog.reject)
         self.app.processEvents()
         for event_type in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
             self.app.sendEvent(
