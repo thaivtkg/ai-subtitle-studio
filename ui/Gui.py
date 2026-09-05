@@ -563,6 +563,7 @@ class MainWindow(QMainWindow):
         self.tour_progress_store = TourProgressStore(RuntimePaths.get_tutorial_progress_file())
         self.tour_environment = TourEnvironment(self._check_tour_precondition)
         self.shortcut_provider = RuntimeShortcutProvider(self)
+        self._register_help_shortcuts()
         self.tour_anchor_registry = AnchorRegistry()
         self.tour_dialog_observer = DialogLifecycleObserver(self)
         self.tour_interaction_observer = InteractionObserverAdapter(
@@ -761,6 +762,20 @@ class MainWindow(QMainWindow):
         self.shortcut_help.setContext(Qt.ApplicationShortcut)
         self.shortcut_help.activated.connect(lambda: self.switch_page(7))
         QApplication.instance().installEventFilter(self)
+
+    def _register_help_shortcuts(self):
+        for shortcut, action_id, label in (
+            (self.shortcut_new, "new_project", "New Project"),
+            (self.shortcut_open, "open_project", "Open Project"),
+            (self.shortcut_save, "save_project", "Save Project"),
+            (self.shortcut_export, "export_subtitles", "Export Subtitles"),
+            (self.shortcut_undo, "undo", "Undo"),
+            (self.shortcut_redo, "redo", "Redo"),
+            (self.shortcut_merge, "merge", "Merge"),
+            (self.shortcut_split, "split", "Split"),
+            (self.shortcut_help, "help.center", "Open Help Center"),
+        ):
+            self.shortcut_provider.register_shortcut(shortcut, action_id, label)
 
     @Slot()
     def _toggle_ai_drawer(self):
