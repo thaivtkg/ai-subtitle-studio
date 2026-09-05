@@ -49,14 +49,13 @@ class TourControlsFacade:
 
     @property
     def can_back(self) -> bool:
-        if self._engine.state() == TourState.WAITING_ACTION:
-            return False
         step = self._engine.current_step()
         return bool(step and step.safety.allow_back and self._engine._current_step_index > 0)
 
     @property
     def can_skip(self) -> bool:
-        return True
+        step = self._engine.current_step()
+        return bool(step and step.safety.allow_skip_step)
 
 
 class TourEngine(QObject):

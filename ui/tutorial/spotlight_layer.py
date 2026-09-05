@@ -74,6 +74,7 @@ class SpotlightLayerAdapter(QObject):
     def _cleanup_ui(self) -> None:
         for widget in (self._top_dim, self._bottom_dim, self._left_dim, self._right_dim, self._border_widget, self._callout_widget):
             if widget is not None and shiboken6.isValid(widget):
+                widget.hide()
                 widget.deleteLater()
         self._top_dim = self._bottom_dim = self._left_dim = self._right_dim = self._border_widget = None
         self._callout_widget = None
