@@ -102,7 +102,12 @@ class NavigationAdapter(QObject):
         if operation_id != pending_operation_id or destination_index != target_index:
             return
         self._pending_request = None
-        self.surface_ready.emit(session_id, generation, request_id)
+        if self._surface_matches(self.current_surface(), target):
+            self.surface_ready.emit(session_id, generation, request_id)
+        else:
+            self.surface_failed.emit(
+                session_id, generation, request_id, "Route mismatch after transition"
+            )
 
     @staticmethod
     def _surface_matches(current: SurfaceSpec, target: SurfaceSpec) -> bool:

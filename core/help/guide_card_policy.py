@@ -1,32 +1,40 @@
-from .help_models import GuideCardViewModel, GuideStartResult, GuideStartStatus
+from core.tutorial.models import TourDefinition
+from core.tutorial.progress_store import GuideProgress, GuideProgressStatus
+from .help_models import GuideCardViewModel
 
 
 _PRESENTATION = {
-    "NOT_STARTED": (GuideStartStatus.NEW, "New", "Start Tour"),
-    "COMPLETED": (GuideStartStatus.COMPLETED, "Completed", "Replay"),
-    "DISMISSED": (GuideStartStatus.DISMISSED, "Dismissed", "Start Tour"),
-    "OUTDATED": (GuideStartStatus.UPDATED, "Updated", "Start Updated Tour"),
-    "COMPLETED_NEWER_VERSION": (GuideStartStatus.COMPLETED, "Completed", "Replay"),
-    "UNKNOWN": (GuideStartStatus.UNKNOWN, "Progress unavailable", "Start Tour"),
+    GuideProgressStatus.NOT_STARTED: ("New", "Start Tour"),
+    GuideProgressStatus.COMPLETED: ("Completed", "Replay"),
+    GuideProgressStatus.DISMISSED: ("Dismissed", "Start Tour"),
+    GuideProgressStatus.OUTDATED: ("Updated", "Start Updated Tour"),
+    GuideProgressStatus.COMPLETED_NEWER_VERSION: ("Completed", "Replay"),
+    GuideProgressStatus.UNKNOWN: ("Progress unavailable", "Start Tour"),
 }
 
 
-def build_guide_card_view_model(guide, progress) -> GuideCardViewModel:
-    status, status_label, action_label = _PRESENTATION[progress.status.value]
+def build_guide_card_view_model(
+    guide: TourDefinition,
+    progress: GuideProgress,
+    *,
+    enabled: bool = True,
+    blocked_reason=None,
+) -> GuideCardViewModel:
+    badge, cta = _PRESENTATION.get(progress.status, ("Progress unavailable", "Start Tour"))
     return GuideCardViewModel(
         guide_id=guide.guide_id,
         title=guide.title,
         description=guide.description,
         category=guide.category,
         estimated_minutes=guide.estimated_minutes,
-        step_count=len(guide.steps),
-        start=GuideStartResult(status, status_label, action_label),
+        badge=badge,
+        cta=cta,
+        enabled=enabled,
+        blocked_reason=blocked_reason,
     )
 
 
 __all__ = [
     "GuideCardViewModel",
-    "GuideStartResult",
-    "GuideStartStatus",
     "build_guide_card_view_model",
 ]

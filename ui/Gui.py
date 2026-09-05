@@ -61,6 +61,10 @@ from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
 from core.timing.timing_batch_service import TimingBatchService
+from core.help.help_center_controller import HelpCenterController
+from core.tutorial.catalog import TourCatalog
+from core.tutorial.environment import TourEnvironment
+from core.tutorial.progress_store import TourProgressStore
 from core.video_metadata import MetadataWorker
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
@@ -73,6 +77,7 @@ from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
+from ui.help.shortcut_provider import RuntimeShortcutProvider
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
@@ -548,7 +553,18 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.page_settings)
 
         # Page 7 (Index 6): Help Center
-        self.page_help = HelpCenterPage(parent=self)
+        self.tour_catalog = TourCatalog(RuntimePaths.get_resources_dir() / "tutorials")
+        self.tour_progress_store = TourProgressStore(RuntimePaths.get_tutorial_progress_file())
+        self.tour_environment = TourEnvironment(lambda _precondition: True)
+        self.shortcut_provider = RuntimeShortcutProvider(self)
+        self.help_controller = HelpCenterController(
+            self.tour_catalog,
+            self.tour_progress_store,
+            self.tour_environment,
+            start_tour_fn=self._start_tour_from_help,
+            shortcut_provider=self.shortcut_provider,
+        )
+        self.page_help = HelpCenterPage(self.help_controller, self.shortcut_provider, self)
         self.stack.addWidget(self.page_help)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -801,6 +817,10 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(lambda: self.switch_page(page_index))
         self.nav_btns[page_index] = btn
         return btn
+
+    def _start_tour_from_help(self, guide_id):
+        engine = getattr(self, "tour_engine", None)
+        return bool(engine is not None and engine.start(guide_id))
 
     def create_side_action_button(self, text, slot):
         btn = QPushButton(text)

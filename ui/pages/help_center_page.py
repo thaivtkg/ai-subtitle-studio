@@ -1,14 +1,16 @@
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QLineEdit, QListWidget, QVBoxLayout, QWidget
+from ui.help.shortcut_view import ShortcutView
 
 
 class HelpCenterPage(QWidget):
-    def __init__(self, controller=None, parent=None):
+    def __init__(self, controller=None, shortcut_provider=None, parent=None):
         super().__init__(parent)
         self._controller = controller
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("Search help...")
         self._cards = QListWidget(self)
+        self._shortcuts = ShortcutView(shortcut_provider, self)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(175)
@@ -18,6 +20,7 @@ class HelpCenterPage(QWidget):
         layout.addWidget(QLabel("Help Center", self))
         layout.addWidget(self._search)
         layout.addWidget(self._cards)
+        layout.addWidget(self._shortcuts)
         self.refresh()
 
     def _schedule_search(self):
@@ -28,5 +31,6 @@ class HelpCenterPage(QWidget):
         self._cards.clear()
         for card in cards:
             self._cards.addItem(
-                f"{card.title} — {card.start.status_label} ({card.start.action_label})"
+                f"{card.title} — {card.badge} ({card.cta})"
             )
+        self._shortcuts.refresh()
