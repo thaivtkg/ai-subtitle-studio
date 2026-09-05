@@ -160,25 +160,41 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         )
         engine.start("g158-e2e")
 
-        def click_confirm_inside_modal():
-            self.assertEqual(engine.current_step().step_id, "confirm")
-            self.assertEqual(engine.state(), TourState.WAITING_ACTION)
-            event_args = (
-                QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease
-            )
-            for event_type in event_args:
-                self.app.sendEvent(
-                    confirm_button,
-                    QMouseEvent(
-                        event_type,
-                        QPointF(2, 2), QPointF(2, 2),
-                        Qt.MouseButton.LeftButton,
-                        Qt.MouseButton.LeftButton,
-                        Qt.KeyboardModifier.NoModifier,
-                    ),
-                )
+        callback_errors = []
 
-        QTimer.singleShot(20, click_confirm_inside_modal)
+        def click_confirm_inside_modal(attempt=0):
+            try:
+                step = engine.current_step()
+                if step is not None and step.step_id == "confirm" \
+                        and engine.state() == TourState.WAITING_ACTION:
+                    event_args = (
+                        QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease
+                    )
+                    for event_type in event_args:
+                        self.app.sendEvent(
+                            confirm_button,
+                            QMouseEvent(
+                                event_type,
+                                QPointF(2, 2), QPointF(2, 2),
+                                Qt.MouseButton.LeftButton,
+                                Qt.MouseButton.LeftButton,
+                                Qt.KeyboardModifier.NoModifier,
+                            ),
+                        )
+                    return
+                if attempt >= 100:
+                    raise AssertionError(
+                        "confirm step never became ready; "
+                        f"step={getattr(step, 'step_id', None)}, "
+                        f"state={engine.state()}"
+                    )
+                QTimer.singleShot(0, lambda: click_confirm_inside_modal(attempt + 1))
+                return
+            except Exception as exc:
+                callback_errors.append(exc)
+                dialog.reject()
+
+        QTimer.singleShot(0, click_confirm_inside_modal)
         # Prevent a failed callback from leaving the nested modal loop alive forever.
         QTimer.singleShot(2000, dialog.reject)
         self.app.processEvents()
@@ -194,6 +210,7 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
                 ),
             )
         self.app.processEvents()
+        self.assertEqual(callback_errors, [])
         self.assertEqual(engine.state(), TourState.COMPLETED)
 
     def test_tc159_reject_removes_dialog_immediately(self):
