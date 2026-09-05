@@ -6,6 +6,7 @@ from core.help.guide_card_policy import (
     GuideStartStatus,
     build_guide_card_view_model,
 )
+from core.help.help_center_controller import HelpCenterController
 
 
 def guide():
@@ -59,6 +60,37 @@ class TestGuideCardPolicy(unittest.TestCase):
         self.assertEqual(view.estimated_minutes, 3)
         self.assertEqual(view.step_count, 0)
         self.assertEqual(snapshot, GuideProgress(GuideProgressStatus.COMPLETED))
+
+
+class TestHelpCenterController(unittest.TestCase):
+    def test_tc175_lists_cards_searches_locally_and_starts_selected_guide(self):
+        started = []
+        other = TourDefinition(
+            schema_version=1,
+            guide_id="export",
+            content_version=1,
+            title="Export subtitles",
+            category="Output",
+            estimated_minutes=2,
+            description="Save your translated subtitles.",
+            steps=(),
+        )
+        controller = HelpCenterController(
+            [guide(), other],
+            lambda item: GuideProgress(GuideProgressStatus.NOT_STARTED),
+            started.append,
+        )
+
+        self.assertEqual([card.guide_id for card in controller.cards], [
+            "getting_started", "export"
+        ])
+        self.assertEqual(
+            [card.guide_id for card in controller.search("TRANSLATED")],
+            ["export"],
+        )
+        self.assertTrue(controller.start_guide("export"))
+        self.assertEqual(started, [other])
+        self.assertFalse(controller.start_guide("missing"))
 
 
 if __name__ == "__main__":
