@@ -178,7 +178,9 @@ class DialogLifecycleObserver(QObject):
         self._dialogs.pop(dialog_id, None)
         self._widget_id_to_handle.pop(widget_id, None)
         self._destroyed_connected.discard(widget_id)
-        self._disconnect_dialog(dialog_id)
+        # The sender is already being destroyed; dropping bookkeeping avoids
+        # libpyside warnings from disconnecting a dead signal.
+        self._connections.pop(dialog_id, None)
         self.dialog_destroyed.emit(dialog_id)
         if was_modal and not self.has_active_dialog():
             self.modal_active_changed.emit(False)

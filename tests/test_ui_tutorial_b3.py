@@ -85,7 +85,7 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         self.assertEqual(self.dialog_observer.active_modal_handle(), handle)
         dialog.reject()
         dialog.deleteLater()
-        self.app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
         self.assertEqual(destroyed, [handle])
 
