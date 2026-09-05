@@ -65,6 +65,7 @@ from core.help.help_center_controller import HelpCenterController
 from core.tutorial.catalog import TourCatalog
 from core.tutorial.environment import TourEnvironment
 from core.tutorial.progress_store import TourProgressStore
+from core.tutorial.tour_engine import TourEngine
 from core.video_metadata import MetadataWorker
 from player.video_player import VideoPlayerWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
@@ -78,6 +79,11 @@ from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
 from ui.help.shortcut_provider import RuntimeShortcutProvider
+from ui.tutorial.anchor_registry import AnchorRegistry
+from ui.tutorial.dialog_observer import DialogLifecycleObserver
+from ui.tutorial.interaction_observer import InteractionObserverAdapter
+from ui.tutorial.navigation_adapter import MainWindowRouter
+from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
@@ -555,8 +561,26 @@ class MainWindow(QMainWindow):
         # Page 7 (Index 6): Help Center
         self.tour_catalog = TourCatalog(RuntimePaths.get_resources_dir() / "tutorials")
         self.tour_progress_store = TourProgressStore(RuntimePaths.get_tutorial_progress_file())
-        self.tour_environment = TourEnvironment(lambda _precondition: True)
+        self.tour_environment = TourEnvironment(self._check_tour_precondition)
         self.shortcut_provider = RuntimeShortcutProvider(self)
+        self.tour_anchor_registry = AnchorRegistry()
+        self.tour_dialog_observer = DialogLifecycleObserver(self)
+        self.tour_interaction_observer = InteractionObserverAdapter(
+            self.tour_anchor_registry, self.tour_dialog_observer, self
+        )
+        self.tour_navigation = MainWindowRouter(self, self)
+        self.tour_spotlight = SpotlightLayerAdapter(self.tour_anchor_registry, self)
+        self.tour_engine = TourEngine(
+            self.tour_catalog,
+            self.tour_anchor_registry,
+            self.tour_navigation,
+            self.tour_interaction_observer,
+            self.tour_spotlight,
+            self.tour_dialog_observer,
+            self.tour_progress_store,
+            self.tour_environment,
+            self,
+        )
         self.help_controller = HelpCenterController(
             self.tour_catalog,
             self.tour_progress_store,
@@ -819,8 +843,16 @@ class MainWindow(QMainWindow):
         return btn
 
     def _start_tour_from_help(self, guide_id):
-        engine = getattr(self, "tour_engine", None)
-        return bool(engine is not None and engine.start(guide_id))
+        return bool(self.tour_engine.start(guide_id))
+
+    def _check_tour_precondition(self, precondition):
+        if precondition == "PROJECT_OPEN":
+            return self.project_service.current_project is not None
+        if precondition == "MEDIA_LOADED":
+            return bool(self.queue_mgr.active_vid)
+        if precondition == "NO_BACKGROUND_JOB":
+            return not bool(getattr(self, "_queue_generation_active", False))
+        return False
 
     def create_side_action_button(self, text, slot):
         btn = QPushButton(text)

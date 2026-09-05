@@ -5,7 +5,7 @@ from core.tutorial.progress_store import GuideProgress, GuideProgressStatus
 from core.help.guide_card_policy import build_guide_card_view_model
 from core.help.help_center_controller import HelpCenterController
 from core.help.help_models import GuideStartStatus
-from core.help.shortcut_provider import RuntimeShortcutProvider
+from ui.help.shortcut_provider import RuntimeShortcutProvider
 
 
 def guide():
