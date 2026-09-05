@@ -45,7 +45,7 @@ class FakeSpotlight:
     def show_target(self, handle, callout, controls):
         return None
 
-    def show_recovery(self, message, retry_enabled, skip_enabled):
+    def show_recovery(self, message, retry_enabled, skip_enabled, controls=None):
         return None
 
     def hide_step(self):

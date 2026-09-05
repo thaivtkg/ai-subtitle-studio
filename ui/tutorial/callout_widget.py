@@ -56,11 +56,15 @@ class TourCalloutWidget(QWidget):
 
         specs = []
         if is_recovery:
+            if hasattr(controls, "cancel"):
+                specs.append(("cancel", "End Tour", controls.cancel, False))
             if skip_enabled and hasattr(controls, "skip_step"):
-                specs.append(("skip", "Skip", controls.skip_step, False))
+                specs.append(("skip", "Skip Step", controls.skip_step, False))
             if retry_enabled and hasattr(controls, "retry"):
                 specs.append(("retry", "Retry", controls.retry, True))
         else:
+            if hasattr(controls, "cancel"):
+                specs.append(("cancel", "End Tour", controls.cancel, False))
             if hasattr(controls, "back"):
                 specs.append(("back", "Back", controls.back, False))
             if hasattr(controls, "skip_step"):

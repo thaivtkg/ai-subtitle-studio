@@ -5,7 +5,7 @@ import shiboken6
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
-from core.tutorial.models import CalloutSpec
+from core.tutorial.models import CalloutPlacement, CalloutSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
 from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
 
@@ -21,6 +21,9 @@ class MockStepControls:
         pass
 
     def retry(self):
+        pass
+
+    def cancel(self):
         pass
 
 
@@ -74,3 +77,13 @@ class TestMilestoneB4SpotlightLayer(unittest.TestCase):
         self.target.setGeometry(200, 200, 200, 50)
         self.app.processEvents()
         self.assertEqual(self.spotlight._top_dim.geometry(), QRect(0, 0, 800, 200))
+
+    def test_callout_placement_and_cancel_control(self):
+        result = self.registry.resolve("target_btn")
+        self.spotlight.show_target(
+            result.handle,
+            CalloutSpec("Title", "Body", placement=CalloutPlacement.TOP),
+            MockStepControls(),
+        )
+        self.assertLess(self.spotlight._callout_widget.y(), 100)
+        self.assertEqual(self.spotlight._callout_widget.buttons["cancel"].text(), "End Tour")

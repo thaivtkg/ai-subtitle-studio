@@ -23,6 +23,17 @@ from .ports import (
 )
 
 
+class TourControlsFacade:
+    """Plain-Python command facade exposed to UI adapters."""
+
+    def __init__(self, engine: "TourEngine"):
+        self.next = engine.next
+        self.back = engine.back
+        self.skip_step = engine.skip_step
+        self.cancel = engine.cancel
+        self.retry = engine.retry
+
+
 class TourEngine(QObject):
     NAVIGATION_TIMEOUT_MS = 2500
     TARGET_SETTLE_TIMEOUT_MS = 750
@@ -61,6 +72,7 @@ class TourEngine(QObject):
         self._session_id = ""
         self._generation = 0
         self._current_nav_request_id = ""
+        self._controls = TourControlsFacade(self)
         self.nav_timeout_ms = navigation_timeout_ms
         self.settle_timeout_ms = target_settle_timeout_ms
 
@@ -222,7 +234,7 @@ class TourEngine(QObject):
         self._current_nav_request_id = ""
         self._navigation.cancel_pending()
         self._set_state(TourState.RECOVERING)
-        self._spotlight.show_recovery("Navigation Timeout", retry_enabled=True, skip_enabled=True)
+        self._spotlight.show_recovery("Navigation Timeout", retry_enabled=True, skip_enabled=True, controls=self._controls)
 
     def on_surface_ready(self, session_id: str, generation: int, request_id: str) -> None:
         if not self._valid_navigation_signal(session_id, generation, request_id):
@@ -238,7 +250,7 @@ class TourEngine(QObject):
             return
         self._current_nav_request_id = ""
         self._set_state(TourState.RECOVERING)
-        self._spotlight.show_recovery("Navigation Failed", retry_enabled=True, skip_enabled=True)
+        self._spotlight.show_recovery("Navigation Failed", retry_enabled=True, skip_enabled=True, controls=self._controls)
 
     def on_action_satisfied(self, session_id: str, generation: int) -> None:
         if (session_id != self._session_id or generation != self._generation
@@ -265,17 +277,18 @@ class TourEngine(QObject):
         if not step.anchor:
             if step.step_type is TourStepType.INFO:
                 self._set_state(TourState.SHOWING_INFO)
-                self._spotlight.show_info_without_target(step.callout, None)
+                self._spotlight.show_info_without_target(step.callout, self._controls)
             elif step.step_type is TourStepType.DEMO:
                 self._set_state(TourState.SHOWING_DEMO)
                 if step.demo is not None:
-                    self._spotlight.show_demo(step.demo, step.callout, None)
+                    self._spotlight.show_demo(step.demo, step.callout, self._controls)
             else:
                 self._set_state(TourState.RECOVERING)
                 self._spotlight.show_recovery(
                     "Hành động yêu cầu mục tiêu nhưng không có.",
                     retry_enabled=False,
                     skip_enabled=True,
+                    controls=self._controls,
                 )
             return
 
@@ -317,20 +330,20 @@ class TourEngine(QObject):
     def _apply_missing_target_policy(self, step: TourStep) -> None:
         if step.target_policy is TargetPolicy.REQUIRED:
             self._set_state(TourState.RECOVERING)
-            self._spotlight.show_recovery("Không tìm thấy thành phần này.", retry_enabled=True, skip_enabled=True)
+            self._spotlight.show_recovery("Không tìm thấy thành phần này.", retry_enabled=True, skip_enabled=True, controls=self._controls)
         elif step.target_policy is TargetPolicy.SKIP:
             self._advance_current_step()
         else:
             self._set_state(TourState.SHOWING_INFO)
-            self._spotlight.show_info_without_target(step.callout, None)
+            self._spotlight.show_info_without_target(step.callout, self._controls)
 
     def _present_resolved_target(self, step: TourStep, resolution: AnchorResolution) -> None:
         if step.step_type is TourStepType.INFO:
             self._set_state(TourState.SHOWING_INFO)
-            self._spotlight.show_target(resolution.handle, step.callout, None)
+            self._spotlight.show_target(resolution.handle, step.callout, self._controls)
         elif step.step_type is TourStepType.ACTION:
             self._set_state(TourState.WAITING_ACTION)
-            self._spotlight.show_target(resolution.handle, step.callout, None)
+            self._spotlight.show_target(resolution.handle, step.callout, self._controls)
             if step.interaction is not None:
                 self._interaction_observer.bind(
                     resolution.handle, step.interaction,
@@ -339,4 +352,4 @@ class TourEngine(QObject):
         elif step.step_type is TourStepType.DEMO:
             self._set_state(TourState.SHOWING_DEMO)
             if step.demo is not None:
-                self._spotlight.show_demo(step.demo, step.callout, None)
+                self._spotlight.show_demo(step.demo, step.callout, self._controls)

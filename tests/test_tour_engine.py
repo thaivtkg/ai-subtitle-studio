@@ -77,7 +77,7 @@ class FakeSpotlight:
     def attach_host(self, host): return True
     def detach_host(self): self.history.append("DETACH_HOST")
     def hide_step(self): self.history.append("HIDE_STEP")
-    def show_recovery(self, message, *, retry_enabled, skip_enabled): self.history.append("RECOVERY")
+    def show_recovery(self, message, *, retry_enabled, skip_enabled, controls=None): self.history.append("RECOVERY")
     def show_info_without_target(self, callout, controls): self.history.append("INFO_NO_TARGET")
     def show_target(self, anchor, callout, controls): self.history.append("TARGET"); return True
     def show_demo(self, demo, callout, controls): self.history.append("DEMO"); return True
