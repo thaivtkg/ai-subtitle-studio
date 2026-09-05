@@ -87,3 +87,11 @@ class TestMilestoneB4SpotlightLayer(unittest.TestCase):
         )
         self.assertLess(self.spotlight._callout_widget.y(), 100)
         self.assertEqual(self.spotlight._callout_widget.buttons["cancel"].text(), "End Tour")
+
+    def test_hide_step_hides_border_and_mask(self):
+        result = self.registry.resolve("target_btn")
+        self.spotlight.show_target(result.handle, CalloutSpec("T", "B"), MockStepControls())
+        self.spotlight.hide_step()
+        self.assertFalse(self.spotlight._border_widget.isVisible())
+        self.assertFalse(self.spotlight._top_dim.isVisible())
+        self.assertFalse(self.spotlight._callout_widget.isVisible())

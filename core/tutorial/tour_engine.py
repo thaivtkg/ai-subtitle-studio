@@ -27,11 +27,36 @@ class TourControlsFacade:
     """Plain-Python command facade exposed to UI adapters."""
 
     def __init__(self, engine: "TourEngine"):
-        self.next = engine.next
-        self.back = engine.back
-        self.skip_step = engine.skip_step
-        self.cancel = engine.cancel
-        self.retry = engine.retry
+        self._engine = engine
+    def next(self, *args: Any) -> None:
+        self._engine.next()
+
+    def back(self, *args: Any) -> None:
+        self._engine.back()
+
+    def skip_step(self, *args: Any) -> None:
+        self._engine.skip_step()
+
+    def cancel(self, *args: Any) -> None:
+        self._engine.cancel("USER_CANCELLED")
+
+    def retry(self, *args: Any) -> None:
+        self._engine.retry()
+
+    @property
+    def can_next(self) -> bool:
+        return self._engine.state() in (TourState.SHOWING_INFO, TourState.SHOWING_DEMO)
+
+    @property
+    def can_back(self) -> bool:
+        if self._engine.state() == TourState.WAITING_ACTION:
+            return False
+        step = self._engine.current_step()
+        return bool(step and step.safety.allow_back and self._engine._current_step_index > 0)
+
+    @property
+    def can_skip(self) -> bool:
+        return True
 
 
 class TourEngine(QObject):

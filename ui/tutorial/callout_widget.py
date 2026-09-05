@@ -65,11 +65,11 @@ class TourCalloutWidget(QWidget):
         else:
             if hasattr(controls, "cancel"):
                 specs.append(("cancel", "End Tour", controls.cancel, False))
-            if hasattr(controls, "back"):
+            if getattr(controls, "can_back", True) and hasattr(controls, "back"):
                 specs.append(("back", "Back", controls.back, False))
-            if hasattr(controls, "skip_step"):
+            if getattr(controls, "can_skip", True) and hasattr(controls, "skip_step"):
                 specs.append(("skip", "Skip", controls.skip_step, False))
-            if hasattr(controls, "next"):
+            if getattr(controls, "can_next", True) and hasattr(controls, "next"):
                 specs.append(("next", "Next", controls.next, True))
 
         for name, text, slot, primary in specs:

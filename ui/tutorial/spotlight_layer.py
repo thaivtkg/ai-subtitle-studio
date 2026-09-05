@@ -83,7 +83,7 @@ class SpotlightLayerAdapter(QObject):
         if host is None or not shiboken6.isValid(host) or self._callout_widget is None:
             return
         dims = (self._top_dim, self._bottom_dim, self._left_dim, self._right_dim)
-        if any(dim is None for dim in dims):
+        if any(dim is None for dim in dims) or self._border_widget is None:
             return
         target = self._target_widget_ref() if self._target_widget_ref else None
         if target is not None and shiboken6.isValid(target) and target.isVisible():
@@ -103,15 +103,17 @@ class SpotlightLayerAdapter(QObject):
             self._callout_widget.adjustSize()
             cw, ch = self._callout_widget.width(), self._callout_widget.height()
             placement = self._current_callout.placement if self._current_callout else CalloutPlacement.AUTO
+            if placement is CalloutPlacement.CENTER:
+                placement = CalloutPlacement.AUTO
             cx, cy = tx, ty + th + 10
             if placement is CalloutPlacement.TOP:
                 cy = ty - ch - 10
+            elif placement is CalloutPlacement.BOTTOM:
+                cy = ty + th + 10
             elif placement is CalloutPlacement.LEFT:
                 cx, cy = tx - cw - 10, ty
             elif placement is CalloutPlacement.RIGHT:
                 cx, cy = tx + tw + 10, ty
-            elif placement is CalloutPlacement.CENTER:
-                cx, cy = tx + (tw - cw) // 2, ty + (th - ch) // 2
             elif placement is CalloutPlacement.AUTO:
                 if cy + ch > hh:
                     cy = ty - ch - 10
@@ -216,6 +218,8 @@ class SpotlightLayerAdapter(QObject):
         for dim in (self._top_dim, self._bottom_dim, self._left_dim, self._right_dim):
             if dim is not None:
                 dim.hide()
+        if self._border_widget is not None:
+            self._border_widget.hide()
         if self._callout_widget is not None:
             self._callout_widget.hide()
         self._current_callout = None
