@@ -82,7 +82,7 @@ from ui.help.shortcut_provider import RuntimeShortcutProvider
 from ui.tutorial.anchor_registry import AnchorRegistry
 from ui.tutorial.dialog_observer import DialogLifecycleObserver
 from ui.tutorial.interaction_observer import InteractionObserverAdapter
-from ui.tutorial.navigation_adapter import MainWindowRouter
+from ui.tutorial.navigation_adapter import MainWindowRouter, NavigationAdapter
 from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
@@ -568,7 +568,8 @@ class MainWindow(QMainWindow):
         self.tour_interaction_observer = InteractionObserverAdapter(
             self.tour_anchor_registry, self.tour_dialog_observer, self
         )
-        self.tour_navigation = MainWindowRouter(self, self)
+        self.tour_router = MainWindowRouter(self, self)
+        self.tour_navigation = NavigationAdapter(self.tour_router, self)
         self.tour_spotlight = SpotlightLayerAdapter(self.tour_anchor_registry, self)
         self.tour_engine = TourEngine(
             self.tour_catalog,
