@@ -12,14 +12,18 @@ class FakeProgressStore:
     def __init__(self, status=GuideProgressStatus.NOT_STARTED):
         self._status = status
         self.events = []
+        self.dismissed_id = None
+        self.completed_id = None
 
     def status(self, guide_id: str, version: int = 1):
         return GuideProgress(self._status)
 
     def mark_dismissed(self, guide_id: str, version: int = 1):
+        self.dismissed_id = guide_id
         self.events.append(("dismissed", guide_id, version))
 
     def mark_completed(self, guide_id: str, version: int = 1):
+        self.completed_id = guide_id
         self.events.append(("completed", guide_id, version))
 
 
@@ -47,6 +51,7 @@ class TestC2FirstRunUI(unittest.TestCase):
             engine=self.engine,
             banner=self.banner,
             target_guide_id="getting_started",
+            target_content_version=2,
         )
 
     def tearDown(self):
@@ -68,6 +73,7 @@ class TestC2FirstRunUI(unittest.TestCase):
 
         self.assertFalse(self.banner.isVisible())
         self.assertEqual(self.events, [])
+        self.assertIsNone(self.store.dismissed_id)
         self.assertNotIn(("start", "getting_started"), self.events)
 
     def test_tc180_recovery_startup_hides_banner_and_no_mutate(self):
@@ -77,6 +83,7 @@ class TestC2FirstRunUI(unittest.TestCase):
 
         self.assertFalse(self.banner.isVisible())
         self.assertEqual(self.events, [])
+        self.assertIsNone(self.store.dismissed_id)
         self.assertNotIn(("start", "getting_started"), self.events)
 
     def test_tc181_dismiss_click_hides_banner_and_persists(self):
@@ -85,7 +92,8 @@ class TestC2FirstRunUI(unittest.TestCase):
 
         self.banner.dismiss_btn.click()
 
-        self.assertEqual(self.events, [("dismissed", "getting_started", 1)])
+        self.assertEqual(self.store.dismissed_id, "getting_started")
+        self.assertEqual(self.events, [("dismissed", "getting_started", 2)])
         self.assertFalse(self.banner.isVisible())
         self.assertNotIn(("start", "getting_started"), self.events)
 
@@ -96,11 +104,11 @@ class TestC2FirstRunUI(unittest.TestCase):
 
         self.assertEqual(
             self.events[:2],
-            [("dismissed", "getting_started", 1), ("start", "getting_started")],
+            [("dismissed", "getting_started", 2), ("start", "getting_started")],
         )
         self.assertFalse(self.banner.isVisible())
-        self.assertEqual(self.events.count(("dismissed", "getting_started", 1)), 1)
-        self.assertNotIn(("completed", "getting_started", 1), self.events)
+        self.assertEqual(self.events.count(("dismissed", "getting_started", 2)), 1)
+        self.assertNotIn(("completed", "getting_started", 2), self.events)
 
     def test_tc183_workflow_started_hides_banner_without_mutation(self):
         self.controller.evaluate_and_show()
