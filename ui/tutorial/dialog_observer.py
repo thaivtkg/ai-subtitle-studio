@@ -4,10 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, Signal
 from PySide6.QtWidgets import QDialog
 
-try:
-    import shiboken6
-except ImportError:
-    from PySide6 import shiboken6
+import shiboken6
 
 
 class DialogLifecycleObserver(QObject):
@@ -28,6 +25,7 @@ class DialogLifecycleObserver(QObject):
         self._dialog_stack: List[str] = []
         self._dialogs: Dict[str, weakref.ReferenceType[QDialog]] = {}
         self._widget_id_to_handle: Dict[int, str] = {}
+        self._destroyed_connected: set[int] = set()
         self._connections: Dict[str, List[Tuple[object, object, str]]] = {}
 
     def start(self, session_id: str) -> None:
@@ -53,6 +51,7 @@ class DialogLifecycleObserver(QObject):
         self._dialog_stack.clear()
         self._dialogs.clear()
         self._widget_id_to_handle.clear()
+        self._destroyed_connected.clear()
         self._is_active = False
         self._session_id = ""
         if had_modal:
@@ -121,12 +120,14 @@ class DialogLifecycleObserver(QObject):
             lambda result, ref=dialog_ref, handle=dialog_id: self._on_dialog_finished(ref, handle, result),
             "finished",
         )
-        self._connect(
-            dialog_id,
-            dialog.destroyed,
-            lambda _object=None, handle=dialog_id, wid=widget_id: self._on_dialog_destroyed(handle, wid),
-            "destroyed",
-        )
+        if widget_id not in self._destroyed_connected:
+            self._connect(
+                dialog_id,
+                dialog.destroyed,
+                lambda _object=None, handle=dialog_id, wid=widget_id: self._on_dialog_destroyed(handle, wid),
+                "destroyed",
+            )
+            self._destroyed_connected.add(widget_id)
         self.dialog_shown.emit(dialog_id)
         if not was_modal:
             self.modal_active_changed.emit(True)
@@ -159,6 +160,7 @@ class DialogLifecycleObserver(QObject):
         was_modal = bool(self._dialog_stack)
         dialog = dialog_ref()
         self._dialog_stack = [handle for handle in self._dialog_stack if handle != dialog_id]
+        self._dialogs.pop(dialog_id, None)
         self._disconnect_finished(dialog_id)
 
         result_code = int(result)
@@ -175,6 +177,7 @@ class DialogLifecycleObserver(QObject):
         self._dialog_stack = [handle for handle in self._dialog_stack if handle != dialog_id]
         self._dialogs.pop(dialog_id, None)
         self._widget_id_to_handle.pop(widget_id, None)
+        self._destroyed_connected.discard(widget_id)
         self._disconnect_dialog(dialog_id)
         self.dialog_destroyed.emit(dialog_id)
         if was_modal and not self.has_active_dialog():

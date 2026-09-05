@@ -67,6 +67,28 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
         self.assertEqual(rejected, [handle])
         self.assertEqual(closed, [(handle, QDialog.DialogCode.Rejected)])
 
+    def test_dialog_handle_stays_unique_and_destroyed_is_not_duplicated_on_reshow(self):
+        self.dialog_observer.start("s-reshow")
+        dialog = QDialog()
+        self.widgets.append(dialog)
+        destroyed = []
+        self.dialog_observer.dialog_destroyed.connect(destroyed.append)
+
+        dialog.show()
+        self.app.processEvents()
+        handle = self.dialog_observer.active_modal_handle()
+        dialog.reject()
+        self.assertIsNone(self.dialog_observer.dialog_for_handle(handle))
+
+        dialog.show()
+        self.app.processEvents()
+        self.assertEqual(self.dialog_observer.active_modal_handle(), handle)
+        dialog.reject()
+        dialog.deleteLater()
+        self.app.processEvents()
+
+        self.assertEqual(destroyed, [handle])
+
     def test_tc160_dialog_accepted_satisfies_interaction(self):
         dialog = QDialog()
         self.widgets.append(dialog)

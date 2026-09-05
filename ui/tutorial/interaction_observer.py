@@ -4,10 +4,7 @@ from typing import Any, List, Optional, Tuple
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QDialog, QWidget
 
-try:
-    import shiboken6
-except ImportError:
-    from PySide6 import shiboken6
+import shiboken6
 
 from core.tutorial.models import AnchorHandle, InteractionKind, InteractionSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
