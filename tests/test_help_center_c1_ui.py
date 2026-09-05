@@ -23,6 +23,14 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
 
+    def _wait_until(self, predicate, timeout_ms=1000):
+        for _ in range(timeout_ms // 10):
+            self.app.processEvents()
+            if predicate():
+                return
+            QTest.qWait(10)
+        self.fail("Timed out waiting for UI state")
+
     def test_runtime_tour_uses_navigation_adapter_port(self):
         window = MainWindow(
             project_service=MagicMock(), media_import_service=MagicMock()
@@ -133,6 +141,7 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
         window = MainWindow(project_service=MagicMock(), media_import_service=MagicMock())
         window.shortcut_help.activated.emit()
         self.assertEqual(window._active_nav_index, 7)
+        self._wait_until(lambda: window.stack.current_index == 6)
         self.assertEqual(window.stack.current_index, 6)
         window.tour_engine.start = MagicMock()
         window.shortcut_help.activated.emit()
