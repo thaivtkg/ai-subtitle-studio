@@ -191,6 +191,7 @@ class TestMilestoneB3DialogLifecycleObserver(unittest.TestCase):
                     Qt.KeyboardModifier.NoModifier,
                 ),
             )
+        self.app.processEvents()
         self.assertEqual(engine.state(), TourState.COMPLETED)
 
     def test_tc159_reject_removes_dialog_immediately(self):
