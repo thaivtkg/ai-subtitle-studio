@@ -72,6 +72,7 @@ from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
+from ui.pages.help_center_page import HelpCenterPage
 from ui.pages.settings_page import SettingsCenterPage
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
@@ -246,6 +247,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;"))
         sidebar_layout.addWidget(self.create_nav_button("⚙  Settings Center", 6))
+        sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 7))
         # Thêm nút Model Manager
         sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
 
@@ -545,6 +547,10 @@ class MainWindow(QMainWindow):
         self.page_settings.text_effect_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.stack.addWidget(self.page_settings)
 
+        # Page 7 (Index 6): Help Center
+        self.page_help = HelpCenterPage(parent=self)
+        self.stack.addWidget(self.page_help)
+
         right_layout.addWidget(self.stack, stretch=1)
 
         # ========================================================
@@ -710,6 +716,9 @@ class MainWindow(QMainWindow):
         self.shortcut_split.activated.connect(
             lambda: self.sub_editor.trigger_split(self.video_player.get_current_time_ms())
         )
+        self.shortcut_help = QShortcut(QKeySequence("F1"), self)
+        self.shortcut_help.setContext(Qt.ApplicationShortcut)
+        self.shortcut_help.activated.connect(lambda: self.switch_page(7))
         QApplication.instance().installEventFilter(self)
 
     @Slot()

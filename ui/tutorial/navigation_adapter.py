@@ -128,7 +128,7 @@ class NavigationAdapter(QObject):
 class MainWindowRouter(AppRouter):
     """Concrete adapter for MainWindow, AnimatedStack, and workspace dock tabs."""
 
-    INDEX_TO_NAV_INDEX = {0: 0, 1: 1, 2: 3, 3: 4, 4: 5, 5: 6}
+    INDEX_TO_NAV_INDEX = {0: 0, 1: 1, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
     SUBROUTE_TO_TAB = {"generate": 0, "context": 1, "style": 2, "log": 3}
     TAB_TO_SUBROUTE = {index: name for name, index in SUBROUTE_TO_TAB.items()}
 
