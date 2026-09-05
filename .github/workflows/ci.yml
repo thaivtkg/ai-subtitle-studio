@@ -2,7 +2,7 @@ name: Automated Tests Pipeline
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, codex/help-center-guided-tour ]
   pull_request:
     branches: [ master ]
 
