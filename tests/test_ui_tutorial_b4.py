@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest.mock import patch
 
 import shiboken6
 from PySide6.QtCore import QPointF, QRect, QEvent, Qt
@@ -161,6 +162,27 @@ class TestMilestoneB4SpotlightLayer(unittest.TestCase):
         self.assertTrue(self.spotlight._callout_widget.isVisible())
         self.assertEqual(self.spotlight._callout_widget.title_label.text(), "Title")
         self.assertEqual(self.spotlight._callout_widget.y(), 160)
+
+    def test_targetless_info_uses_parent_when_active_window_is_missing(self):
+        adapter = SpotlightLayerAdapter(self.registry, self.host)
+        with patch.object(QApplication, "activeWindow", return_value=None):
+            adapter.show_info_without_target(
+                CalloutSpec("Info", "Body"), MockStepControls()
+            )
+        self.app.processEvents()
+        self.assertIs(adapter._host_window_ref(), self.host)
+        self.assertTrue(adapter._callout_widget.isVisible())
+        self.assertEqual(adapter._callout_widget.title_label.text(), "Info")
+        adapter.detach_host()
+
+    def test_recovery_uses_parent_when_active_window_is_missing(self):
+        adapter = SpotlightLayerAdapter(self.registry, self.host)
+        with patch.object(QApplication, "activeWindow", return_value=None):
+            adapter.show_recovery("Recovery", True, False, MockStepControls())
+        self.app.processEvents()
+        self.assertIs(adapter._host_window_ref(), self.host)
+        self.assertTrue(adapter._callout_widget.isVisible())
+        adapter.detach_host()
 
     def test_tc165_dim_widgets_update_on_resize_or_move(self):
         result = self.registry.resolve("target_btn")

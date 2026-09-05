@@ -79,6 +79,16 @@ class SpotlightLayerAdapter(QObject):
         self._top_dim = self._bottom_dim = self._left_dim = self._right_dim = self._border_widget = None
         self._callout_widget = None
 
+    def _resolve_default_host(self) -> Optional[QWidget]:
+        app = QApplication.instance()
+        host = app.activeWindow() if app else None
+        if isinstance(host, QWidget) and shiboken6.isValid(host):
+            return host
+        parent = self.parent()
+        if isinstance(parent, QWidget) and shiboken6.isValid(parent):
+            return parent.window()
+        return None
+
     def _update_geometry(self) -> None:
         host = self._host_window_ref() if self._host_window_ref else None
         if host is None or not shiboken6.isValid(host) or self._callout_widget is None:
@@ -187,8 +197,7 @@ class SpotlightLayerAdapter(QObject):
 
     def show_info_without_target(self, callout: CalloutSpec, controls: Any) -> None:
         self._current_callout = None
-        app = QApplication.instance()
-        host = app.activeWindow() if app else None
+        host = self._resolve_default_host()
         if host is None:
             return
         self._ensure_ui_initialized(host)
@@ -205,8 +214,7 @@ class SpotlightLayerAdapter(QObject):
         self, message: str, retry_enabled: bool, skip_enabled: bool, controls: Any = None
     ) -> None:
         self._current_callout = None
-        app = QApplication.instance()
-        host = app.activeWindow() if app else None
+        host = self._resolve_default_host()
         if host is None:
             return
         self._ensure_ui_initialized(host)
