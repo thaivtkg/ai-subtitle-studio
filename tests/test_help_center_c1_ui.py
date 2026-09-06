@@ -1,7 +1,7 @@
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtTest import QTest
@@ -12,6 +12,7 @@ from core.help.help_models import (
     HelpSearchResult,
     SearchResultType,
 )
+from core.tutorial.progress_store import GuideProgress, GuideProgressStatus
 from ui.help.shortcut_provider import RuntimeShortcutProvider
 from ui.pages.help_center_page import HelpCenterPage
 from ui.Gui import MainWindow
@@ -135,6 +136,65 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
         self.assertEqual(controller.started, ["guide"])
         self.assertEqual(requested, ["guide"])
         page.deleteLater()
+        self.app.processEvents()
+
+    @patch("ui.Gui.TourProgressStore")
+    def test_help_page_refreshes_after_tour_completion(self, mock_store):
+        class MutableProgressStore:
+            def __init__(self):
+                self.status_value = GuideProgressStatus.NOT_STARTED
+
+            def status(self, _guide_id, version):
+                return GuideProgress(self.status_value, version)
+
+        store = MutableProgressStore()
+        mock_store.return_value = store
+        window = MainWindow(project_service=MagicMock(), media_import_service=MagicMock())
+        window.show()
+        self.app.processEvents()
+
+        self.assertEqual(
+            [button.text() for button in window.page_help._cards.findChildren(QPushButton)],
+            ["Start Tour"],
+        )
+        store.status_value = GuideProgressStatus.COMPLETED
+        window.tour_engine.tour_completed.emit("getting_started")
+        self._wait_until(
+            lambda: [
+                button.text() for button in window.page_help._cards.findChildren(QPushButton)
+            ] == ["Replay"]
+        )
+        window.deleteLater()
+        self.app.processEvents()
+
+    @patch("ui.Gui.TourProgressStore")
+    def test_reopening_help_center_refreshes_progress(self, mock_store):
+        class MutableProgressStore:
+            def __init__(self):
+                self.status_value = GuideProgressStatus.NOT_STARTED
+
+            def status(self, _guide_id, version):
+                return GuideProgress(self.status_value, version)
+
+        store = MutableProgressStore()
+        mock_store.return_value = store
+        window = MainWindow(project_service=MagicMock(), media_import_service=MagicMock())
+        window.show()
+        self.app.processEvents()
+
+        self.assertEqual(
+            [button.text() for button in window.page_help._cards.findChildren(QPushButton)],
+            ["Start Tour"],
+        )
+        window.switch_page(0)
+        store.status_value = GuideProgressStatus.COMPLETED
+        window.switch_page(7)
+        self._wait_until(
+            lambda: [
+                button.text() for button in window.page_help._cards.findChildren(QPushButton)
+            ] == ["Replay"]
+        )
+        window.deleteLater()
         self.app.processEvents()
 
     def test_main_window_help_navigation_f1_and_semantic_shortcuts(self):

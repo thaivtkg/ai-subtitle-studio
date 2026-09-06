@@ -616,6 +616,9 @@ class MainWindow(QMainWindow):
         )
         self.page_help = HelpCenterPage(self.help_controller, self.shortcut_provider, self)
         self.stack.addWidget(self.page_help)
+        self.tour_engine.tour_completed.connect(
+            lambda _guide_id: self.page_help.refresh()
+        )
 
         right_layout.addWidget(self.stack, stretch=1)
 
@@ -903,6 +906,8 @@ class MainWindow(QMainWindow):
 
     def switch_page(self, original_index):
         self._active_nav_index = original_index
+        if original_index == 7 and hasattr(self, "page_help"):
+            self.page_help.refresh()
         is_editor_workspace = original_index in (1, 2)
         
         # Hướng trang 1 & 2 vào chung Workspace (Index 1)
