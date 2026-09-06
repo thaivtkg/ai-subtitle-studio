@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.artifacts.artifact_store import ArtifactStore
+from core.app_context import StartupContext
 from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
@@ -600,7 +601,12 @@ class MainWindow(QMainWindow):
             target_guide_id=getting_started_guide.guide_id,
             target_content_version=getting_started_guide.content_version,
         )
-        self.first_run_controller.evaluate_and_show()
+        context = self.startup_context or StartupContext()
+        self.first_run_controller.evaluate_and_show(
+            external_open=context.external_open,
+            recovery=context.recovery,
+            workflow_started=False,
+        )
         self.help_controller = HelpCenterController(
             self.tour_catalog,
             self.tour_progress_store,

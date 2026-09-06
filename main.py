@@ -14,6 +14,7 @@ from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from core.app_context import build_startup_context
 from core.project.source_fingerprint import generate_source_info
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
@@ -80,6 +81,10 @@ def main():
     guard.start_listening()
     undo_manager, revision_tracker, recovery_manager = build_recovery_manager()
     recovery_candidates = recovery_manager.scan_candidates()
+    startup_context = build_startup_context(
+        sys_args=sys.argv,
+        has_pending_recovery=bool(recovery_candidates),
+    )
     selected_candidate = recovery_candidates[0] if recovery_candidates else None
     recovered_state = None
     recovered_linked = True
@@ -245,6 +250,7 @@ def main():
         revision_tracker=revision_tracker,
         recovery_manager=recovery_manager,
         undo_manager=undo_manager,
+        startup_context=startup_context,
     )
     if recovered_state is not None:
         window.apply_recovery_working_state(recovered_state, linked=recovered_linked)
