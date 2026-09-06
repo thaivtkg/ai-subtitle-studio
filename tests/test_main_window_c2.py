@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
+from core.media_import.media_import_models import MediaImportResult
 from core.tutorial.progress_store import GuideProgressStatus
 from ui.Gui import MainWindow
 from ui.help.first_run_banner import FirstRunBanner
@@ -56,8 +56,7 @@ class TestMainWindowFirstRunIntegration(unittest.TestCase):
             ).status,
             GuideProgressStatus.NOT_STARTED,
         )
-        self.window.tour_engine.start = MagicMock()
-        self.assertFalse(self.window.tour_engine.start.called)
+        self.assertFalse(self.window.tour_engine.is_running())
 
     def test_tc179_external_open_suppresses_banner_without_mutation(self):
         banner, controller = self._integration_objects()
@@ -115,16 +114,45 @@ class TestMainWindowFirstRunIntegration(unittest.TestCase):
         self.assertTrue(banner.isHidden())
         self.window.tour_progress_store.mark_completed.assert_not_called()
 
-    def test_tc183_real_workflow_suppresses_banner_without_progress_mutation(self):
-        banner, controller = self._integration_objects()
+    @patch("ui.Gui.MediaImportDialog")
+    def test_tc183_real_workflow_suppresses_banner_without_progress_mutation(
+        self, mock_dialog_cls
+    ):
+        banner, _ = self._integration_objects()
         guide_id, content_version = self._guide_identity()
         self.assertTrue(banner.isVisible())
-        controller.on_workflow_started()
+
+        mock_dialog = MagicMock()
+        mock_dialog.exec.return_value = QDialog.DialogCode.Accepted
+        mock_dialog.get_result.return_value = MediaImportResult(
+            local_path="/tmp/source.mp4",
+            original_url="https://example.com/source.mp4",
+            filename="source.mp4",
+            size_bytes=1,
+            media_type="video/mp4",
+            metadata={},
+        )
+        mock_dialog.get_project_data.return_value = {
+            "name": "Demo",
+            "bundle_path": "/tmp/Demo.ai-subtitle",
+            "media_dir": "/tmp/Demo.ai-subtitle/media",
+        }
+        mock_dialog_cls.return_value = mock_dialog
+        self.window.tour_engine.start = MagicMock()
+
+        with patch.object(self.window, "_switch_recovery_session"), \
+                patch.object(self.window.workspace_service, "restore_workspace"), \
+                patch.object(self.window.generation_panel, "check_resumable_state"), \
+                patch.object(self.window, "_refresh_transcription_context_views"), \
+                patch.object(self.window.revision_tracker, "reset_for_new_document"):
+            self.window.action_new_from_url.trigger()
+
         self.assertTrue(banner.isHidden())
         self.assertEqual(
             self.window.tour_progress_store.status(guide_id, content_version).status,
             GuideProgressStatus.NOT_STARTED,
         )
+        self.assertFalse(self.window.tour_engine.start.called)
 
 
 if __name__ == "__main__":
