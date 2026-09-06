@@ -11,9 +11,13 @@ from ui.Gui import MainWindow
 class FakeProgressStoreE2E:
     def __init__(self, status=GuideProgressStatus.NOT_STARTED):
         self._status = status
+        self.dismissed = False
 
     def status(self, guide_id: str, version: int = 1):
         return GuideProgress(self._status)
+
+    def mark_dismissed(self, guide_id: str, version: int = 1):
+        self.dismissed = True
 
 
 class TestC2BootstrapPriorityE2E(unittest.TestCase):
@@ -27,15 +31,22 @@ class TestC2BootstrapPriorityE2E(unittest.TestCase):
     def _build_window(self, argv, recovery_pending):
         with patch("sys.argv", argv):
             with patch("ui.Gui.TourProgressStore") as mock_store:
-                mock_store.return_value = FakeProgressStoreE2E()
-                with patch("ui.Gui.RecoveryManager", create=True) as mock_recovery:
-                    mock_recovery.has_pending_recovery.return_value = recovery_pending
+                self.store = FakeProgressStoreE2E()
+                mock_store.return_value = self.store
+                with patch(
+                    "ui.Gui.RecoveryManager.scan_candidates",
+                    return_value=[object()] if recovery_pending else [],
+                ):
                     window = MainWindow()
+        window.show()
+        self.app.processEvents()
         return window
 
     def test_bootstrap_clean_interactive_startup_shows_banner(self):
         window = self._build_window(["main.py"], recovery_pending=False)
         self.assertTrue(window.first_run_banner.isVisible())
+        self.assertFalse(self.store.dismissed)
+        self.assertEqual(self.store._status, GuideProgressStatus.NOT_STARTED)
         window.deleteLater()
 
     def test_bootstrap_external_open_suppresses_banner(self):
@@ -43,11 +54,15 @@ class TestC2BootstrapPriorityE2E(unittest.TestCase):
             ["main.py", "C:/videos/test.mp4"], recovery_pending=False
         )
         self.assertFalse(window.first_run_banner.isVisible())
+        self.assertFalse(self.store.dismissed)
+        self.assertEqual(self.store._status, GuideProgressStatus.NOT_STARTED)
         window.deleteLater()
 
     def test_bootstrap_recovery_suppresses_banner(self):
         window = self._build_window(["main.py"], recovery_pending=True)
         self.assertFalse(window.first_run_banner.isVisible())
+        self.assertFalse(self.store.dismissed)
+        self.assertEqual(self.store._status, GuideProgressStatus.NOT_STARTED)
         window.deleteLater()
 
     def test_bootstrap_priority_recovery_over_external(self):
@@ -55,6 +70,8 @@ class TestC2BootstrapPriorityE2E(unittest.TestCase):
             ["main.py", "C:/videos/test.mp4"], recovery_pending=True
         )
         self.assertFalse(window.first_run_banner.isVisible())
+        self.assertFalse(self.store.dismissed)
+        self.assertEqual(self.store._status, GuideProgressStatus.NOT_STARTED)
         window.deleteLater()
 
 
