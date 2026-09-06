@@ -78,6 +78,8 @@ from ui.pages.dashboard_page import DashboardPage
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
+from ui.help.first_run_banner import FirstRunBanner
+from ui.help.first_run_controller import FirstRunController
 from ui.help.shortcut_provider import RuntimeShortcutProvider
 from ui.tutorial.anchor_registry import AnchorRegistry
 from ui.tutorial.dialog_observer import DialogLifecycleObserver
@@ -583,6 +585,20 @@ class MainWindow(QMainWindow):
             self.tour_environment,
             self,
         )
+        self.tour_catalog.load_all()
+        getting_started_guide = self.tour_catalog.get_guide("getting_started")
+        if getting_started_guide is None:
+            raise RuntimeError("getting_started guide is unavailable")
+        self.first_run_banner = FirstRunBanner(self.page_dashboard)
+        self.page_dashboard.layout().insertWidget(0, self.first_run_banner)
+        self.first_run_controller = FirstRunController(
+            progress_store=self.tour_progress_store,
+            engine=self.tour_engine,
+            banner=self.first_run_banner,
+            target_guide_id=getting_started_guide.guide_id,
+            target_content_version=getting_started_guide.content_version,
+        )
+        self.first_run_controller.evaluate_and_show()
         self.help_controller = HelpCenterController(
             self.tour_catalog,
             self.tour_progress_store,
@@ -2135,6 +2151,7 @@ class MainWindow(QMainWindow):
         project_data = dialog.get_project_data()
         if not result or not result.local_path or not project_data:
             return
+        self.first_run_controller.on_workflow_started()
         try:
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
