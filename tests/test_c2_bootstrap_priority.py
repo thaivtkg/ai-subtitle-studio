@@ -1,0 +1,62 @@
+import sys
+import unittest
+from unittest.mock import patch
+
+from PySide6.QtWidgets import QApplication
+
+from core.tutorial.progress_store import GuideProgress, GuideProgressStatus
+from ui.Gui import MainWindow
+
+
+class FakeProgressStoreE2E:
+    def __init__(self, status=GuideProgressStatus.NOT_STARTED):
+        self._status = status
+
+    def status(self, guide_id: str, version: int = 1):
+        return GuideProgress(self._status)
+
+
+class TestC2BootstrapPriorityE2E(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def _build_window(self, argv, recovery_pending):
+        with patch("sys.argv", argv):
+            with patch("ui.Gui.TourProgressStore") as mock_store:
+                mock_store.return_value = FakeProgressStoreE2E()
+                with patch("ui.Gui.RecoveryManager", create=True) as mock_recovery:
+                    mock_recovery.has_pending_recovery.return_value = recovery_pending
+                    window = MainWindow()
+        return window
+
+    def test_bootstrap_clean_interactive_startup_shows_banner(self):
+        window = self._build_window(["main.py"], recovery_pending=False)
+        self.assertTrue(window.first_run_banner.isVisible())
+        window.deleteLater()
+
+    def test_bootstrap_external_open_suppresses_banner(self):
+        window = self._build_window(
+            ["main.py", "C:/videos/test.mp4"], recovery_pending=False
+        )
+        self.assertFalse(window.first_run_banner.isVisible())
+        window.deleteLater()
+
+    def test_bootstrap_recovery_suppresses_banner(self):
+        window = self._build_window(["main.py"], recovery_pending=True)
+        self.assertFalse(window.first_run_banner.isVisible())
+        window.deleteLater()
+
+    def test_bootstrap_priority_recovery_over_external(self):
+        window = self._build_window(
+            ["main.py", "C:/videos/test.mp4"], recovery_pending=True
+        )
+        self.assertFalse(window.first_run_banner.isVisible())
+        window.deleteLater()
+
+
+if __name__ == "__main__":
+    unittest.main()
