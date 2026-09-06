@@ -116,8 +116,10 @@ class MainWindow(QMainWindow):
     waveform_ready_signal = Signal(str, int, object)
 
     def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None,
-                 parent=None, project_service=None, media_import_service=None):
+                 parent=None, project_service=None, media_import_service=None,
+                 startup_context=None):
         super().__init__(parent)
+        self.startup_context = startup_context
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
