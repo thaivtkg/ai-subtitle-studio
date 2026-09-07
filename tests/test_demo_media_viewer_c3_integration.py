@@ -211,7 +211,7 @@ class TestC3TourIntegrationRED(unittest.TestCase):
                                 "type": "DEMO",
                                 "demo": {
                                     "asset": "assets/static.png",
-                                    "media_type": "IMAGE",
+                                    "media_type": "image",
                                     "fit": "contain",
                                 },
                                 "callout": {"title": "Demo", "body": "Body"},
