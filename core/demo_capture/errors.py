@@ -10,6 +10,7 @@ class CaptureErrorCode(str, Enum):
     WAIT_TIMEOUT = "WAIT_TIMEOUT"
     ACTION_FAILED = "ACTION_FAILED"
     NAVIGATION_FAILED = "NAVIGATION_FAILED"
+    CAPTURE_FAILED = "CAPTURE_FAILED"
 
 
 class CaptureRunError(Exception):
