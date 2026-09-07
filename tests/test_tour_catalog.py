@@ -143,7 +143,10 @@ class TestTourCatalog(unittest.TestCase):
             root = Path(directory)
             (root / "assets").mkdir()
             valid = {"schema_version": 1, "guide_id": "valid", "content_version": 1, "title": "T", "description": "D", "category": "test", "estimated_minutes": 1, "steps": [{"step_id": "1", "type": "DEMO", "demo": {"asset": "assets/test.gif"}}]}
-            self.assertEqual(TourParser.parse_guide(valid, root).steps[0].demo.asset, "assets/test.gif")
+            self.assertEqual(
+                TourParser.parse_guide(valid, root).steps[0].demo.asset,
+                str((root / "assets" / "test.gif").resolve()),
+            )
             invalid = dict(valid); invalid["steps"] = [{"step_id": "1", "type": "DEMO", "demo": {"asset": "guide.json"}}]
             with self.assertRaisesRegex(ValueError, "strictly confined under 'assets' directory"):
                 TourParser.parse_guide(invalid, root)

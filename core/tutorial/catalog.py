@@ -48,7 +48,7 @@ def _validate_asset_path(asset: Any, root: Path) -> str:
     candidate = (root / asset).resolve()
     if candidate != assets_dir and assets_dir not in candidate.parents:
         raise ValueError(f"Asset path must be strictly confined under 'assets' directory: {asset}")
-    return asset
+    return str(candidate)
 
 
 def _parse_step(data: Mapping[str, Any], root: Path) -> TourStep:
