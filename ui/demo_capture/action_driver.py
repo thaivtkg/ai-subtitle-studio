@@ -61,10 +61,12 @@ class UIActionDriver:
         widget = self._resolver.resolve_widget(action.target)
         if not isinstance(widget, QComboBox):
             raise CaptureRunError(CaptureErrorCode.ACTION_FAILED, "Widget is not a QComboBox", target=action.target)
-        index = widget.findText(action.option)
+        index = widget.findData(action.option)
+        if index == -1:
+            index = widget.findText(action.option)
         if index == -1:
             raise CaptureRunError(CaptureErrorCode.ACTION_FAILED,
-                                  f"Option '{action.option}' not found", target=action.target)
+                                  f"Option '{action.option}' not found in data or text", target=action.target)
         widget.setCurrentIndex(index)
 
     def _hold(self, action: HoldAction, tick: TickCallback) -> None:
@@ -97,9 +99,22 @@ class UIActionDriver:
     def _get_structural_signature(self):
         if self._capture_root is None:
             return 0
-        widgets = [self._capture_root, *self._capture_root.findChildren(QWidget)]
-        return tuple((type(widget).__name__, widget.objectName(), widget.isVisible(), widget.isEnabled(),
-                      widget.size().width(), widget.size().height()) for widget in widgets)
+
+        def signature(widget: QWidget):
+            geometry = widget.geometry()
+            return (
+                type(widget).__name__,
+                widget.objectName(),
+                widget.isVisible(),
+                widget.isEnabled(),
+                geometry.x(),
+                geometry.y(),
+                geometry.width(),
+                geometry.height(),
+            )
+
+        widgets = self._capture_root.findChildren(QWidget)
+        return hash(tuple([signature(widget) for widget in widgets] + [signature(self._capture_root)]))
 
     def _wait_visible(self, action: WaitVisibleAction, profile: CaptureProfile, tick: TickCallback) -> None:
         timeout_ms = action.timeout_ms if action.timeout_ms is not None else profile.default_wait_timeout_ms

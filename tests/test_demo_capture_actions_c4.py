@@ -93,10 +93,15 @@ class TestDemoCaptureActionsC4(unittest.TestCase):
 
     def test_tc204_select_semantics(self):
         combo = QComboBox()
-        combo.addItems(["A", "Vietnamese", "C"])
+        combo.addItem("Vietnamese", "vi")
+        combo.addItem("English", "en")
         self.resolver.behavior = [combo]
-        self.driver.execute(SelectAction("combo", "Vietnamese"), self.profile, self.tick)
-        self.assertEqual(combo.currentText(), "Vietnamese")
+        self.driver.execute(SelectAction("combo", "vi"), self.profile, self.tick)
+        self.assertEqual(combo.currentData(), "vi")
+
+        self.resolver.behavior = [combo]
+        self.driver.execute(SelectAction("combo", "English"), self.profile, self.tick)
+        self.assertEqual(combo.currentText(), "English")
 
         self.resolver.behavior = [combo]
         with self.assertRaises(CaptureRunError) as cm:
@@ -126,6 +131,18 @@ class TestDemoCaptureActionsC4(unittest.TestCase):
             self.pump_calls += 1
 
         self.driver._event_pump = always_mutating_pump
+        with self.assertRaises(CaptureRunError) as cm:
+            self.driver.execute(WaitSettledAction(timeout_ms=500), self.profile, self.tick)
+        self.assertEqual(cm.exception.error_code, CaptureErrorCode.WAIT_TIMEOUT)
+
+        self.pump_calls = 0
+        self.current_time = 0.0
+
+        def always_moving_pump():
+            btn.move(10 + self.pump_calls, 10)
+            self.pump_calls += 1
+
+        self.driver._event_pump = always_moving_pump
         with self.assertRaises(CaptureRunError) as cm:
             self.driver.execute(WaitSettledAction(timeout_ms=500), self.profile, self.tick)
         self.assertEqual(cm.exception.error_code, CaptureErrorCode.WAIT_TIMEOUT)
