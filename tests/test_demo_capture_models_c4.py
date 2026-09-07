@@ -68,6 +68,8 @@ class TestDemoCaptureModelsC4(unittest.TestCase):
         with self.assertRaises(ValueError):
             WaitVisibleAction("x", timeout_ms=0)
         with self.assertRaises(ValueError):
+            WaitVisibleAction("")
+        with self.assertRaises(ValueError):
             SetTextAction("", "text")
         with self.assertRaises(ValueError):
             SelectAction("", "option")

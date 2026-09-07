@@ -118,6 +118,8 @@ class WaitVisibleAction(CaptureAction):
     timeout_ms: Optional[int] = None
 
     def __post_init__(self) -> None:
+        if not self.target:
+            raise ValueError("target cannot be empty")
         if self.timeout_ms is not None and self.timeout_ms <= 0:
             raise ValueError("timeout_ms must be > 0")
 

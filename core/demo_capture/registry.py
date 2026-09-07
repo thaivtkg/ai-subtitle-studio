@@ -1,6 +1,6 @@
 from typing import Dict, Iterable, Optional, Tuple
 
-from core.demo_capture.models import CaptureScenario
+from core.demo_capture.models import CaptureAction, CaptureScenario
 
 
 class DemoScenarioRegistry:
@@ -14,6 +14,8 @@ class DemoScenarioRegistry:
                 raise ValueError(f"Duplicate scenario ID: {scenario.id}")
             if scenario.output.filename in seen_outputs:
                 raise ValueError(f"Duplicate output filename: {scenario.output.filename}")
+            if any(not isinstance(action, CaptureAction) for action in scenario.actions):
+                raise ValueError(f"Invalid action DTO in scenario: {scenario.id}")
 
             self._by_id[scenario.id] = scenario
             seen_outputs.add(scenario.output.filename)

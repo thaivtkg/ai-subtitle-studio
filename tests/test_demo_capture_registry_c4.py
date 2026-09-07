@@ -39,6 +39,16 @@ class TestDemoScenarioRegistryC4(unittest.TestCase):
         self.assertEqual(registry.get("a").output.filename, "a.gif")
         self.assertIsNone(registry.get("missing"))
 
+        bad_scenario = CaptureScenario(
+            id="bad",
+            target=CaptureTarget("fixture.anchor"),
+            profile=CaptureProfile(),
+            actions=("not-an-action",),
+            output=OutputSpec("bad.gif", OutputFormat.GIF),
+        )
+        with self.assertRaises(ValueError):
+            DemoScenarioRegistry((bad_scenario,))
+
 
 if __name__ == "__main__":
     unittest.main()
