@@ -1947,7 +1947,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "timeline_data_provider"):
             self.timeline_data_provider.load_runtime_data(state.segments, 0)
         if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "load_project_data"):
-            self.timeline_widget.load_project_data(0, state.segments, None)
+            self.timeline_widget.load_project_data(
+                0,
+                self.timeline_data_provider.get_all_segments(),
+                None,
+            )
         if state.workspace_state and getattr(self.project_service, "current_project", None):
             self.workspace_service.apply_workspace(state.workspace_state)
         context_data = getattr(state, "transcription_context", None)

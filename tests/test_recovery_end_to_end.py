@@ -13,6 +13,7 @@ from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
+from core.timeline.timeline_data_provider import TimelineSegmentWrapper
 
 try:
     from PySide6.QtWidgets import QApplication
@@ -214,6 +215,49 @@ class TestRecoveryEndToEnd(unittest.TestCase):
         self.assertEqual(tracker.edit_revision, 5)
         self.assertEqual(tracker.last_saved_revision, 2)
         self.assertEqual(tracker.last_clean_revision, 2)
+
+    @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
+    def test_tc180_recovery_timeline_receives_wrappers_before_paint(self):
+        window = MainWindow()
+        self.addCleanup(window.deleteLater)
+        raw_segments = [
+            {
+                "id": "seg_1",
+                "stt": "1",
+                "start": "00:00:00,000",
+                "end": "00:00:02,000",
+                "start_ms": 0,
+                "end_ms": 2000,
+                "text": "Khôi phục",
+            }
+        ]
+        state = RecoveryWorkingState(
+            schema_version=2.0,
+            session_id="tc180",
+            project_id="proj_1",
+            project_file_path="project.json",
+            video_path="video.mp4",
+            source_fingerprint="fp",
+            edit_revision=12,
+            segments=raw_segments,
+        )
+
+        with patch.object(
+            window.timeline_widget,
+            "load_project_data",
+            wraps=window.timeline_widget.load_project_data,
+        ) as mock_load:
+            window.apply_recovery_working_state(state, linked=True)
+
+            mock_load.assert_called()
+            passed_segments = mock_load.call_args.args[1]
+            self.assertTrue(passed_segments)
+            self.assertIsInstance(passed_segments[0], TimelineSegmentWrapper)
+            self.assertIsNot(passed_segments, raw_segments)
+
+        window.show()
+        window.switch_page(1)
+        self.app.processEvents()
 
     @unittest.skipIf(MainWindow is None, "MainWindow dependencies unavailable")
     def test_tc105_project_switch_creates_new_session(self):
