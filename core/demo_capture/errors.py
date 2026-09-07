@@ -7,6 +7,7 @@ class CaptureErrorCode(str, Enum):
     TARGET_NOT_VISIBLE = "TARGET_NOT_VISIBLE"
     TARGET_INVALID = "TARGET_INVALID"
     TARGET_RESOLUTION_ERROR = "TARGET_RESOLUTION_ERROR"
+    WAIT_TIMEOUT = "WAIT_TIMEOUT"
 
 
 class CaptureRunError(Exception):
