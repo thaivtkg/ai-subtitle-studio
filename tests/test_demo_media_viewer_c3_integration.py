@@ -1,11 +1,15 @@
 import base64
+import json
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QWidget
 
 from core.tutorial.environment import TourEnvironment
+from core.tutorial.catalog import TourCatalog
 from core.tutorial.models import (
     CalloutSpec,
     DemoSpec,
@@ -181,6 +185,58 @@ class TestC3TourIntegrationRED(unittest.TestCase):
                 new_viewer.isVisible(),
                 "Viewer không bị ẩn khi sang step không có DEMO.",
             )
+
+    def test_tc186_catalog_resolves_relative_demo_asset_before_render(self):
+        """TC186: Asset relative trong guide phải được resolve tại Catalog boundary."""
+        tutorial_root = Path(tempfile.mkdtemp(prefix="c3_catalog_"))
+        try:
+            assets_dir = tutorial_root / "assets"
+            assets_dir.mkdir()
+            asset_path = assets_dir / "static.png"
+            asset_path.write_bytes(self.static_img.read_bytes())
+            guide_path = tutorial_root / "guide.json"
+            guide_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "guide_id": "catalog_demo_guide",
+                        "content_version": 1,
+                        "title": "Catalog demo",
+                        "description": "",
+                        "category": "test",
+                        "estimated_minutes": 1,
+                        "steps": [
+                            {
+                                "step_id": "demo",
+                                "type": "DEMO",
+                                "demo": {
+                                    "asset": "assets/static.png",
+                                    "media_type": "IMAGE",
+                                    "fit": "contain",
+                                },
+                                "callout": {"title": "Demo", "body": "Body"},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            guide = TourCatalog(tutorial_root).load_guide("guide.json")
+            self.engine._catalog = FakeCatalog(guide)
+
+            self.assertTrue(self.engine.start("catalog_demo_guide"))
+            self.app.processEvents()
+
+            viewer = self._find_media_viewer()
+            self.assertIsNotNone(viewer)
+            self.assertFalse(
+                viewer.current_pixmap().isNull(),
+                "Catalog asset relative chưa được resolve trước khi Qt đọc media.",
+            )
+        finally:
+            self.engine.cancel("TEST_CLEANUP")
+            shutil.rmtree(tutorial_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
