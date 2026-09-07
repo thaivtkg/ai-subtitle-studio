@@ -18,6 +18,13 @@ class AnchorRegistryCaptureAdapter:
                 target=semantic_id,
             ) from error
 
+        if resolution.reason:
+            raise CaptureRunError(
+                error_code=CaptureErrorCode.TARGET_RESOLUTION_ERROR,
+                message=f"Resolution failed for '{semantic_id}': {resolution.reason}",
+                target=semantic_id,
+            )
+
         if resolution.status == AnchorStatus.RESOLVED:
             widget = self._registry.get_widget(resolution.handle)
             if widget is None:
@@ -45,7 +52,7 @@ class AnchorRegistryCaptureAdapter:
         if resolution.status == AnchorStatus.INVALID:
             raise CaptureRunError(
                 error_code=CaptureErrorCode.TARGET_INVALID,
-                message=f"Target '{semantic_id}' is invalid (e.g. destroyed)",
+                message=f"Target '{semantic_id}' is invalid (e.g. destroyed or not a QWidget)",
                 target=semantic_id,
             )
 

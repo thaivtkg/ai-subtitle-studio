@@ -49,6 +49,19 @@ class TestDemoCaptureTargetResolverC4(unittest.TestCase):
             bad_adapter.resolve_widget("any.btn")
         self.assertEqual(cm.exception.error_code, CaptureErrorCode.TARGET_RESOLUTION_ERROR)
 
+        def broken_resolver():
+            raise RuntimeError("Simulated resolver crash")
+
+        self.registry.register_resolver("test.broken", broken_resolver)
+        with self.assertRaises(CaptureRunError) as cm:
+            self.adapter.resolve_widget("test.broken")
+        self.assertEqual(cm.exception.error_code, CaptureErrorCode.TARGET_RESOLUTION_ERROR)
+
+        self.registry.register_resolver("test.invalid", lambda: object())
+        with self.assertRaises(CaptureRunError) as cm:
+            self.adapter.resolve_widget("test.invalid")
+        self.assertEqual(cm.exception.error_code, CaptureErrorCode.TARGET_INVALID)
+
 
 if __name__ == "__main__":
     unittest.main()
