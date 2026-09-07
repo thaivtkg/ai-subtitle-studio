@@ -1,3 +1,4 @@
+import base64
 import sys
 import unittest
 from pathlib import Path
@@ -21,7 +22,9 @@ class TestC3DemoMediaViewer(unittest.TestCase):
         cls.static_img.touch()
 
         cls.gif_img = cls.test_dir / "animated.gif"
-        cls.gif_img.touch()
+        cls.gif_img.write_bytes(
+            base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
+        )
 
     @classmethod
     def tearDownClass(cls):
