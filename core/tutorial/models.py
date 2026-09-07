@@ -84,6 +84,14 @@ class DemoSpec:
 
 
 @dataclass(frozen=True)
+class MediaSpec:
+    """DTO for local Guided Tour demo media (image or GIF only)."""
+
+    type: str
+    path: str
+
+
+@dataclass(frozen=True)
 class SafetySpec:
     allow_back: bool
     allow_skip_step: bool = True
