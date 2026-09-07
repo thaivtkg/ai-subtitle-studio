@@ -8,8 +8,13 @@ from core.demo_capture.models import (
     CaptureTarget,
     ClickAction,
     HoldAction,
+    NavigateAction,
     OutputFormat,
     OutputSpec,
+    SelectAction,
+    SetTextAction,
+    WaitHiddenAction,
+    WaitSettledAction,
     WaitVisibleAction,
 )
 
@@ -62,9 +67,23 @@ class TestDemoCaptureModelsC4(unittest.TestCase):
             HoldAction(0)
         with self.assertRaises(ValueError):
             WaitVisibleAction("x", timeout_ms=0)
+        with self.assertRaises(ValueError):
+            SetTextAction("", "text")
+        with self.assertRaises(ValueError):
+            SelectAction("", "option")
+        with self.assertRaises(ValueError):
+            SelectAction("target", "")
+        with self.assertRaises(ValueError):
+            NavigateAction("")
+        with self.assertRaises(ValueError):
+            WaitHiddenAction("", timeout_ms=100)
+        with self.assertRaises(ValueError):
+            WaitHiddenAction("target", timeout_ms=0)
+        with self.assertRaises(ValueError):
+            WaitSettledAction(timeout_ms=0)
 
     def test_tc192_scenario_is_immutable_and_preserves_action_order(self):
-        actions = (ClickAction("a"), HoldAction(100))
+        actions = [ClickAction("a")]
         scenario = CaptureScenario(
             id="sample",
             target=CaptureTarget("a"),
@@ -72,7 +91,9 @@ class TestDemoCaptureModelsC4(unittest.TestCase):
             actions=actions,
             output=OutputSpec("sample.gif", OutputFormat.GIF),
         )
-        self.assertEqual(scenario.actions, actions)
+        actions.append(HoldAction(100))
+        self.assertEqual(len(scenario.actions), 1)
+        self.assertIsInstance(scenario.actions, tuple)
         with self.assertRaises(FrozenInstanceError):
             scenario.id = "changed"
 

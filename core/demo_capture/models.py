@@ -88,16 +88,28 @@ class SetTextAction(CaptureAction):
     target: str
     text: str
 
+    def __post_init__(self) -> None:
+        if not self.target:
+            raise ValueError("target cannot be empty")
+
 
 @dataclass(frozen=True)
 class SelectAction(CaptureAction):
     target: str
     option: str
 
+    def __post_init__(self) -> None:
+        if not self.target or not self.option:
+            raise ValueError("target and option cannot be empty")
+
 
 @dataclass(frozen=True)
 class NavigateAction(CaptureAction):
     destination: str
+
+    def __post_init__(self) -> None:
+        if not self.destination:
+            raise ValueError("destination cannot be empty")
 
 
 @dataclass(frozen=True)
@@ -115,10 +127,20 @@ class WaitHiddenAction(CaptureAction):
     target: str
     timeout_ms: Optional[int] = None
 
+    def __post_init__(self) -> None:
+        if not self.target:
+            raise ValueError("target cannot be empty")
+        if self.timeout_ms is not None and self.timeout_ms <= 0:
+            raise ValueError("timeout_ms must be > 0")
+
 
 @dataclass(frozen=True)
 class WaitSettledAction(CaptureAction):
     timeout_ms: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.timeout_ms is not None and self.timeout_ms <= 0:
+            raise ValueError("timeout_ms must be > 0")
 
 
 @dataclass(frozen=True)
@@ -137,3 +159,7 @@ class CaptureScenario:
     profile: CaptureProfile
     actions: Sequence[CaptureAction]
     output: OutputSpec
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.actions, tuple):
+            object.__setattr__(self, "actions", tuple(self.actions))
