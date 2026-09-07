@@ -5,9 +5,10 @@ import shiboken6
 from PySide6.QtCore import QObject, QEvent, QPoint, Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
-from core.tutorial.models import AnchorHandle, CalloutSpec, CalloutPlacement, DemoSpec
+from core.tutorial.models import AnchorHandle, CalloutSpec, CalloutPlacement, DemoSpec, MediaSpec
 from ui.tutorial.anchor_registry import AnchorRegistry
 from ui.tutorial.callout_widget import TourCalloutWidget
+from ui.tutorial.demo_media_viewer import DemoMediaViewer
 
 
 class DimWidget(QWidget):
@@ -50,6 +51,7 @@ class SpotlightLayerAdapter(QObject):
         self._right_dim: Optional[DimWidget] = None
         self._border_widget: Optional[BorderWidget] = None
         self._callout_widget: Optional[TourCalloutWidget] = None
+        self._demo_viewer: Optional[DemoMediaViewer] = None
         self._current_callout: Optional[CalloutSpec] = None
 
     def attach_host(self, host: Any) -> bool:
@@ -72,12 +74,21 @@ class SpotlightLayerAdapter(QObject):
         self._callout_widget.hide()
 
     def _cleanup_ui(self) -> None:
-        for widget in (self._top_dim, self._bottom_dim, self._left_dim, self._right_dim, self._border_widget, self._callout_widget):
+        for widget in (
+            self._top_dim,
+            self._bottom_dim,
+            self._left_dim,
+            self._right_dim,
+            self._border_widget,
+            self._callout_widget,
+            self._demo_viewer,
+        ):
             if widget is not None and shiboken6.isValid(widget):
                 widget.hide()
                 widget.deleteLater()
         self._top_dim = self._bottom_dim = self._left_dim = self._right_dim = self._border_widget = None
         self._callout_widget = None
+        self._demo_viewer = None
 
     def _resolve_default_host(self) -> Optional[QWidget]:
         app = QApplication.instance()
@@ -208,6 +219,27 @@ class SpotlightLayerAdapter(QObject):
     def show_demo(self, demo: DemoSpec, callout: CalloutSpec, controls: Any) -> bool:
         self._current_callout = None
         self.show_info_without_target(callout, controls)
+        host = self._host_window_ref() if self._host_window_ref else None
+        if host is None or not shiboken6.isValid(host):
+            return False
+
+        if self._demo_viewer is None or not shiboken6.isValid(self._demo_viewer):
+            self._demo_viewer = DemoMediaViewer(host)
+            self._demo_viewer.setObjectName("demo_media_viewer")
+
+        self._demo_viewer.set_media(MediaSpec(type=demo.media_type, path=demo.asset))
+        width = min(480, max(1, host.width() - 40))
+        height = min(270, max(1, host.height() - 40))
+        self._demo_viewer.setGeometry(
+            (host.width() - width) // 2,
+            (host.height() - height) // 2,
+            width,
+            height,
+        )
+        self._demo_viewer.show()
+        self._demo_viewer.raise_()
+        if self._callout_widget is not None:
+            self._callout_widget.raise_()
         return True
 
     def show_recovery(
@@ -224,6 +256,8 @@ class SpotlightLayerAdapter(QObject):
 
     def hide_step(self) -> None:
         self._unbind_events()
+        if self._demo_viewer is not None:
+            self._demo_viewer.hide()
         for dim in (self._top_dim, self._bottom_dim, self._left_dim, self._right_dim):
             if dim is not None:
                 dim.hide()
