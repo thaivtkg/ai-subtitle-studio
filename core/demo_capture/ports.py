@@ -8,6 +8,11 @@ class TargetResolverPort(Protocol):
         ...
 
 
+class NavigationAdapterPort(Protocol):
+    def navigate(self, destination: str) -> None:
+        ...
+
+
 EventPump = Callable[[], None]
 Clock = Callable[[], float]
 TickCallback = Callable[[], None]
