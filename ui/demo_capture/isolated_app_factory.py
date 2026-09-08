@@ -40,7 +40,7 @@ def isolated_app_environment(scenario: CaptureScenario, mode: ExecutionMode):
         # Capture owns the session viewport; do not inherit production minimums.
         main_window.setMinimumSize(0, 0)
         main_window.centralWidget().setMinimumSize(0, 0)
-        main_window.resize(*scenario.profile.window_size)
+        main_window.setFixedSize(*scenario.profile.window_size)
         main_window.show()
         app.processEvents()
 
