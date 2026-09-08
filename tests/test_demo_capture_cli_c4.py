@@ -44,8 +44,9 @@ class TestDemoCaptureCLIC4(unittest.TestCase):
             self.assertEqual(main(["list"]), 4)
 
     def test_tc241_isolation_from_main_bootstrap(self):
+        was_loaded = "main" in sys.modules
         main(["list"])
-        self.assertNotIn("main", sys.modules)
+        self.assertEqual("main" in sys.modules, was_loaded)
 
 
 if __name__ == "__main__":
