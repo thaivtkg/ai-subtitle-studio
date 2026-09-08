@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from core.demo_capture.errors import CaptureErrorCode, CaptureRunError
@@ -38,6 +39,7 @@ def capture_owned_real_app_session():
                     widget.close()
                     widget.deleteLater()
             app.processEvents()
+            app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         except Exception as error:
             cleanup_errors.append(str(error))
 
