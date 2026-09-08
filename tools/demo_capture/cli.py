@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from core.demo_capture.errors import CaptureErrorCode, CaptureRunError
@@ -15,15 +16,40 @@ def _get_registry():
     return DemoScenarioRegistry([])
 
 
-def _run_batch(registry, mode, staging_dir, writer, env_factory, normalizer, encoder, validator):
+def _asset_root() -> Path:
+    return Path("resources/tutorials/assets")
+
+
+class _MainWindowFrameCapture:
+    def capture(self, target, main_window):
+        from ui.demo_capture.anchor_registry_adapter import AnchorRegistryCaptureAdapter
+        from ui.demo_capture.frame_capture import FrameCaptureService
+
+        resolver = AnchorRegistryCaptureAdapter(main_window.tour_anchor_registry)
+        return FrameCaptureService(resolver).capture(target, main_window)
+
+
+def _run_batch(
+    registry,
+    mode,
+    staging_dir,
+    writer,
+    env_factory,
+    normalizer,
+    encoder,
+    validator,
+    frame_capture=None,
+):
     def runner_fn(scenario, selected_mode, directory):
+        from core.demo_capture.frame_clock import FrameClock
+
         return capture_to_staging(
             scenario,
             selected_mode,
             directory,
             env_factory,
-            FrameClock(scenario.profile.fps, lambda: 0.0),
-            None,
+            FrameClock(scenario.profile.fps, time.monotonic),
+            frame_capture,
             normalizer,
             encoder,
             validator,
@@ -56,7 +82,7 @@ def main(args=None):
             from core.demo_capture.validation import TutorialAssetValidator
 
             TutorialAssetValidator().validate_registry_assets(
-                _get_registry(), Path("resources/tutorials/assets")
+                _get_registry(), _asset_root()
             )
             print("Validation passed.")
             return 0
@@ -96,27 +122,36 @@ def _do_generate(parsed):
     from ui.demo_capture.encoder import PillowAssetEncoder
     from ui.demo_capture.frame_normalizer import FrameNormalizer
 
-    registry = _get_registry()
     mode = ExecutionMode.ISOLATED if parsed.mode == "isolated" else ExecutionMode.REAL_APP
-    asset_root = Path("resources/tutorials/assets")
+    registry = _get_registry()
+    asset_root = _asset_root()
     staging_dir = asset_root / ".staging"
     writer = ArtifactWriter(asset_root)
     validator = TutorialAssetValidator()
     encoder = PillowAssetEncoder()
     normalizer = FrameNormalizer()
 
-    def env_factory(scenario, selected_mode):
-        raise CaptureRunError(
-            CaptureErrorCode.REAL_APP_ENVIRONMENT_UNAVAILABLE,
-            "Factory not wired until C4.6",
-        )
+    if mode == ExecutionMode.ISOLATED:
+        from ui.demo_capture.isolated_app_factory import IsolatedAppFactory
 
-    def clock_fn():
-        return 0.0
+        env_factory = IsolatedAppFactory()
+    else:
+        from ui.demo_capture.real_app.real_app_capture_factory import RealAppCaptureFactory
+
+        env_factory = RealAppCaptureFactory()
+    frame_capture = _MainWindowFrameCapture()
 
     if parsed.all:
         results = _run_batch(
-            registry, mode, staging_dir, writer, env_factory, normalizer, encoder, validator
+            registry,
+            mode,
+            staging_dir,
+            writer,
+            env_factory,
+            normalizer,
+            encoder,
+            validator,
+            frame_capture,
         )
         return 1 if any(error for _, _, error in results) else 0
 
@@ -132,8 +167,8 @@ def _do_generate(parsed):
         staging_dir,
         writer,
         env_factory,
-        FrameClock(scenario.profile.fps, clock_fn),
-        None,
+        FrameClock(scenario.profile.fps, time.monotonic),
+        frame_capture,
         normalizer,
         encoder,
         validator,

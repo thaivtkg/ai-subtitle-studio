@@ -20,9 +20,10 @@ def real_app_environment(scenario: CaptureScenario, mode: ExecutionMode):
             "real_app_environment only supports REAL_APP mode",
         )
 
-    with capture_owned_real_app_session():
+    with capture_owned_real_app_session() as own:
         app = QApplication.instance()
         main_window = MainWindow(None)
+        own(main_window)
         main_window.setFixedSize(*scenario.profile.window_size)
         main_window.show()
         app.processEvents()

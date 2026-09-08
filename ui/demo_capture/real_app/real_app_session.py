@@ -3,7 +3,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from core.demo_capture.errors import CaptureErrorCode, CaptureRunError
 from core.runtime.runtime_paths import RuntimePaths
@@ -15,17 +15,24 @@ def capture_owned_real_app_session():
     previous_localappdata = os.environ.get("LOCALAPPDATA")
     temp_dir = tempfile.mkdtemp(prefix="ai_subtitle_real_capture_")
     os.environ["LOCALAPPDATA"] = temp_dir
-    pre_existing_widgets = set(app.topLevelWidgets())
+    owned_roots = []
     cleanup_errors = []
+
+    def own(widget) -> None:
+        if widget not in owned_roots:
+            owned_roots.append(widget)
 
     try:
         RuntimePaths.ensure_user_data_dirs()
-        yield temp_dir
+        yield own
     finally:
         try:
-            for widget in set(app.topLevelWidgets()) - pre_existing_widgets:
-                widget.close()
-                widget.deleteLater()
+            for root in owned_roots:
+                owned_widgets = list(root.findChildren(QWidget))
+                owned_widgets.append(root)
+                for widget in reversed(owned_widgets):
+                    widget.close()
+                    widget.deleteLater()
             app.processEvents()
         except Exception as error:
             cleanup_errors.append(str(error))
