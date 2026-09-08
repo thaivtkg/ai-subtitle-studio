@@ -168,7 +168,7 @@ class SubtitleTrack(QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_T:
-            target_id = self.hovered_id if self.hovered_id != "" else (list(self.selected_ids)[0] if self.selected_ids else "")
+            target_id = self.hovered_id if self.hovered_id != "" else next(iter(self.selected_ids), "")
             if target_id != "":
                 self.action_split_requested.emit(target_id)
         elif event.key() == Qt.Key_M:

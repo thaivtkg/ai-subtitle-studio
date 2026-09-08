@@ -2,6 +2,7 @@ import copy
 import os
 import re
 import sys
+import subprocess
 import threading
 import uuid
 from dataclasses import asdict
@@ -920,7 +921,7 @@ class MainWindow(QMainWindow):
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 4:
-            default_dir = self.out_input.text().strip() or (os.path.dirname(next(iter(self.queue_mgr.get_items()))) if self.queue_mgr.get_items() else "")
+            default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
         # Cập nhật UI Sidebar
@@ -1435,7 +1436,13 @@ class MainWindow(QMainWindow):
             duration_sec = get_video_duration(video_path)
             if duration_sec > 0:
                 return int(duration_sec * 1000)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            subprocess.SubprocessError,
+        ) as exc:
             self.append_log(f"[QUEUE] Không đọc được thời lượng video: {exc}")
         return 3600000
 
@@ -1881,7 +1888,7 @@ class MainWindow(QMainWindow):
         self.page_dashboard.card_status_val.setText("Idle")
 
     def open_output_folder(self):
-        out_d = self.out_input.text().strip() or (os.path.dirname(next(iter(self.queue_mgr.get_items()))) if self.queue_mgr.get_items() else "")
+        out_d = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
