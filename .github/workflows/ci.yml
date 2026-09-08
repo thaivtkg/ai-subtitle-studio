@@ -48,4 +48,7 @@ jobs:
 
       - name: Syntax & Compilation Check
         run: |
-          python -m compileall core ui workers tests
+          python -m compileall core ui workers tools tests
+
+      - name: Validate Demo Capture Assets
+        run: python -m tools.demo_capture validate
