@@ -1,10 +1,15 @@
+import threading
 from pathlib import Path
 from typing import Sequence
 
 from PIL import Image
+from PIL import GifImagePlugin
 from PySide6.QtGui import QImage
 
 from core.demo_capture.errors import CaptureErrorCode, CaptureRunError
+
+
+_GIF_WRITE_LOCK = threading.Lock()
 
 
 class PillowAssetEncoder:
@@ -40,16 +45,31 @@ class PillowAssetEncoder:
             images = [self._pil_image(frame) for frame in frames]
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            images[0].save(
-                path,
-                format="GIF",
-                save_all=True,
-                append_images=images[1:],
-                duration=round(1000 / fps),
-                loop=0,
-                disposal=2,
-                optimize=False,
-            )
+            # Pillow coalesces identical adjacent frames even with optimize=False.
+            # Keep its writer serialized and force a full-canvas descriptor for those slots.
+            original_getbbox = GifImagePlugin._getbbox
+
+            def preserve_identical_slots(previous, current):
+                delta, bbox = original_getbbox(previous, current)
+                if bbox is None:
+                    return delta, (0, 0, current.width, current.height)
+                return delta, bbox
+
+            with _GIF_WRITE_LOCK:
+                GifImagePlugin._getbbox = preserve_identical_slots
+                try:
+                    images[0].save(
+                        path,
+                        format="GIF",
+                        save_all=True,
+                        append_images=images[1:],
+                        duration=round(1000 / fps),
+                        loop=0,
+                        disposal=2,
+                        optimize=False,
+                    )
+                finally:
+                    GifImagePlugin._getbbox = original_getbbox
         except CaptureRunError:
             raise
         except Exception as error:
