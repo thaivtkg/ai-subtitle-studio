@@ -47,6 +47,8 @@ class PillowAssetEncoder:
                 append_images=images[1:],
                 duration=round(1000 / fps),
                 loop=0,
+                disposal=2,
+                optimize=False,
             )
         except CaptureRunError:
             raise

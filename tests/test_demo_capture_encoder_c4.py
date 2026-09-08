@@ -26,20 +26,27 @@ class TestPillowAssetEncoderC4(unittest.TestCase):
                 self.assertEqual(decoded.size, (3, 2))
                 self.assertEqual(decoded.convert("RGBA").getpixel((1, 1)), (10, 20, 30, 255))
 
-    def test_tc218_gif_preserves_frames_delay_and_loop(self):
+    def test_tc218_gif_preserves_frames_delay_and_loop_without_coalescing(self):
         from PIL import Image
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "frames.gif"
             PillowAssetEncoder().encode_gif(
-                [image(2, 2, (255, 0, 0, 255)), image(2, 2, (0, 0, 255, 255))],
+                [
+                    image(2, 2, (255, 0, 0, 255)),
+                    image(2, 2, (0, 0, 255, 255)),
+                    image(2, 2, (0, 0, 255, 255)),
+                ],
                 path,
                 fps=10,
             )
             with Image.open(path) as decoded:
-                self.assertEqual(decoded.n_frames, 2)
+                self.assertEqual(decoded.n_frames, 3)
                 self.assertEqual(decoded.info["duration"], 100)
                 self.assertEqual(decoded.info["loop"], 0)
+                for index in range(decoded.n_frames):
+                    decoded.seek(index)
+                    self.assertEqual(decoded.info["duration"], 100)
 
     def test_tc219_gif_requires_two_frames(self):
         with tempfile.TemporaryDirectory() as directory:

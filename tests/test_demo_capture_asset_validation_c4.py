@@ -21,9 +21,19 @@ def write_png(path, size=(4, 3)):
     Image.new("RGBA", size, (10, 20, 30, 255)).save(path, format="PNG")
 
 
-def write_gif(path, sizes=((4, 3), (4, 3)), durations=(100, 100)):
-    frames = [Image.new("RGB", size, color) for size, color in zip(sizes, ((255, 0, 0), (0, 0, 255)))]
-    frames[0].save(path, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=0)
+def write_gif(path, sizes=((4, 3), (4, 3)), durations=(100, 100), optimize=False):
+    colors = ((255, 0, 0), (0, 0, 255), (0, 255, 0))
+    frames = [Image.new("RGBA", size, color + (255,)) for size, color in zip(sizes, colors)]
+    frames[0].save(
+        path,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        disposal=2,
+        optimize=optimize,
+    )
 
 
 class TestTutorialAssetValidatorC4(unittest.TestCase):
@@ -38,6 +48,12 @@ class TestTutorialAssetValidatorC4(unittest.TestCase):
             path = Path(directory) / "asset.gif"
             write_gif(path)
             TutorialAssetValidator().validate_file(path, OutputSpec("asset.gif", OutputFormat.GIF))
+
+    def test_tc221_delta_frames_inside_canvas_are_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "delta.gif"
+            write_gif(path, sizes=((100, 100), (90, 90)), optimize=True)
+            TutorialAssetValidator().validate_file(path, OutputSpec("delta.gif", OutputFormat.GIF))
 
     def test_tc222_extension_magic_mismatch_fails(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -78,7 +94,13 @@ class TestTutorialAssetValidatorC4(unittest.TestCase):
     def test_tc225_gif_frame_dimensions_must_match(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "asset.gif"
-            write_gif(path, sizes=((5, 3), (4, 3)))
+            write_gif(path, sizes=((100, 100), (100, 100)))
+            data = bytearray(path.read_bytes())
+            image_descriptors = [index for index, value in enumerate(data) if value == 0x2C]
+            second_descriptor = image_descriptors[1]
+            data[second_descriptor + 5:second_descriptor + 7] = (105).to_bytes(2, "little")
+            data[second_descriptor + 7:second_descriptor + 9] = (105).to_bytes(2, "little")
+            path.write_bytes(data)
             with self.assertRaises(CaptureRunError):
                 TutorialAssetValidator().validate_file(path, OutputSpec("asset.gif", OutputFormat.GIF))
 

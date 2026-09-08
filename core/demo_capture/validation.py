@@ -70,13 +70,15 @@ class TutorialAssetValidator:
         duration = 0
         for index in range(frame_count):
             image.seek(index)
-            if image.size != canonical_size:
-                self._fail("GIF frames must have identical dimensions")
             tile = getattr(image, "tile", ())
             if tile:
-                left, top, right, bottom = tile[0][1]
-                if (right - left, bottom - top) != canonical_size:
-                    self._fail("GIF frames must have identical dimensions")
+                for entry in tile:
+                    if len(entry) < 2 or not isinstance(entry[1], tuple) or len(entry[1]) != 4:
+                        continue
+                    left, top, right, bottom = entry[1]
+                    if left < 0 or top < 0 or right > canonical_size[0] or bottom > canonical_size[1]:
+                        self._fail("GIF frame bounds escape the logical canvas")
+            image.load()
             duration += int(image.info.get("duration", 0) or 0)
         if duration > self._policy.max_gif_duration_ms:
             self._fail("GIF duration exceeds limit")
