@@ -67,7 +67,6 @@ class TestDemoCaptureBatchC4(unittest.TestCase):
                 MagicMock(),
                 MagicMock(),
                 MagicMock(),
-                MagicMock(),
             )
         self.writer.commit.assert_not_called()
 
@@ -114,7 +113,6 @@ class TestDemoCaptureBatchC4(unittest.TestCase):
                 ExecutionMode.ISOLATED,
                 self.staging_dir,
                 self.writer,
-                MagicMock(),
                 MagicMock(),
                 MagicMock(),
                 MagicMock(),
