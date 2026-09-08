@@ -28,7 +28,11 @@ def capture_owned_real_app_session():
     finally:
         try:
             for root in owned_roots:
-                owned_widgets = list(root.findChildren(QWidget))
+                owned_widgets = [
+                    widget
+                    for widget in root.findChildren(QWidget)
+                    if widget.isWindow()
+                ]
                 owned_widgets.append(root)
                 for widget in reversed(owned_widgets):
                     widget.close()

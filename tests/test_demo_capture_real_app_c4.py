@@ -60,18 +60,21 @@ class TestDemoCaptureRealAppC4(unittest.TestCase):
         unrelated_preexisting = QWidget()
         unrelated_preexisting.show()
         unrelated_during = None
+        destroyed = {"window": False, "dialog": False}
         try:
             with self.factory(self.scenario, ExecutionMode.REAL_APP) as (window, _, _):
                 self.assertTrue(window.isVisible())
+                window.destroyed.connect(lambda: destroyed.__setitem__("window", True))
                 dialog = QDialog(window)
+                dialog.destroyed.connect(lambda: destroyed.__setitem__("dialog", True))
                 dialog.show()
                 unrelated_during = QWidget()
                 unrelated_during.show()
                 self.app.processEvents()
             self.assertTrue(unrelated_preexisting.isVisible())
             self.assertTrue(unrelated_during.isVisible())
-            self.assertFalse(window.isVisible())
-            self.assertFalse(dialog.isVisible())
+            self.assertTrue(destroyed["window"])
+            self.assertTrue(destroyed["dialog"])
         finally:
             unrelated_preexisting.deleteLater()
             if unrelated_during is not None:
