@@ -1,10 +1,12 @@
 import os
 import shutil
 import sys
+import tempfile
 import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 from PySide6.QtWidgets import QApplication, QPushButton
@@ -57,10 +59,12 @@ class TestDemoCaptureIntegrationC4(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.asset_root, ignore_errors=True)
 
-    def _make_test_factory(self, mutate_fn=None):
+    def _make_test_factory(self, mutate_fn=None, observed_windows=None):
         @contextmanager
         def test_factory(scenario, mode):
             with self.factory(scenario, mode) as (win, driver, resolver):
+                if observed_windows is not None:
+                    observed_windows.append(win)
                 button = QPushButton("Target", win)
                 button.resize(100, 50)
                 button.move(200, 200)
@@ -81,12 +85,13 @@ class TestDemoCaptureIntegrationC4(unittest.TestCase):
             output=OutputSpec("tc247.png", OutputFormat.PNG),
         )
 
+        observed_windows = []
         out_path = generate_one(
             scenario,
             ExecutionMode.ISOLATED,
             self.staging_dir,
             self.writer,
-            self._make_test_factory(),
+            self._make_test_factory(observed_windows=observed_windows),
             FrameClock(scenario.profile.fps, time.monotonic),
             self.frame_capture,
             self.normalizer,
@@ -95,6 +100,10 @@ class TestDemoCaptureIntegrationC4(unittest.TestCase):
         )
 
         self.assertTrue(out_path.exists())
+        self.assertEqual(observed_windows[0].size().width(), 800)
+        self.assertEqual(observed_windows[0].size().height(), 600)
+        self.assertIsInstance(observed_windows[0].project_service, MagicMock)
+        self.assertIsInstance(observed_windows[0].media_import_service, MagicMock)
         with Image.open(out_path) as image:
             self.assertEqual(image.format, "PNG")
             self.assertEqual(image.size, (132, 82))
@@ -131,7 +140,9 @@ class TestDemoCaptureIntegrationC4(unittest.TestCase):
             self.assertEqual(image.size, (200, 100))
 
     def test_tc249_isolated_no_os_interaction(self):
-        self.assertNotIn("pyautogui", sys.modules)
+        automation_modules = {name for name in sys.modules if name.split(".")[0] in {
+            "pyautogui", "pynput", "keyboard", "mouse"
+        }}
         scenario = CaptureScenario(
             id="tc249",
             target=CaptureTarget(scope=CaptureScope.FULL_WINDOW, semantic_id=None),
@@ -152,42 +163,67 @@ class TestDemoCaptureIntegrationC4(unittest.TestCase):
             self.encoder,
             self.validator,
         )
-        self.assertNotIn("pyautogui", sys.modules)
+        self.assertEqual(
+            automation_modules,
+            {name for name in sys.modules if name.split(".")[0] in {
+                "pyautogui", "pynput", "keyboard", "mouse"
+            }},
+        )
 
     def test_tc250_profile_isolation(self):
         profiles = []
         original_localappdata = os.environ.get("LOCALAPPDATA")
 
-        @contextmanager
-        def spy_factory(scenario, mode):
-            with self.factory(scenario, mode) as (win, driver, resolver):
-                profiles.append(os.environ.get("LOCALAPPDATA"))
-                yield win, driver, resolver
+        with tempfile.TemporaryDirectory() as user_profile:
+            user_root = Path(user_profile) / "AI Subtitle Studio"
+            (user_root / "recovery").mkdir(parents=True)
+            (user_root / "settings.json").write_bytes(b"settings-sentinel")
+            (user_root / "tutorial_progress.json").write_bytes(b"progress-sentinel")
+            (user_root / "recovery" / "state.bin").write_bytes(b"recovery-sentinel")
+            before = {
+                path.relative_to(user_root): path.read_bytes()
+                for path in user_root.rglob("*")
+                if path.is_file()
+            }
 
-        scenario = CaptureScenario(
-            id="tc250",
-            target=CaptureTarget(scope=CaptureScope.FULL_WINDOW, semantic_id=None),
-            profile=CaptureProfile(),
-            actions=(),
-            output=OutputSpec("tc250.png", OutputFormat.PNG),
-        )
+            @contextmanager
+            def spy_factory(scenario, mode):
+                with self.factory(scenario, mode) as (win, driver, resolver):
+                    profiles.append(os.environ.get("LOCALAPPDATA"))
+                    yield win, driver, resolver
 
-        for _ in range(2):
-            generate_one(
-                scenario,
-                ExecutionMode.ISOLATED,
-                self.staging_dir,
-                self.writer,
-                spy_factory,
-                FrameClock(10, time.monotonic),
-                self.frame_capture,
-                self.normalizer,
-                self.encoder,
-                self.validator,
+            scenario = CaptureScenario(
+                id="tc250",
+                target=CaptureTarget(scope=CaptureScope.FULL_WINDOW, semantic_id=None),
+                profile=CaptureProfile(),
+                actions=(),
+                output=OutputSpec("tc250.png", OutputFormat.PNG),
             )
+
+            with patch.dict(os.environ, {"LOCALAPPDATA": user_profile}):
+                for _ in range(2):
+                    generate_one(
+                        scenario,
+                        ExecutionMode.ISOLATED,
+                        self.staging_dir,
+                        self.writer,
+                        spy_factory,
+                        FrameClock(10, time.monotonic),
+                        self.frame_capture,
+                        self.normalizer,
+                        self.encoder,
+                        self.validator,
+                    )
+
+                after = {
+                    path.relative_to(user_root): path.read_bytes()
+                    for path in user_root.rglob("*")
+                    if path.is_file()
+                }
 
         self.assertEqual(len(profiles), 2)
         self.assertNotEqual(profiles[0], profiles[1])
+        self.assertEqual(before, after)
         self.assertEqual(os.environ.get("LOCALAPPDATA"), original_localappdata)
 
 

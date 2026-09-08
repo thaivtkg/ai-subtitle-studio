@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import time
 from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 from PySide6.QtWidgets import QApplication
 
@@ -31,7 +32,14 @@ def isolated_app_environment(scenario: CaptureScenario, mode: ExecutionMode):
 
     try:
         RuntimePaths.ensure_user_data_dirs()
-        main_window = MainWindow(None)
+        main_window = MainWindow(
+            project_service=MagicMock(),
+            media_import_service=MagicMock(),
+            recovery_manager=MagicMock(),
+        )
+        # Capture owns the session viewport; do not inherit production minimums.
+        main_window.setMinimumSize(0, 0)
+        main_window.centralWidget().setMinimumSize(0, 0)
         main_window.resize(*scenario.profile.window_size)
         main_window.show()
         app.processEvents()
