@@ -34,7 +34,7 @@ def capture_owned_real_app_session():
                     if widget.isWindow()
                 ]
                 owned_widgets.append(root)
-                for widget in reversed(owned_widgets):
+                for widget in owned_widgets:
                     widget.close()
                     widget.deleteLater()
             app.processEvents()
