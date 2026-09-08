@@ -12,7 +12,7 @@ from core.demo_capture.models import (
     OutputFormat,
     OutputSpec,
 )
-from core.demo_capture.runner import capture_to_staging
+from core.demo_capture.runner import generate_one
 
 
 class TestDemoCaptureRunnerC4(unittest.TestCase):
@@ -34,12 +34,14 @@ class TestDemoCaptureRunnerC4(unittest.TestCase):
         self.normalizer = MagicMock()
         self.encoder = MagicMock()
         self.validator = MagicMock()
+        self.writer = MagicMock()
 
     def _run(self):
-        return capture_to_staging(
+        return generate_one(
             self.scenario,
             ExecutionMode.ISOLATED,
             self.staging,
+            self.writer,
             self.mock_env_factory,
             self.clock,
             self.capture,
@@ -52,6 +54,7 @@ class TestDemoCaptureRunnerC4(unittest.TestCase):
         self._run()
         self.assertEqual(self.capture.capture.call_count, 2)
         self.normalizer.normalize.assert_called_with(["FRAME", "FRAME"], 1.0)
+        self.writer.commit.assert_called_once()
 
     def test_tc232_action_order_and_cadence(self):
         self.clock.due_count.return_value = 2
@@ -67,6 +70,7 @@ class TestDemoCaptureRunnerC4(unittest.TestCase):
             self._run()
         self.assertEqual(error.exception.error_code, CaptureErrorCode.ACTION_FAILED)
         self.assertEqual(error.exception.action_index, 1)
+        self.writer.commit.assert_not_called()
 
     def test_tc234_staging_failure_never_commits(self):
         self.validator.validate_file.side_effect = CaptureRunError(
@@ -75,12 +79,14 @@ class TestDemoCaptureRunnerC4(unittest.TestCase):
         with self.assertRaises(CaptureRunError) as error:
             self._run()
         self.assertEqual(error.exception.error_code, CaptureErrorCode.OUTPUT_VALIDATION_FAILED)
+        self.writer.commit.assert_not_called()
 
     def test_tc235_cleanup_failure_fails_overall(self):
         self.mock_env.__exit__.side_effect = RuntimeError("Cleanup crashed")
         with self.assertRaises(CaptureRunError) as error:
             self._run()
         self.assertEqual(error.exception.error_code, CaptureErrorCode.CLEANUP_FAILED)
+        self.writer.commit.assert_not_called()
 
 
 if __name__ == "__main__":

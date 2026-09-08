@@ -41,7 +41,8 @@ class TestDemoCaptureCLIC4(unittest.TestCase):
 
     def test_tc240_frozen_guard(self):
         with patch("sys.frozen", True, create=True):
-            self.assertEqual(main(["list"]), 4)
+            self.assertEqual(main(["generate", "demo"]), 4)
+            self.assertEqual(main(["list"]), 0)
 
     def test_tc241_isolation_from_main_bootstrap(self):
         was_loaded = "main" in sys.modules

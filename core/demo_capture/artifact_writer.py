@@ -28,6 +28,7 @@ class ArtifactWriter:
                 raise FileNotFoundError(staged)
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged, final)
+            return final
         except CaptureRunError:
             raise
         except Exception as error:

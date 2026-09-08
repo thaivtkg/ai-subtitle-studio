@@ -72,3 +72,29 @@ def capture_to_staging(
         ) from error
 
     return staging_path
+
+
+def generate_one(
+    scenario: CaptureScenario,
+    mode: ExecutionMode,
+    staging_dir: Path,
+    writer: Any,
+    env_factory: Any,
+    clock: Any,
+    frame_capture: Any,
+    normalizer: Any,
+    encoder: Any,
+    validator: Any,
+) -> Path:
+    staged_path = capture_to_staging(
+        scenario,
+        mode,
+        staging_dir,
+        env_factory,
+        clock,
+        frame_capture,
+        normalizer,
+        encoder,
+        validator,
+    )
+    return writer.commit(staged_path, scenario.output)
