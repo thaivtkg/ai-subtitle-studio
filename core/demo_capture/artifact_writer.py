@@ -20,7 +20,7 @@ class ArtifactWriter:
             )
         return resolved
 
-    def commit(self, staged_path: Union[str, Path], output_spec: OutputSpec) -> None:
+    def commit(self, staged_path: Union[str, Path], output_spec: OutputSpec) -> Path:
         try:
             staged = self._confined(staged_path)
             final = self._confined(self._root / output_spec.filename)

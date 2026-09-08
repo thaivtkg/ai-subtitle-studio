@@ -28,12 +28,19 @@ class BatchProcessor:
                 results.append((scenario, staged_path if staged_path.is_file() else None, error))
 
         if any(error is not None for _, _, error in results):
-            for _, staged_path, _ in results:
+            for index, (scenario, staged_path, error) in enumerate(results):
                 if staged_path is not None and Path(staged_path).is_file():
                     try:
                         Path(staged_path).unlink()
-                    except OSError:
-                        pass
+                    except OSError as cleanup_error:
+                        results[index] = (
+                            scenario,
+                            staged_path,
+                            CaptureRunError(
+                                CaptureErrorCode.CLEANUP_FAILED,
+                                f"Failed to discard staging for {scenario.id}: {cleanup_error}",
+                            ),
+                        )
             return results
         for scenario, staged_path, _ in results:
             self.writer.commit(staged_path, scenario.output)

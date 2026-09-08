@@ -4,12 +4,32 @@ from pathlib import Path
 
 from core.demo_capture.errors import CaptureErrorCode, CaptureRunError
 from core.demo_capture.models import ExecutionMode
+from core.demo_capture.batch import BatchProcessor
+from core.demo_capture.frame_clock import FrameClock
+from core.demo_capture.runner import capture_to_staging
 
 
 def _get_registry():
     from core.demo_capture.registry import DemoScenarioRegistry
 
     return DemoScenarioRegistry([])
+
+
+def _run_batch(registry, mode, staging_dir, writer, env_factory, normalizer, encoder, validator):
+    def runner_fn(scenario, selected_mode, directory):
+        return capture_to_staging(
+            scenario,
+            selected_mode,
+            directory,
+            env_factory,
+            FrameClock(scenario.profile.fps, lambda: 0.0),
+            None,
+            normalizer,
+            encoder,
+            validator,
+        )
+
+    return BatchProcessor(registry, staging_dir, writer, runner_fn).run_all(mode)
 
 
 def main(args=None):
@@ -70,7 +90,6 @@ def main(args=None):
 
 def _do_generate(parsed):
     from core.demo_capture.artifact_writer import ArtifactWriter
-    from core.demo_capture.batch import BatchProcessor
     from core.demo_capture.frame_clock import FrameClock
     from core.demo_capture.runner import generate_one
     from core.demo_capture.validation import TutorialAssetValidator
@@ -80,7 +99,7 @@ def _do_generate(parsed):
     registry = _get_registry()
     mode = ExecutionMode.ISOLATED if parsed.mode == "isolated" else ExecutionMode.REAL_APP
     asset_root = Path("resources/tutorials/assets")
-    staging_dir = Path("resources/tutorials/staging")
+    staging_dir = asset_root / ".staging"
     writer = ArtifactWriter(asset_root)
     validator = TutorialAssetValidator()
     encoder = PillowAssetEncoder()
@@ -96,21 +115,9 @@ def _do_generate(parsed):
         return 0.0
 
     if parsed.all:
-        def runner_fn(scenario, selected_mode, directory):
-            return generate_one(
-                scenario,
-                selected_mode,
-                directory,
-                writer,
-                env_factory,
-                FrameClock(scenario.profile.fps, clock_fn),
-                None,
-                normalizer,
-                encoder,
-                validator,
-            )
-
-        results = BatchProcessor(registry, staging_dir, writer, runner_fn).run_all(mode)
+        results = _run_batch(
+            registry, mode, staging_dir, writer, env_factory, normalizer, encoder, validator
+        )
         return 1 if any(error for _, _, error in results) else 0
 
     scenario = registry.get(parsed.scenario_id)
