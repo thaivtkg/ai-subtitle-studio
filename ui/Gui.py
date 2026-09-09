@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QSize,
     Qt,
     QTimer,
     QVariantAnimation,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QStyle,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -301,20 +303,20 @@ class MainWindow(QMainWindow):
         topbar_layout.addWidget(self.lbl_page_title)
         topbar_layout.addStretch()
 
-        btn_minimize = QPushButton("—")
-        btn_minimize.setToolTip("Thu nhỏ cửa sổ")
-        btn_minimize.setFixedSize(28, 24)
-        btn_minimize.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
-        btn_minimize.clicked.connect(self.showMinimized)
+        self.btn_minimize = QPushButton("—")
+        self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
+        self.btn_minimize.setFixedSize(36, 30)
+        self.btn_minimize.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        self.btn_minimize.clicked.connect(self.showMinimized)
 
-        btn_close = QPushButton("✕")
-        btn_close.setToolTip("Đóng ứng dụng")
-        btn_close.setFixedSize(28, 24)
-        btn_close.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
-        btn_close.clicked.connect(self.close)
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setToolTip("Đóng ứng dụng")
+        self.btn_close.setFixedSize(36, 30)
+        self.btn_close.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
+        self.btn_close.clicked.connect(self.close)
 
-        topbar_layout.addWidget(btn_minimize)
-        topbar_layout.addWidget(btn_close)
+        topbar_layout.addWidget(self.btn_minimize)
+        topbar_layout.addWidget(self.btn_close)
         right_layout.addWidget(topbar)
 
         # ========================================================
@@ -472,8 +474,9 @@ class MainWindow(QMainWindow):
         self.generation_dock.setWidget(dock_tabs)
         self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
 
-        self.btn_drawer_toggle = QPushButton("›", self)
-        self.btn_drawer_toggle.setFixedSize(20, 56)
+        self.btn_drawer_toggle = QPushButton(self)
+        self.btn_drawer_toggle.setFixedSize(34, 64)
+        self.btn_drawer_toggle.setIconSize(QSize(18, 18))
         self.btn_drawer_toggle.setCursor(Qt.PointingHandCursor)
         self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
         self.btn_drawer_toggle.setStyleSheet(f"""
@@ -502,6 +505,7 @@ class MainWindow(QMainWindow):
         self.drawer_anim.finished.connect(self._on_drawer_anim_finished)
         self.centralWidget().installEventFilter(self)
         self._update_drawer_handle_position()
+        self._set_drawer_toggle_icon(True)
 
         # --- TẦNG 3: TIMELINE & WAVEFORM ---
         from core.timeline.timeline_controller import TimelineController
@@ -813,7 +817,7 @@ class MainWindow(QMainWindow):
             self._drawer_target_width = max(350, self.generation_dock.width())
             self.drawer_anim.setStartValue(self._drawer_target_width)
             self.drawer_anim.setEndValue(0)
-            self.btn_drawer_toggle.setText("‹")
+            self._set_drawer_toggle_icon(False)
             self.btn_drawer_toggle.setToolTip("Hiện AI Workspace")
         else:
             # Set the collapsed geometry before showing to prevent a one-frame flash.
@@ -822,9 +826,18 @@ class MainWindow(QMainWindow):
             self.generation_dock.show()
             self.drawer_anim.setStartValue(0)
             self.drawer_anim.setEndValue(self._drawer_target_width)
-            self.btn_drawer_toggle.setText("›")
+            self._set_drawer_toggle_icon(True)
             self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
         self.drawer_anim.start()
+
+    def _set_drawer_toggle_icon(self, drawer_visible: bool):
+        arrow = (
+            QStyle.StandardPixmap.SP_ArrowLeft
+            if drawer_visible
+            else QStyle.StandardPixmap.SP_ArrowRight
+        )
+        self.btn_drawer_toggle.setIcon(self.style().standardIcon(arrow))
+        self.btn_drawer_toggle.setText("")
 
     @Slot(object)
     def _on_drawer_anim_step(self, current_width):
@@ -843,7 +856,7 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _sync_drawer_toggle_state(self, is_visible: bool):
-        self.btn_drawer_toggle.setText("›" if is_visible else "‹")
+        self._set_drawer_toggle_icon(is_visible)
         self.btn_drawer_toggle.setToolTip(
             "Ẩn AI Workspace" if is_visible else "Hiện AI Workspace"
         )

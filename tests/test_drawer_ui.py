@@ -30,17 +30,21 @@ class TestDrawerUI(unittest.TestCase):
         button = self.window.btn_drawer_toggle
 
         self.assertTrue(dock.isVisible())
-        self.assertEqual(button.text(), "›")
+        self.assertFalse(button.icon().isNull())
+        self.assertGreaterEqual(button.width(), 32)
+        self.assertGreaterEqual(button.height(), 64)
+        self.assertGreaterEqual(self.window.btn_minimize.width(), 32)
+        self.assertGreaterEqual(self.window.btn_close.width(), 32)
 
         QTest.mouseClick(button, Qt.LeftButton)
         QTest.qWait(500)
         self.assertFalse(dock.isVisible())
-        self.assertEqual(button.text(), "‹")
+        self.assertFalse(button.icon().isNull())
 
         QTest.mouseClick(button, Qt.LeftButton)
         QTest.qWait(500)
         self.assertTrue(dock.isVisible())
-        self.assertEqual(button.text(), "›")
+        self.assertFalse(button.icon().isNull())
         self.assertGreaterEqual(
             dock.minimumWidth(),
             350,
