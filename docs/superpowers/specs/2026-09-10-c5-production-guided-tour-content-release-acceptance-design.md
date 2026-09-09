@@ -1,6 +1,6 @@
 # C5 — Production Guided Tour Content & Release Acceptance — Written Specification
 
-**Status:** READY FOR HUMAN REVIEW  
+**Status:** SELF-REVIEWED — READY FOR HUMAN REVIEW  
 **Date:** 2026-09-10  
 **Branch:** `codex/c5-production-guided-tour`  
 **Base:** `master@e0fbea153e889a6127e6d4403ae8fe343645b7d1`  
@@ -955,12 +955,17 @@ Navigation/UI calls are allowed; business service calls listed in Section 14 are
 Automated acceptance MUST prove:
 
 ```text
+_get_registry().ids()
+→ contains exactly getting_started_generation for the C5 production registry
+
 python -m tools.demo_capture list
-→ includes getting_started_generation
+→ reports Listing 1 scenarios...
 
 python -m tools.demo_capture validate
 → PASS with committed production GIF
 ```
+
+The registry-ID assertion belongs in an automated test. C5 MUST NOT change the closed C4 `list` command merely to make it print scenario IDs.
 
 The existing CI asset-validation command remains authoritative and MUST stay generation-free.
 
