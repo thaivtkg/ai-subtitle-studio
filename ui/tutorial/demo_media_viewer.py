@@ -61,6 +61,10 @@ class DemoMediaViewer(QWidget):
         if self._current_movie and self._current_movie.state() == QMovie.MovieState.Running:
             self._current_movie.stop()
 
+    def closeEvent(self, event) -> None:
+        self._cleanup_resources()
+        super().closeEvent(event)
+
     def _cleanup_resources(self) -> None:
         if self._current_movie:
             self._current_movie.stop()

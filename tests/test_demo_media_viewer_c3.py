@@ -26,6 +26,15 @@ class TestC3DemoMediaViewer(unittest.TestCase):
             base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
         )
 
+    def setUp(self):
+        self.viewers = []
+
+    def tearDown(self):
+        for viewer in self.viewers:
+            viewer.close()
+            viewer.deleteLater()
+        self.app.processEvents()
+
     @classmethod
     def tearDownClass(cls):
         if cls.static_img.exists():
@@ -39,6 +48,7 @@ class TestC3DemoMediaViewer(unittest.TestCase):
         """TC184: Viewer load thành công QPixmap từ đường dẫn tĩnh hợp lệ."""
         spec = MediaSpec(type="image", path=str(self.static_img))
         viewer = DemoMediaViewer()
+        self.viewers.append(viewer)
 
         viewer.set_media(spec)
 
@@ -49,6 +59,7 @@ class TestC3DemoMediaViewer(unittest.TestCase):
         """TC185: Viewer load và quản lý QMovie cho GIF."""
         spec = MediaSpec(type="gif", path=str(self.gif_img))
         viewer = DemoMediaViewer()
+        self.viewers.append(viewer)
 
         viewer.set_media(spec)
 
@@ -65,6 +76,7 @@ class TestC3DemoMediaViewer(unittest.TestCase):
         """Chống video/mp4 theo đúng scope Milestone C3."""
         spec = MediaSpec(type="video", path="test.mp4")
         viewer = DemoMediaViewer()
+        self.viewers.append(viewer)
 
         with self.assertRaises(ValueError):
             viewer.set_media(spec)
