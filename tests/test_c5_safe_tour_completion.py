@@ -24,6 +24,14 @@ class TestC5SafeTourCompletion(unittest.TestCase):
         self.project_service = MagicMock()
         self.media_import_service = MagicMock()
         self.recovery_manager = MagicMock()
+        self.soft_export_patch = patch.object(
+            MainWindow, "_trigger_export_softsub", autospec=True
+        )
+        self.hard_export_patch = patch.object(
+            MainWindow, "_trigger_export_hardsub", autospec=True
+        )
+        self.soft_export = self.soft_export_patch.start()
+        self.hard_export = self.hard_export_patch.start()
         progress_path = Path(self.temp_dir.name) / "tutorial_progress.json"
         with patch.object(
             RuntimePaths, "get_tutorial_progress_file", return_value=progress_path
@@ -47,6 +55,8 @@ class TestC5SafeTourCompletion(unittest.TestCase):
         self.window.close()
         self.window.deleteLater()
         self.app.processEvents()
+        self.hard_export_patch.stop()
+        self.soft_export_patch.stop()
         self.temp_dir.cleanup()
 
     def _wait_until(self, predicate, timeout_ms=2000):
@@ -66,7 +76,7 @@ class TestC5SafeTourCompletion(unittest.TestCase):
             )
         )
 
-    def test_full_production_tour_completes_without_business_mutation(self):
+    def test_tc264_full_production_tour_completes_without_business_mutation(self):
         seen_steps = []
         self.window.tour_engine.step_changed.connect(
             lambda _session, step_id, _index, _generation: seen_steps.append(step_id)
@@ -93,9 +103,11 @@ class TestC5SafeTourCompletion(unittest.TestCase):
         self.window.tour_engine.next()
         self._wait_for_step("export_center_overview", TourState.SHOWING_INFO)
         self.assertEqual(self.window._active_nav_index, 5)
+        self.assertEqual(self.window.stack.current_index, 4)
 
         self.window.tour_engine.next()
         self._wait_for_step("finish", TourState.SHOWING_INFO)
+        self.assertEqual(self.window.stack.current_index, 4)
         self.window.tour_engine.next()
         self._wait_until(lambda: self.window.tour_engine.state() is TourState.COMPLETED)
 
@@ -113,10 +125,9 @@ class TestC5SafeTourCompletion(unittest.TestCase):
                 "finish",
             ],
         )
-        self.assertEqual(
-            self.window.tour_progress_store.status("getting_started", 2).status,
-            GuideProgressStatus.COMPLETED,
-        )
+        progress = self.window.tour_progress_store.status("getting_started", 2)
+        self.assertEqual(progress.status, GuideProgressStatus.COMPLETED)
+        self.assertEqual(progress.content_version, 2)
 
         self.assertEqual(self.project_service.method_calls, [])
         self.assertEqual(self.media_import_service.method_calls, [])
@@ -124,6 +135,18 @@ class TestC5SafeTourCompletion(unittest.TestCase):
         self.window.subtitle_whisper_service.load_model.assert_not_called()
         self.window.subtitle_whisper_service.transcribe_batch.assert_not_called()
         self.window.subtitle_generation_service.start_generation.assert_not_called()
+        self.soft_export.assert_not_called()
+        self.hard_export.assert_not_called()
+
+    def test_tc265_v1_completion_is_outdated_for_v2(self):
+        self.window.tour_progress_store.mark_completed("getting_started", 1)
+
+        progress = self.window.tour_progress_store.status("getting_started", 2)
+
+        self.assertEqual(progress.status.value, "OUTDATED")
+        self.assertFalse(
+            self.window.tour_progress_store.is_completed("getting_started", 2)
+        )
 
 
 if __name__ == "__main__":
