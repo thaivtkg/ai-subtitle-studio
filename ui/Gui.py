@@ -239,9 +239,9 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(QLabel("QUẢN LÝ DỰ ÁN", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
         
         # Nút Tạo Dự Án 
-        btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
-        btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
-        sidebar_layout.addWidget(btn_new_project)
+        self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
+        self.btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
+        sidebar_layout.addWidget(self.btn_new_project)
         sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
         sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
         
@@ -575,14 +575,7 @@ class MainWindow(QMainWindow):
         self.shortcut_provider = RuntimeShortcutProvider(self)
         self._register_help_shortcuts()
         self.tour_anchor_registry = AnchorRegistry()
-        self.tour_anchor_registry.register("dashboard.root", self.page_dashboard)
-        self.tour_anchor_registry.register("dashboard.new_project", btn_new_project)
-        self.tour_anchor_registry.register(
-            "navigation.video_workspace", self.nav_btns[1]
-        )
-        self.tour_anchor_registry.register("workspace.subtitle_editor", self.sub_editor)
-        self.tour_anchor_registry.register("workspace.ai_generation", self.generation_panel)
-        self.tour_anchor_registry.register("export_center.root", self.page_export)
+        self._register_tour_anchors()
         self.tour_dialog_observer = DialogLifecycleObserver(self)
         self.tour_interaction_observer = InteractionObserverAdapter(
             self.tour_anchor_registry, self.tour_dialog_observer, self
@@ -918,6 +911,18 @@ class MainWindow(QMainWindow):
         if precondition == "NO_BACKGROUND_JOB":
             return not bool(getattr(self, "_queue_generation_active", False))
         return False
+
+    def _register_tour_anchors(self):
+        bindings = (
+            ("dashboard.root", self.page_dashboard),
+            ("dashboard.new_project", self.btn_new_project),
+            ("navigation.video_workspace", self.nav_btns[1]),
+            ("workspace.subtitle_editor", self.sub_editor),
+            ("workspace.ai_generation", self.generation_panel),
+            ("export_center.root", self.page_export),
+        )
+        for anchor_id, widget in bindings:
+            self.tour_anchor_registry.register(anchor_id, widget)
 
     def create_side_action_button(self, text, slot):
         btn = QPushButton(text)

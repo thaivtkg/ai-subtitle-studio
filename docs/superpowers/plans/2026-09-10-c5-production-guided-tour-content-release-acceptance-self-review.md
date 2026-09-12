@@ -81,3 +81,26 @@ mandatory Windows/PyInstaller smoke
 ```
 
 Execution MUST read this correction file together with the main Implementation Plan.
+
+## Correction 3 — Approved C3 regression exception and packaged resource path
+
+The C3 regression correction in commit `54c4a90` is explicitly approved for the
+final C5 branch. A Windows `QMovie` file-lock exposed during full regression
+was fixed by making `DemoMediaViewer.closeEvent()` delegate to the existing
+`_cleanup_resources()` method and by tightening viewer cleanup in the C3 test.
+
+Approved scope:
+
+- `ui/tutorial/demo_media_viewer.py`
+- `tests/test_demo_media_viewer_c3.py`
+
+Limits: no media behavior redesign, new media types, TourEngine changes, or
+Spotlight lifecycle changes. Evidence: 465 tests passed, 1 skipped;
+`compileall`, asset validation, and `git diff --check` passed.
+
+For the Windows PyInstaller onedir build, the physical data location is
+`dist/AI Subtitle Studio/_internal/resources/tutorials/...`. This is expected
+for the current PyInstaller layout; frozen runtime code must continue resolving
+resources through `RuntimePaths.get_resources_dir()` / `sys._MEIPASS`. The
+physical path is not a second runtime contract and must not be used to justify
+source-tree fallback.
