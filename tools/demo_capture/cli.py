@@ -11,9 +11,9 @@ from core.demo_capture.runner import capture_to_staging
 
 
 def _get_registry():
-    from core.demo_capture.registry import DemoScenarioRegistry
+    from core.demo_capture.production_scenarios import build_production_registry
 
-    return DemoScenarioRegistry([])
+    return build_production_registry()
 
 
 def _asset_root() -> Path:
