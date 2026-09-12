@@ -1,7 +1,7 @@
 # C5 Implementation Plan — Self-Review Corrections
 
-**Status:** NORMATIVE COMPANION TO THE C5 IMPLEMENTATION PLAN  
-**Applies to:** `docs/superpowers/plans/2026-09-10-c5-production-guided-tour-content-release-acceptance.md`  
+**Status:** NORMATIVE COMPANION TO THE C5 IMPLEMENTATION PLAN
+**Applies to:** `docs/superpowers/plans/2026-09-10-c5-production-guided-tour-content-release-acceptance.md`
 **Reason:** Final self-review found two test-command details that must be tightened before execution. These corrections do not change the locked C5 architecture/specification.
 
 ---

@@ -1,10 +1,10 @@
 # C5 — Production Guided Tour Content & Release Acceptance — Written Specification
 
-**Status:** SELF-REVIEWED — READY FOR HUMAN REVIEW  
-**Date:** 2026-09-10  
-**Branch:** `codex/c5-production-guided-tour`  
-**Base:** `master@e0fbea153e889a6127e6d4403ae8fe343645b7d1`  
-**Milestone type:** Architectural  
+**Status:** SELF-REVIEWED — READY FOR HUMAN REVIEW
+**Date:** 2026-09-10
+**Branch:** `codex/c5-production-guided-tour`
+**Base:** `master@e0fbea153e889a6127e6d4403ae8fe343645b7d1`
+**Milestone type:** Architectural
 
 ---
 
