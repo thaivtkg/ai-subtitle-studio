@@ -575,6 +575,14 @@ class MainWindow(QMainWindow):
         self.shortcut_provider = RuntimeShortcutProvider(self)
         self._register_help_shortcuts()
         self.tour_anchor_registry = AnchorRegistry()
+        self.tour_anchor_registry.register("dashboard.root", self.page_dashboard)
+        self.tour_anchor_registry.register("dashboard.new_project", btn_new_project)
+        self.tour_anchor_registry.register(
+            "navigation.video_workspace", self.nav_btns[1]
+        )
+        self.tour_anchor_registry.register("workspace.subtitle_editor", self.sub_editor)
+        self.tour_anchor_registry.register("workspace.ai_generation", self.generation_panel)
+        self.tour_anchor_registry.register("export_center.root", self.page_export)
         self.tour_dialog_observer = DialogLifecycleObserver(self)
         self.tour_interaction_observer = InteractionObserverAdapter(
             self.tour_anchor_registry, self.tour_dialog_observer, self
