@@ -1,21 +1,173 @@
 {
   "schema_version": 1,
   "guide_id": "getting_started",
-  "content_version": 1,
+  "content_version": 2,
   "title": "Làm quen với AI Subtitle Studio",
-  "description": "Các khái niệm cơ bản và giao diện chính.",
+  "description": "Tham quan an toàn các khu vực chính và quy trình làm việc của AI Subtitle Studio.",
   "category": "getting_started",
-  "estimated_minutes": 2,
+  "estimated_minutes": 3,
   "preconditions": [],
   "steps": [
     {
       "step_id": "welcome",
       "type": "INFO",
+      "surface": { "route": "dashboard" },
       "callout": {
         "title": "Chào mừng",
-        "body": "Giao diện chính của ứng dụng AI Subtitle Studio.",
+        "body": "Tour này giới thiệu các khu vực chính của AI Subtitle Studio mà không tạo Project, nhập media hay chạy AI thật.",
+        "placement": "center"
+      },
+      "safety": {
+        "allow_back": false,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "dashboard_overview",
+      "type": "INFO",
+      "surface": { "route": "dashboard" },
+      "anchor": "dashboard.root",
+      "target_policy": "FALLBACK_TO_INFO",
+      "callout": {
+        "title": "Dashboard",
+        "body": "Dashboard là điểm bắt đầu để theo dõi và truy cập các khu vực làm việc chính.",
         "placement": "auto"
-      }
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "create_project_entry",
+      "type": "INFO",
+      "surface": { "route": "dashboard" },
+      "anchor": "dashboard.new_project",
+      "target_policy": "FALLBACK_TO_INFO",
+      "callout": {
+        "title": "Tạo Dự Án Mới",
+        "body": "Đây là điểm bắt đầu một Project thật. Trong tour này bạn không cần bấm nút và không có Project nào được tạo.",
+        "placement": "auto"
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "open_video_workspace",
+      "type": "ACTION",
+      "surface": { "route": "dashboard" },
+      "anchor": "navigation.video_workspace",
+      "target_policy": "REQUIRED",
+      "callout": {
+        "title": "Mở Video Workspace",
+        "body": "Hãy bấm Video Workspace để tiếp tục. Tour chỉ quan sát thao tác này và không tự bấm thay bạn.",
+        "placement": "auto"
+      },
+      "interaction": { "kind": "CLICK" },
+      "safety": {
+        "allow_back": false,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "subtitle_editor_overview",
+      "type": "INFO",
+      "surface": { "route": "workspace" },
+      "anchor": "workspace.subtitle_editor",
+      "target_policy": "FALLBACK_TO_INFO",
+      "callout": {
+        "title": "Subtitle Editor",
+        "body": "Khu vực này dùng để xem và chỉnh sửa nội dung, timing và các dòng subtitle trong workflow thật.",
+        "placement": "auto"
+      },
+      "safety": {
+        "allow_back": false,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "ai_workspace_overview",
+      "type": "INFO",
+      "surface": { "route": "workspace", "subroute": "generate" },
+      "anchor": "workspace.ai_generation",
+      "target_policy": "FALLBACK_TO_INFO",
+      "callout": {
+        "title": "AI Workspace",
+        "body": "Generate là nơi cấu hình workflow tạo subtitle. Tour chỉ giới thiệu giao diện, không tải model và không chạy Whisper.",
+        "placement": "auto"
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "generation_demo",
+      "type": "DEMO",
+      "surface": { "route": "workspace", "subroute": "generate" },
+      "callout": {
+        "title": "Minh họa workflow tạo subtitle",
+        "body": "Đây là demo local được dựng sẵn. Không có model, CUDA, media thật hay tác vụ nền nào được khởi chạy.",
+        "placement": "center"
+      },
+      "demo": {
+        "asset": "assets/getting_started_generation.gif",
+        "media_type": "gif",
+        "fit": "contain"
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "export_center_overview",
+      "type": "INFO",
+      "surface": { "route": "export_center" },
+      "anchor": "export_center.root",
+      "target_policy": "FALLBACK_TO_INFO",
+      "callout": {
+        "title": "Export Center",
+        "body": "Export Center tập trung các lựa chọn xuất kết quả. Tour chỉ điều hướng tới trang này và không tạo file xuất.",
+        "placement": "auto"
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
+    },
+    {
+      "step_id": "finish",
+      "type": "INFO",
+      "callout": {
+        "title": "Hoàn tất",
+        "body": "Bạn đã xem các khu vực chính. Có thể mở Help Center để xem lại Getting Started bất cứ lúc nào.",
+        "placement": "center"
+      },
+      "safety": {
+        "allow_back": true,
+        "allow_skip_step": true,
+        "allow_skip_tour": true
+      },
+      "preconditions": []
     }
   ]
 }
