@@ -162,6 +162,24 @@ class TestSprint12ProjectOwnedImport(unittest.TestCase):
         dialog._on_worker_thread_finished()
         self.assertFalse(bundle.exists())
         self.assertTrue(dialog._prepare_destination())
+
+    def test_failure_signal_cleans_bundle_before_thread_finished(self):
+        bundle = self.root / "SignalFailure.ai-subtitle"
+        dialog = MediaImportDialog(self._service(), mode=MODE_NEW_PROJECT)
+        dialog.url_input.setText("https://example.com/video.mp4")
+        dialog.project_name_input.setText("SignalFailure")
+        dialog.location_input.setText(str(self.root))
+        self.assertTrue(dialog._prepare_destination())
+        dialog._destination_dir.mkdir(parents=True, exist_ok=True)
+
+        error = MediaImportError(
+            MediaImportErrorCode.UNKNOWN,
+            "yt-dlp is not installed in the current environment",
+        )
+        with patch("ui.dialogs.media_import_dialog.QMessageBox.critical"):
+            dialog._on_failed(error)
+
+        self.assertFalse(bundle.exists())
         dialog._destination_dir.mkdir(parents=True, exist_ok=True)
         dialog.current_state = MediaImportDialogState.FAILED
         dialog._on_worker_thread_finished()

@@ -258,11 +258,13 @@ class MediaImportDialog(QDialog):
         self._set_state(MediaImportDialogState.SUCCEEDED)
 
     def _on_failed(self, error: MediaImportError):
+        self._cleanup_aborted_project_bundle()
         if not self._close_pending:
             QMessageBox.critical(self, "Import Failed", translate_error(error))
         self._set_state(MediaImportDialogState.FAILED)
 
     def _on_cancelled(self):
+        self._cleanup_aborted_project_bundle()
         self._set_state(MediaImportDialogState.CANCELLED)
 
     def _on_worker_thread_finished(self):
