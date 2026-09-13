@@ -738,15 +738,33 @@ class MainWindow(QMainWindow):
     # Backwards-compatible name for callers from the first refactor pass.
     _apply_subtitle_style = _on_subtitle_style_changed
 
+    def set_subtitle_preview_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        video_player = self.video_player
+        controller = getattr(video_player, "sub_controller", None)
+        overlay = getattr(video_player, "subtitle_overlay", None)
+
+        if controller is not None:
+            controller.is_enabled = enabled
+        if overlay is not None:
+            overlay.setVisible(enabled)
+
+        checkbox = getattr(getattr(self, "inspector_panel", None), "chk_preview", None)
+        if checkbox is not None:
+            previous_blocked = checkbox.blockSignals(True)
+            try:
+                checkbox.setChecked(enabled)
+            finally:
+                checkbox.blockSignals(previous_blocked)
+
+        if enabled:
+            video_player.position_changed(video_player.player.position())
+        elif overlay is not None:
+            overlay.clear_subtitle()
+
     @Slot(bool)
     def _on_preview_toggled(self, is_visible: bool):
-        """Toggle overlay visibility without changing subtitle controller state."""
-        overlay = getattr(self.video_player, "subtitle_overlay", None)
-        if overlay is not None:
-            overlay.setVisible(bool(is_visible))
-        controller = getattr(self.video_player, "sub_controller", None)
-        if controller is not None and hasattr(controller, "toggle_preview"):
-            controller.toggle_preview(bool(is_visible))
+        self.set_subtitle_preview_enabled(is_visible)
 
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         if req_vid_path != self.queue_mgr.active_vid:
@@ -1974,19 +1992,42 @@ class MainWindow(QMainWindow):
         )
 
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
+        if linked:
+            if not state.project_file_path:
+                raise ValueError("Linked recovery không có project_file_path.")
+            if getattr(self.project_service, "current_project", None) is None:
+                self.project_service.open_project(state.project_file_path)
+            if state.workspace_state:
+                self.workspace_service.apply_workspace(state.workspace_state)
+
+        # Workspace restoration loads the canonical artifact first. The
+        # recovered in-memory segments must be applied after it so unsaved
+        # edits win without writing back to the project or artifact files.
         self.sub_editor.all_segments = copy.deepcopy(state.segments)
+
+        duration_ms = 0
+        if linked and hasattr(self, "video_player"):
+            duration_getter = getattr(self.video_player, "get_video_duration_ms", None)
+            if callable(duration_getter):
+                duration_ms = max(0, int(duration_getter() or 0))
+            if duration_ms <= 0 and state.video_path:
+                duration_getter = getattr(self, "_queue_video_duration_ms", None)
+                if callable(duration_getter):
+                    duration_ms = max(0, int(duration_getter(state.video_path) or 0))
+
         if hasattr(self.sub_editor, "render_page"):
             self.sub_editor.render_page()
         if hasattr(self, "timeline_data_provider"):
-            self.timeline_data_provider.load_runtime_data(state.segments, 0)
+            self.timeline_data_provider.load_runtime_data(
+                self.sub_editor.all_segments,
+                duration_ms,
+            )
         if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "load_project_data"):
             self.timeline_widget.load_project_data(
-                0,
+                duration_ms,
                 self.timeline_data_provider.get_all_segments(),
                 None,
             )
-        if state.workspace_state and getattr(self.project_service, "current_project", None):
-            self.workspace_service.apply_workspace(state.workspace_state)
         context_data = getattr(state, "transcription_context", None)
         project = getattr(self.project_service, "current_project", None)
         if context_data and project:

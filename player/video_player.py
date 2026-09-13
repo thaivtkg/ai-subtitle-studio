@@ -264,6 +264,7 @@ class VideoPlayerWidget(QWidget):
         is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
         if not is_preview_enabled:
             self.subtitle_overlay.clear_subtitle()
+            self.timeline_position_changed.emit(position)
             return
 
         # 1. LẤY DỮ LIỆU TRỰC TIẾP TỪ EDITOR BẢNG BÊN DƯỚI
@@ -292,8 +293,11 @@ class VideoPlayerWidget(QWidget):
                 if isinstance(item, tuple) and len(item) >= 4:
                     start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
                 elif isinstance(item, dict):
-                    start_ms = item.get('start_ms') if 'start_ms' in item else parse_ms(item.get('start', 0))
-                    end_ms = item.get('end_ms') if 'end_ms' in item else parse_ms(item.get('end', 0))
+                    start_ms = parse_ms(item.get('start_ms', 0))
+                    end_ms = parse_ms(item.get('end_ms', 0))
+                    if end_ms <= start_ms:
+                        start_ms = parse_ms(item.get('start', 0))
+                        end_ms = parse_ms(item.get('end', 0))
                     text = item.get('text', '')
                     stt = item.get('stt', 0)
                 else: 

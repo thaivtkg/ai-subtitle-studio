@@ -247,7 +247,7 @@ class TestRecoveryEndToEnd(unittest.TestCase):
             "load_project_data",
             wraps=window.timeline_widget.load_project_data,
         ) as mock_load:
-            window.apply_recovery_working_state(state, linked=True)
+            window.apply_recovery_working_state(state, linked=False)
 
             mock_load.assert_called()
             passed_segments = mock_load.call_args.args[1]
