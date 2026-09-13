@@ -68,11 +68,11 @@ class SubtitleController(QObject):
 
     def sync_position(self, position_ms):
         """Đồng bộ vị trí kim thời gian và phát tín hiệu phụ đề"""
-        if not hasattr(self, 'subs') or not self.subs:
-            # Nếu dùng live_data từ Editor
-            subs_data = getattr(self, 'live_data', [])
-        else:
-            subs_data = self.subs
+        subs_data = (
+            getattr(self, 'subs', None)
+            or getattr(self, 'live_data', None)
+            or self.subtitles
+        )
 
         found = False
         for item in subs_data:

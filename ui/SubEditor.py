@@ -330,9 +330,12 @@ class SubtitleEditorWidget(QWidget):
         self.table.setRowCount(0)
         
         if not self.all_segments:
+            self.current_index = -1
             self.lbl_page.setText("1 / 1")
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
+            self.table.clearSelection()
+            self.update_empty_state()
             self.table.blockSignals(False)
             self.is_rendering = False
             return
@@ -494,6 +497,11 @@ class SubtitleEditorWidget(QWidget):
         if not (0 <= index < len(self.all_segments)):
             return
         if self.selection_controller and not self._is_syncing_ui:
+            request_activation = getattr(
+                self.selection_controller, "request_editor_activation", None
+            )
+            if request_activation:
+                request_activation(index, self.all_segments[index].get("id"))
             self.selection_controller.select(
                 index, self.all_segments[index].get("id"), SelectionSource.EDITOR
             )

@@ -522,6 +522,12 @@ class MainWindow(QMainWindow):
             self.project_service, self.timeline_widget, self.timeline_data_provider,
             undo_manager=self.undo_manager, selection_controller=self.selection_controller,
         )
+        self.sub_editor.live_edit_applied.connect(
+            lambda *_: self.timeline_controller.sync_from_editor_segments(
+                self.sub_editor.all_segments
+            )
+        )
+        self.timeline_controller.sync_from_editor_segments(self.sub_editor.all_segments)
         self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
         
@@ -1213,6 +1219,10 @@ class MainWindow(QMainWindow):
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
+            self.project_service.close_project()
+            self.revision_tracker.reset_for_new_document()
+            if getattr(self, "recovery_manager", None):
+                self.recovery_manager.finalize_clean_shutdown()
 
     def on_queue_item_clicked(self, vid_path, fresh_project=False):
         self.queue_mgr.set_active(vid_path)

@@ -10,15 +10,41 @@ class TimelineSegmentWrapper:
         if 'id' not in self._raw:
             self._raw['id'] = str(uuid.uuid4())
 
+        source_start = (
+            self.provider._time_str_to_ms(self._raw['start'])
+            if 'start' in self._raw
+            else None
+        )
+        source_end = (
+            self.provider._time_str_to_ms(self._raw['end'])
+            if 'end' in self._raw
+            else None
+        )
+        if (
+            source_start is not None
+            and source_end is not None
+            and source_start >= 0
+            and source_end > source_start
+        ):
+            self._raw['start_ms'] = source_start
+            self._raw['end_ms'] = source_end
+        else:
+            cached_start = self._raw.get('start_ms')
+            cached_end = self._raw.get('end_ms')
+            try:
+                cached_start = int(cached_start)
+                cached_end = int(cached_end)
+            except (TypeError, ValueError):
+                cached_start = cached_end = None
+
+            if cached_start is not None and cached_end is not None and cached_end > cached_start >= 0:
+                self._raw['start_ms'] = cached_start
+                self._raw['end_ms'] = cached_end
+
         if 'start_ms' in self._raw and 'start' not in self._raw:
             self._raw['start'] = self.provider._ms_to_time_str(self._raw['start_ms'])
         if 'end_ms' in self._raw and 'end' not in self._raw:
             self._raw['end'] = self.provider._ms_to_time_str(self._raw['end_ms'])
-
-        if 'start' in self._raw and 'start_ms' not in self._raw:
-            self._raw['start_ms'] = self.provider._time_str_to_ms(self._raw['start'])
-        if 'end' in self._raw and 'end_ms' not in self._raw:
-            self._raw['end_ms'] = self.provider._time_str_to_ms(self._raw['end'])
 
     @property
     def segment_id(self): return self._raw.get('id')
@@ -138,6 +164,8 @@ class TimelineDataProvider:
             self.add_segment(new_seg)
 
     def _time_str_to_ms(self, time_str: str) -> int:
+        if isinstance(time_str, (int, float)):
+            return int(time_str)
         try:
             h_m_s, ms = time_str.split(',')
             h, m, s = h_m_s.split(':')

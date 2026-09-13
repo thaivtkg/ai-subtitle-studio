@@ -16,6 +16,7 @@ class SubtitleSelectionController(QObject):
 
     # Sử dụng object để cho phép truyền đồng thời str (segment_id) hoặc None
     selection_changed = Signal(int, object, SelectionSource)
+    editor_activation_requested = Signal(int, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,3 +50,8 @@ class SubtitleSelectionController(QObject):
     ):
         """Bỏ chọn toàn bộ, truyền segment_id = None."""
         self.select(-1, None, source)
+
+    def request_editor_activation(self, index: int, segment_id: Optional[str]):
+        """Notify editor intent without changing duplicate logical selection state."""
+        if self._selected_index == index and self._selected_segment_id == segment_id:
+            self.editor_activation_requested.emit(index, segment_id)
