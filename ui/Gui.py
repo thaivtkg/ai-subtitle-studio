@@ -1992,19 +1992,42 @@ class MainWindow(QMainWindow):
         )
 
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
+        if linked:
+            if not state.project_file_path:
+                raise ValueError("Linked recovery không có project_file_path.")
+            if getattr(self.project_service, "current_project", None) is None:
+                self.project_service.open_project(state.project_file_path)
+            if state.workspace_state:
+                self.workspace_service.apply_workspace(state.workspace_state)
+
+        # Workspace restoration loads the canonical artifact first. The
+        # recovered in-memory segments must be applied after it so unsaved
+        # edits win without writing back to the project or artifact files.
         self.sub_editor.all_segments = copy.deepcopy(state.segments)
+
+        duration_ms = 0
+        if linked and hasattr(self, "video_player"):
+            duration_getter = getattr(self.video_player, "get_video_duration_ms", None)
+            if callable(duration_getter):
+                duration_ms = max(0, int(duration_getter() or 0))
+            if duration_ms <= 0 and state.video_path:
+                duration_getter = getattr(self, "_queue_video_duration_ms", None)
+                if callable(duration_getter):
+                    duration_ms = max(0, int(duration_getter(state.video_path) or 0))
+
         if hasattr(self.sub_editor, "render_page"):
             self.sub_editor.render_page()
         if hasattr(self, "timeline_data_provider"):
-            self.timeline_data_provider.load_runtime_data(state.segments, 0)
+            self.timeline_data_provider.load_runtime_data(
+                self.sub_editor.all_segments,
+                duration_ms,
+            )
         if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "load_project_data"):
             self.timeline_widget.load_project_data(
-                0,
+                duration_ms,
                 self.timeline_data_provider.get_all_segments(),
                 None,
             )
-        if state.workspace_state and getattr(self.project_service, "current_project", None):
-            self.workspace_service.apply_workspace(state.workspace_state)
         context_data = getattr(state, "transcription_context", None)
         project = getattr(self.project_service, "current_project", None)
         if context_data and project:

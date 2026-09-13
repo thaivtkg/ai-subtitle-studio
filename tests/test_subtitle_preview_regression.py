@@ -73,6 +73,31 @@ class TestSubtitlePreviewRegression(unittest.TestCase):
         host.deleteLater()
         self.app.processEvents()
 
+    def test_position_changed_uses_source_times_when_cached_ms_are_zero(self):
+        host = self._make_editor_host()
+        host.sub_editor.all_segments = [
+            {
+                "start": 1000,
+                "end": 3000,
+                "start_ms": 0,
+                "end_ms": 0,
+                "text": "Restored subtitle",
+                "stt": "1",
+            }
+        ]
+        player = VideoPlayerWidget(host)
+        host.setCentralWidget(player)
+        host.show()
+        self.app.processEvents()
+
+        player.position_changed(1500)
+
+        self.assertIsNotNone(player.subtitle_overlay.render_input)
+        self.assertEqual(player.subtitle_overlay.render_input.text, "Restored subtitle")
+        host.close()
+        host.deleteLater()
+        self.app.processEvents()
+
     def test_actual_overlay_paint_changes_pixels_for_ascii_and_cjk(self):
         for text in ("Subtitle Preview", "出たなボンネン！"):
             with self.subTest(text=text):
