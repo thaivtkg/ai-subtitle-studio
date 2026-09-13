@@ -264,6 +264,7 @@ class VideoPlayerWidget(QWidget):
         is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
         if not is_preview_enabled:
             self.subtitle_overlay.clear_subtitle()
+            self.timeline_position_changed.emit(position)
             return
 
         # 1. LẤY DỮ LIỆU TRỰC TIẾP TỪ EDITOR BẢNG BÊN DƯỚI

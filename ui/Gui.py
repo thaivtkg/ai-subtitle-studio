@@ -738,15 +738,33 @@ class MainWindow(QMainWindow):
     # Backwards-compatible name for callers from the first refactor pass.
     _apply_subtitle_style = _on_subtitle_style_changed
 
+    def set_subtitle_preview_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        video_player = self.video_player
+        controller = getattr(video_player, "sub_controller", None)
+        overlay = getattr(video_player, "subtitle_overlay", None)
+
+        if controller is not None:
+            controller.is_enabled = enabled
+        if overlay is not None:
+            overlay.setVisible(enabled)
+
+        checkbox = getattr(getattr(self, "inspector_panel", None), "chk_preview", None)
+        if checkbox is not None:
+            previous_blocked = checkbox.blockSignals(True)
+            try:
+                checkbox.setChecked(enabled)
+            finally:
+                checkbox.blockSignals(previous_blocked)
+
+        if enabled:
+            video_player.position_changed(video_player.player.position())
+        elif overlay is not None:
+            overlay.clear_subtitle()
+
     @Slot(bool)
     def _on_preview_toggled(self, is_visible: bool):
-        """Toggle overlay visibility without changing subtitle controller state."""
-        overlay = getattr(self.video_player, "subtitle_overlay", None)
-        if overlay is not None:
-            overlay.setVisible(bool(is_visible))
-        controller = getattr(self.video_player, "sub_controller", None)
-        if controller is not None and hasattr(controller, "toggle_preview"):
-            controller.toggle_preview(bool(is_visible))
+        self.set_subtitle_preview_enabled(is_visible)
 
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         if req_vid_path != self.queue_mgr.active_vid:

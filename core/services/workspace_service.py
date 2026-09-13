@@ -87,10 +87,8 @@ class WorkspaceService:
         # 3. Phục hồi trạng thái hiển thị phụ đề (Chỉ can thiệp logic Core)
         try:
             if hasattr(self.ui, 'video_player') and hasattr(self.ui.video_player, 'sub_controller'):
-                self.ui.video_player.sub_controller.is_enabled = workspace.subtitle_preview_enabled
-                # Ép làm mới giao diện Video
-                if not workspace.subtitle_preview_enabled:
-                    self.ui.video_player.subtitle_overlay.clear_subtitle()
+                is_preview_enabled = bool(workspace.subtitle_preview_enabled)
+                self.ui.set_subtitle_preview_enabled(is_preview_enabled)
         except Exception as e:
             print(f"Lỗi khi khôi phục Preview Subtitle: {e}")
 
