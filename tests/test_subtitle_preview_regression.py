@@ -2,33 +2,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 from core.services.workspace_service import WorkspaceService
-from ui.Gui import MainWindow
 from player.video_player import VideoPlayerWidget
-
-
-class PreviewHost:
-    def __init__(self, enabled=True):
-        self.preview_calls = []
-        self.video_player = SimpleNamespace(
-            sub_controller=SimpleNamespace(is_enabled=enabled),
-            subtitle_overlay=MagicMock(),
-            player=MagicMock(position=MagicMock(return_value=1500)),
-            position_changed=MagicMock(),
-        )
-        self.inspector_panel = SimpleNamespace(chk_preview=MagicMock())
-
-    def set_subtitle_preview_enabled(self, enabled):
-        self.preview_calls.append(enabled)
-        self.video_player.sub_controller.is_enabled = enabled
-        self.video_player.subtitle_overlay.setVisible(enabled)
-        self.inspector_panel.chk_preview.setChecked(enabled)
-        if enabled:
-            self.video_player.position_changed(self.video_player.player.position())
-        else:
-            self.video_player.subtitle_overlay.clear_subtitle()
+from ui.Gui import MainWindow
 
 
 class TestSubtitlePreviewRegression(unittest.TestCase):
@@ -36,59 +16,125 @@ class TestSubtitlePreviewRegression(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_position_changed_renders_editor_subtitle(self):
+    def _make_editor_host(self, text="Subtitle Preview"):
         host = QMainWindow()
         host.sub_editor = SimpleNamespace(
             all_segments=[
                 {
                     "start": "00:00:01,000",
                     "end": "00:00:03,000",
-                    "text": "Hello",
+                    "text": text,
                     "stt": 1,
                 }
             ],
             highlight_row_by_stt=MagicMock(),
             clear_highlight=MagicMock(),
         )
+        return host
+
+    def _make_preview_window(self, enabled=True):
+        window = MainWindow.__new__(MainWindow)
+        window.video_player = SimpleNamespace(
+            sub_controller=SimpleNamespace(is_enabled=enabled),
+            subtitle_overlay=MagicMock(),
+            player=MagicMock(position=MagicMock(return_value=1500)),
+            position_changed=MagicMock(),
+        )
+        window.inspector_panel = SimpleNamespace(chk_preview=MagicMock())
+        return window
+
+    def _render_overlay(self, player):
+        image = QImage(player.subtitle_overlay.size(), QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        player.subtitle_overlay.render(image)
+        return image
+
+    def test_position_changed_renders_editor_subtitle(self):
+        host = self._make_editor_host()
         player = VideoPlayerWidget(host)
+        host.setCentralWidget(player)
+        host.resize(960, 540)
+        host.show()
+        player.empty_state_lbl.hide()
+        self.app.processEvents()
+
         player.position_changed(1500)
 
         self.assertIsNotNone(player.subtitle_overlay.render_input)
-        self.assertEqual(player.subtitle_overlay.render_input.text, "Hello")
+        self.assertEqual(player.subtitle_overlay.render_input.text, "Subtitle Preview")
+        self.assertTrue(player.subtitle_overlay.isVisible())
+        self.assertTrue(player.overlay_proxy.isVisible())
+        self.assertGreater(player.subtitle_overlay.width(), 0)
+        self.assertGreater(player.subtitle_overlay.height(), 0)
+        self.assertGreater(player.overlay_proxy.geometry().width(), 0)
+        self.assertGreater(player.overlay_proxy.geometry().height(), 0)
+        self.assertGreater(player.overlay_proxy.zValue(), player.video_item.zValue())
+        host.close()
+        host.deleteLater()
+        self.app.processEvents()
 
-    def test_turning_preview_on_refreshes_current_position(self):
-        host = PreviewHost(enabled=False)
-        host.video_player.position_changed = MagicMock()
+    def test_actual_overlay_paint_changes_pixels_for_ascii_and_cjk(self):
+        for text in ("Subtitle Preview", "出たなボンネン！"):
+            with self.subTest(text=text):
+                host = self._make_editor_host(text)
+                player = VideoPlayerWidget(host)
+                host.setCentralWidget(player)
+                host.resize(960, 540)
+                host.show()
+                player.empty_state_lbl.hide()
+                self.app.processEvents()
 
-        MainWindow._on_preview_toggled(host, True)
+                before = self._render_overlay(player)
+                player.position_changed(1500)
+                self.app.processEvents()
+                after = self._render_overlay(player)
 
-        self.assertEqual(host.preview_calls, [True])
-        self.assertTrue(host.video_player.sub_controller.is_enabled)
-        host.video_player.subtitle_overlay.setVisible.assert_called_once_with(True)
-        host.video_player.position_changed.assert_called_once_with(1500)
-        host.inspector_panel.chk_preview.setChecked.assert_called_once_with(True)
+                self.assertNotEqual(before, after)
+                host.close()
+                host.deleteLater()
+                self.app.processEvents()
 
-    def test_turning_preview_off_hides_and_clears_immediately(self):
-        host = PreviewHost(enabled=True)
+    def test_actual_graphics_view_paint_changes_pixels(self):
+        host = self._make_editor_host()
+        player = VideoPlayerWidget(host)
+        host.setCentralWidget(player)
+        host.resize(960, 540)
+        host.show()
+        player.empty_state_lbl.hide()
+        self.app.processEvents()
 
-        MainWindow._on_preview_toggled(host, False)
+        before = player.view.grab().toImage()
+        player.position_changed(1500)
+        self.app.processEvents()
+        after = player.view.grab().toImage()
 
-        self.assertFalse(host.video_player.sub_controller.is_enabled)
-        self.assertEqual(host.preview_calls, [False])
-        self.assertFalse(host.video_player.sub_controller.is_enabled)
-        host.video_player.subtitle_overlay.setVisible.assert_called_once_with(False)
-        host.video_player.subtitle_overlay.clear_subtitle.assert_called_once_with()
-        host.inspector_panel.chk_preview.setChecked.assert_called_once_with(False)
+        self.assertNotEqual(before, after)
+        host.close()
+        host.deleteLater()
+        self.app.processEvents()
+
+    def test_turning_preview_on_uses_real_main_window_transition(self):
+        window = self._make_preview_window(enabled=False)
+
+        window._on_preview_toggled(True)
+
+        self.assertTrue(window.video_player.sub_controller.is_enabled)
+        window.video_player.subtitle_overlay.setVisible.assert_called_once_with(True)
+        window.video_player.position_changed.assert_called_once_with(1500)
+        window.inspector_panel.chk_preview.setChecked.assert_called_once_with(True)
+
+    def test_turning_preview_off_uses_real_main_window_transition(self):
+        window = self._make_preview_window(enabled=True)
+
+        window._on_preview_toggled(False)
+
+        self.assertFalse(window.video_player.sub_controller.is_enabled)
+        window.video_player.subtitle_overlay.setVisible.assert_called_once_with(False)
+        window.video_player.subtitle_overlay.clear_subtitle.assert_called_once_with()
+        window.inspector_panel.chk_preview.setChecked.assert_called_once_with(False)
 
     def _workspace_service(self, enabled):
-        host = PreviewHost(enabled=not enabled)
-        host.switch_page = MagicMock()
-        host.bottom_tabs = SimpleNamespace(setCurrentIndex=MagicMock())
-        host.queue_mgr = SimpleNamespace(
-            get_items=MagicMock(return_value=[]),
-            add_video=MagicMock(),
-        )
-        host.on_queue_item_clicked = MagicMock()
+        window = self._make_preview_window(enabled=not enabled)
         project = SimpleNamespace(
             state=SimpleNamespace(
                 active_artifact_id=None,
@@ -101,43 +147,36 @@ class TestSubtitlePreviewRegression(unittest.TestCase):
             ),
             source=SimpleNamespace(path="requirements.txt"),
         )
-        service = WorkspaceService(host, SimpleNamespace(current_project=project))
-        return host, service
+        window.switch_page = MagicMock()
+        window.bottom_tabs = SimpleNamespace(setCurrentIndex=MagicMock())
+        window.queue_mgr = SimpleNamespace(
+            get_items=MagicMock(return_value=[]),
+            add_video=MagicMock(),
+        )
+        window.on_queue_item_clicked = MagicMock()
+        service = WorkspaceService(window, SimpleNamespace(current_project=project))
+        return window, service
 
     def test_restore_workspace_preview_false_syncs_all_layers(self):
-        host, service = self._workspace_service(False)
+        window, service = self._workspace_service(False)
 
         service.restore_workspace()
 
-        self.assertEqual(host.preview_calls, [False])
-        self.assertFalse(host.video_player.sub_controller.is_enabled)
-        host.video_player.subtitle_overlay.setVisible.assert_called_once_with(False)
-        host.inspector_panel.chk_preview.setChecked.assert_called_once_with(False)
+        self.assertFalse(window.video_player.sub_controller.is_enabled)
+        window.video_player.subtitle_overlay.setVisible.assert_called_once_with(False)
+        window.inspector_panel.chk_preview.setChecked.assert_called_once_with(False)
 
     def test_restore_workspace_preview_true_syncs_all_layers(self):
-        host, service = self._workspace_service(True)
+        window, service = self._workspace_service(True)
 
         service.restore_workspace()
 
-        self.assertEqual(host.preview_calls, [True])
-        self.assertTrue(host.video_player.sub_controller.is_enabled)
-        host.video_player.subtitle_overlay.setVisible.assert_called_once_with(True)
-        host.inspector_panel.chk_preview.setChecked.assert_called_once_with(True)
+        self.assertTrue(window.video_player.sub_controller.is_enabled)
+        window.video_player.subtitle_overlay.setVisible.assert_called_once_with(True)
+        window.inspector_panel.chk_preview.setChecked.assert_called_once_with(True)
 
     def test_timeline_position_still_emits_when_preview_is_off(self):
-        host = QMainWindow()
-        host.sub_editor = SimpleNamespace(
-            all_segments=[
-                {
-                    "start": "00:00:01,000",
-                    "end": "00:00:03,000",
-                    "text": "Hello",
-                    "stt": 1,
-                }
-            ],
-            highlight_row_by_stt=MagicMock(),
-            clear_highlight=MagicMock(),
-        )
+        host = self._make_editor_host()
         player = VideoPlayerWidget(host)
         player.sub_controller.is_enabled = False
         emitted = []
