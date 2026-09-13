@@ -21,9 +21,10 @@ class TestClearQueueLifecycle(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_clear_queue_closes_project_and_resets_revision_state(self):
+    def test_empty_queue_clears_media_views_without_closing_project_context(self):
         project_service = MagicMock()
         revision_tracker = MagicMock()
+        recovery_manager = MagicMock()
         queue_mgr = MagicMock()
         queue_mgr.get_items.return_value = {}
         fake_window = SimpleNamespace(
@@ -42,12 +43,19 @@ class TestClearQueueLifecycle(unittest.TestCase):
             ),
             project_service=project_service,
             revision_tracker=revision_tracker,
+            recovery_manager=recovery_manager,
         )
 
         MainWindow.on_queue_updated(fake_window)
 
-        project_service.close_project.assert_called_once_with()
-        revision_tracker.reset_for_new_document.assert_called_once_with()
+        fake_window.video_player.cleanup.assert_called_once_with()
+        fake_window.timeline_widget.clear.assert_called_once_with()
+        self.assertEqual(fake_window.sub_editor.all_segments, [])
+        fake_window.sub_editor.render_page.assert_called_once_with()
+        fake_window.video_player.sub_controller.load_srt.assert_called_once_with(None)
+        project_service.close_project.assert_not_called()
+        revision_tracker.reset_for_new_document.assert_not_called()
+        recovery_manager.finalize_clean_shutdown.assert_not_called()
 
     def test_empty_editor_page_clears_current_subtitle_context(self):
         editor = SubtitleEditorWidget()

@@ -1219,10 +1219,6 @@ class MainWindow(QMainWindow):
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
-            self.project_service.close_project()
-            self.revision_tracker.reset_for_new_document()
-            if getattr(self, "recovery_manager", None):
-                self.recovery_manager.finalize_clean_shutdown()
 
     def on_queue_item_clicked(self, vid_path, fresh_project=False):
         self.queue_mgr.set_active(vid_path)
