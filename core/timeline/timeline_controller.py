@@ -11,6 +11,7 @@ from core.timeline.timeline_commands import (
 from core.timeline.timeline_state import TimelineState, TimelineStateManager
 from core.timeline.timeline_undo_manager import UndoRedoManager
 from core.subtitle_editing.commands.timeline_adapter import TimelineCommandAdapter
+from core.subtitle_editing.selection_controller import SelectionSource
 from ui.timeline.subtitle_track import EditMode
 from ui.toast import Toast
 
@@ -44,14 +45,79 @@ class TimelineController(QObject):
 
         if self.selection_controller:
             self.selection_controller.selection_changed.connect(self.sync_selection)
+            activation_signal = getattr(
+                self.selection_controller, "editor_activation_requested", None
+            )
+            if activation_signal is not None:
+                activation_signal.connect(self.sync_editor_activation)
+
+    def sync_from_editor_segments(self, editor_segments):
+        """Refresh timeline wrappers when editor data arrives after timeline setup."""
+        duration_ms = max(
+            0,
+            int(
+                getattr(self.ui, "duration_ms", 0)
+                or self.data_provider.get_duration_ms()
+            ),
+        )
+        if duration_ms <= 0:
+            return
+
+        waveform_data = self.ui.container.waveform.waveform_data
+        self.data_provider.load_runtime_data(editor_segments or [], duration_ms)
+        self.ui.load_project_data(
+            duration_ms,
+            self.data_provider.get_all_segments(),
+            waveform_data,
+        )
+
+        if getattr(self, "selection_controller", None):
+            self.sync_selection(
+                self.selection_controller.selected_index,
+                self.selection_controller.selected_segment_id,
+                SelectionSource.PROGRAMMATIC,
+            )
+
+    def sync_editor_activation(self, index, segment_id):
+        track = self.ui.container.track
+        segment = None
+        if segment_id:
+            segment = next(
+                (candidate for candidate in track.segments if candidate.segment_id == segment_id),
+                None,
+            )
+        if segment is None and 0 <= index < len(track.segments):
+            segment = track.segments[index]
+        if segment is None:
+            return
+
+        track.set_selection({segment.segment_id})
+        self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+        if hasattr(self.ui, "center_on_time"):
+            self.ui.center_on_time((segment.start_ms + segment.end_ms) // 2)
 
     def sync_selection(self, index, segment_id, source=None):
         track = self.ui.container.track
-        ids = {segment_id} if segment_id and any(s.segment_id == segment_id for s in track.segments) else set()
-        if not ids and 0 <= index < len(track.segments):
-            ids = {track.segments[index].segment_id}
-        track.selected_ids = ids
-        track.update()
+        segment = None
+        if segment_id:
+            segment = next(
+                (candidate for candidate in track.segments if candidate.segment_id == segment_id),
+                None,
+            )
+        if segment is None and 0 <= index < len(track.segments):
+            segment = track.segments[index]
+
+        if segment is None:
+            track.set_selection(set())
+            self.ui.container.waveform.clear_selected_range()
+            return
+
+        track.set_selection({segment.segment_id})
+        self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+
+        if source == SelectionSource.EDITOR and hasattr(self.ui, "center_on_time"):
+            midpoint_ms = (segment.start_ms + segment.end_ms) // 2
+            self.ui.center_on_time(midpoint_ms)
 
     # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
     def sync_from_editor(self, ms: int):

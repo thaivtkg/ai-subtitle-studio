@@ -120,6 +120,12 @@ class TimelineWidget(QScrollArea):
         self.horizontalScrollBar().setValue(target_scroll)
         self._internal_scroll = False
 
+    def center_on_time(self, time_ms: int):
+        if self.duration_ms <= 0:
+            return
+        time_ms = max(0, min(int(time_ms), self.duration_ms))
+        self._center_on_x(int((time_ms / 1000.0) * self.pixels_per_second))
+
     def mousePressEvent(self, event):
         """User click vào Timeline -> Chuyển tọa độ thành Time (ms) và phát tín hiệu Seek"""
         # Lấy tọa độ click tương đối với mặt cuộn bên trong
@@ -135,5 +141,6 @@ class TimelineWidget(QScrollArea):
         self.container.ruler.set_data(0)
         self.container.track.set_data([], 0)
         self.container.waveform.set_data(None, 0)
+        self.container.waveform.clear_selected_range()
         self.container.playhead.set_position(0)
         self.container.adjustSize()

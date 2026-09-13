@@ -15,6 +15,7 @@ class WaveformView(QWidget):
         self.duration_ms = 0
         self.pixels_per_second = 100  # Hệ số Zoom mặc định (100px = 1 giây)
         self.chunk_ms = 10            # Độ phân giải (Đồng bộ với WaveformService)
+        self._selected_range_ms = None
 
         # Cờ tối ưu hóa: Báo cho Qt biết ta sẽ tự vẽ toàn bộ nền để tránh vẽ 2 lần (Overdraw)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -32,6 +33,41 @@ class WaveformView(QWidget):
         self.pixels_per_second = max(10, min(pixels_per_second, 1000))
         self.update_geometry_size()
         self.update()
+
+    def set_selected_range(self, start_ms: int, end_ms: int) -> None:
+        try:
+            start_ms = max(0, int(start_ms))
+            end_ms = max(0, int(end_ms))
+        except (TypeError, ValueError):
+            self.clear_selected_range()
+            return
+
+        if self.duration_ms > 0:
+            start_ms = min(start_ms, self.duration_ms)
+            end_ms = min(end_ms, self.duration_ms)
+
+        if end_ms <= start_ms:
+            self.clear_selected_range()
+            return
+
+        self._selected_range_ms = (start_ms, end_ms)
+        self.update()
+
+    def clear_selected_range(self) -> None:
+        self._selected_range_ms = None
+        self.update()
+
+    def _ms_to_x(self, ms: int) -> int:
+        return int((ms / 1000.0) * self.pixels_per_second)
+
+    def _selected_range_rect(self):
+        if self._selected_range_ms is None:
+            return None
+
+        start_ms, end_ms = self._selected_range_ms
+        x1 = self._ms_to_x(start_ms)
+        x2 = self._ms_to_x(end_ms)
+        return QRect(x1, 1, max(1, x2 - x1), max(1, self.height() - 2))
 
     def update_geometry_size(self):
         """Tính toán và thiết lập chiều dài thực tế của Widget dựa trên độ dài Audio và Zoom"""
@@ -94,7 +130,7 @@ class WaveformView(QWidget):
             chunk_idx = start_idx + i
             
             # Tính tọa độ X trên UI
-            x = int((chunk_idx * self.chunk_ms / 1000.0) * self.pixels_per_second)
+            x = self._ms_to_x(chunk_idx * self.chunk_ms)
             
             # Khử Overdraw: Nếu tọa độ x trùng với x trước đó (do Zoom quá nhỏ), bỏ qua vẽ đè
             if x == last_x:
@@ -106,3 +142,16 @@ class WaveformView(QWidget):
             y_max = int(center_y - (max_peak * half_height))
             
             painter.drawLine(x, y_min, x, y_max)
+
+        selected_rect = self._selected_range_rect()
+        if selected_rect is not None:
+            selection_fill = QColor(Theme.CYAN)
+            selection_fill.setAlpha(30)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(selection_fill)
+            painter.drawRoundedRect(selected_rect, 3, 3)
+
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(Theme.CYAN), 2))
+            painter.drawRoundedRect(selected_rect, 3, 3)

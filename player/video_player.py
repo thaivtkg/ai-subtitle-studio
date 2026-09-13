@@ -354,6 +354,7 @@ class VideoPlayerWidget(QWidget):
         self.player.setPosition(position)
         # [FIX] Ép đồng bộ giao diện phụ đề ngay lập tức nếu video đang Tạm dừng
         if not self.player.isPlaying():
+            self.sub_controller.sync_position(position)
             self.position_changed(position)
 
     def set_volume(self, volume):

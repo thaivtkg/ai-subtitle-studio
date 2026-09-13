@@ -50,6 +50,62 @@ class MockProjectService:
         self.is_dirty = True
 
 
+class TestTimelineSegmentTimingNormalization(unittest.TestCase):
+    def test_stale_zero_cached_milliseconds_follow_canonical_strings(self):
+        provider = TimelineDataProvider()
+        provider.load_runtime_data(
+            [{
+                "id": "seg-85",
+                "start": "00:06:43,062",
+                "end": "00:06:50,422",
+                "start_ms": 0,
+                "end_ms": 0,
+                "text": "...",
+            }],
+            900000,
+        )
+
+        segment = provider.get_segment("seg-85")
+
+        self.assertEqual(segment.start_ms, 403062)
+        self.assertEqual(segment.end_ms, 410422)
+        self.assertEqual(int(segment.start_ms / 1000 * 100), 40306)
+
+    def test_zero_start_is_valid_when_end_is_positive(self):
+        provider = TimelineDataProvider()
+        provider.load_runtime_data(
+            [{
+                "id": "seg-zero",
+                "start": "00:00:00,000",
+                "end": "00:00:02,500",
+                "start_ms": 0,
+                "end_ms": 2500,
+                "text": "...",
+            }],
+            10000,
+        )
+
+        segment = provider.get_segment("seg-zero")
+
+        self.assertEqual((segment.start_ms, segment.end_ms), (0, 2500))
+
+    def test_numeric_source_timing_is_preserved(self):
+        provider = TimelineDataProvider()
+        provider.load_runtime_data(
+            [{
+                "id": "seg-numeric",
+                "start": 403062,
+                "end": 410422,
+                "text": "...",
+            }],
+            900000,
+        )
+
+        segment = provider.get_segment("seg-numeric")
+
+        self.assertEqual((segment.start_ms, segment.end_ms), (403062, 410422))
+
+
 # ==========================================
 # 2. TEST SUITE CHỨNG MINH 100% PASS
 # ==========================================

@@ -522,6 +522,12 @@ class MainWindow(QMainWindow):
             self.project_service, self.timeline_widget, self.timeline_data_provider,
             undo_manager=self.undo_manager, selection_controller=self.selection_controller,
         )
+        self.sub_editor.live_edit_applied.connect(
+            lambda *_: self.timeline_controller.sync_from_editor_segments(
+                self.sub_editor.all_segments
+            )
+        )
+        self.timeline_controller.sync_from_editor_segments(self.sub_editor.all_segments)
         self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
         
