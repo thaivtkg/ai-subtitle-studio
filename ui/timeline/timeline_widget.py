@@ -62,7 +62,35 @@ class TimelineWidget(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet(f"QScrollArea {{ border: 1px solid {Theme.BORDER}; background-color: {Theme.BG_APP}; }}")
+        self.setStyleSheet(f"""
+            QScrollArea {{
+                border: 1px solid {Theme.BORDER};
+                background-color: {Theme.BG_APP};
+            }}
+            QScrollBar:horizontal {{
+                background: {Theme.SURFACE_SOFT};
+                height: 14px;
+                margin: 2px 4px;
+                border-radius: 7px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {Theme.CYAN};
+                min-width: 72px;
+                border: 3px solid {Theme.SURFACE_SOFT};
+                border-radius: 7px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background: {Theme.TEXT_PRIMARY};
+            }}
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {{
+                background: {Theme.SURFACE_SOFT};
+            }}
+        """)
 
         self.container = TimelineContainer()
         self.setWidget(self.container)

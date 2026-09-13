@@ -86,6 +86,13 @@ class TestWaveformSelectionFrame(unittest.TestCase):
 
         self.assertEqual(self.waveform._selected_range_ms, (0, 10000))
 
+    def test_timeline_scrollbar_has_expanded_horizontal_hit_area(self):
+        timeline = TimelineWidget()
+
+        self.assertIn("QScrollBar::handle:horizontal", timeline.styleSheet())
+        self.assertIn("height: 14px", timeline.styleSheet())
+        self.assertIn("min-width: 72px", timeline.styleSheet())
+
     def test_selected_range_is_painted_when_it_overlaps_viewport(self):
         self.waveform.set_selected_range(1000, 2500)
         image = QImage(1000, 100, QImage.Format_ARGB32)

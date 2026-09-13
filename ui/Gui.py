@@ -1198,8 +1198,27 @@ class MainWindow(QMainWindow):
                 self.on_queue_item_clicked(vid)
 
     def clear_files(self):
+        if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
+            project = getattr(self.project_service, "current_project", None)
+            project_name = getattr(project, "name", "hiện tại")
+            reply = QMessageBox.question(
+                self,
+                "Lưu thay đổi?",
+                f"Dự án '{project_name}' có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi xóa hàng đợi không?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
+                return
+            if reply == QMessageBox.Save and not self.action_save_project():
+                return
+
         self._queue_project_dirs.clear()
         self.queue_mgr.clear_queue()
+        self.project_service.close_project()
+        self.revision_tracker.reset_for_new_document()
+        if getattr(self, "recovery_manager", None):
+            self.recovery_manager.finalize_clean_shutdown()
 
     def select_output_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu kết quả")
