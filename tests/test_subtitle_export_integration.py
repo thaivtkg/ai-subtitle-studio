@@ -123,26 +123,38 @@ class TestSubtitleExportIntegrationContracts(unittest.TestCase):
         project_state = ProjectState(
             subtitle_placement=SubtitlePlacementState(mode="custom", x=0.25, y=0.75)
         )
-        try:
-            worker = HardsubWorker(
-                "video.mp4",
-                "source.srt",
-                "output",
-                42,
-                "white",
-                "Arial",
-                project_state=project_state,
-            )
-        except TypeError as exc:
-            self.fail(f"hardsub worker has no project placement boundary: {exc}")
 
-        with patch.dict(sys.modules, {"torch": types.ModuleType("torch")}), \
-                patch("workers.TaskQueue.get_video_duration", return_value=1.0), \
-                patch("workers.TaskQueue.OutputPathService.build_hardsub_path", return_value="output/rendered.mp4"), \
-                patch("core.Backend.burn_hardsub") as burn:
-            worker.run()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video, srt, output = self._paths(temp_dir)
+            try:
+                worker = HardsubWorker(
+                    video,
+                    srt,
+                    temp_dir,
+                    42,
+                    "white",
+                    "Arial",
+                    project_state=project_state,
+                )
+            except TypeError as exc:
+                self.fail(f"hardsub worker has no project placement boundary: {exc}")
 
-        self.assertIs(burn.call_args.kwargs["placement_state"], project_state.subtitle_placement)
+            errors = []
+            worker.error_signal.connect(errors.append)
+            with patch.dict(sys.modules, {"torch": types.ModuleType("torch")}), \
+                    patch("workers.TaskQueue.psutil.cpu_percent", return_value=0.0), \
+                    patch("workers.TaskQueue.get_video_duration", return_value=1.0), \
+                    patch("workers.TaskQueue.OutputPathService.build_hardsub_path", return_value=output), \
+                    patch("core.Backend.burn_hardsub") as burn:
+                worker.run()
+
+            self.assertEqual(errors, [])
+            burn.assert_called_once()
+            kwargs = burn.call_args.kwargs
+            self.assertEqual(kwargs["video_path"], video.replace("\\", "/"))
+            self.assertEqual(kwargs["srt_path"], srt.replace("\\", "/"))
+            self.assertEqual(kwargs["output_path"], output.replace("\\", "/"))
+            self.assertIs(kwargs["placement_state"], project_state.subtitle_placement)
 
     def test_custom_export_cleans_ass_through_success_failure_and_cancel(self):
         from core import subtitle_ass
