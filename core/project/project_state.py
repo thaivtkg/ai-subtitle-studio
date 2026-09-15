@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+from core.subtitle_placement import SubtitlePlacementState
 
 @dataclass
 class WorkspaceState:
@@ -33,6 +34,8 @@ class ProjectState:
     subtitle_artifact_id: Optional[str] = None
     selected_segment_id: Optional[str] = None
     dirty: bool = False
+
+    subtitle_placement: SubtitlePlacementState = field(default_factory=SubtitlePlacementState)
     
     workspace: WorkspaceState = field(default_factory=WorkspaceState)
     

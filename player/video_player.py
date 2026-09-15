@@ -1,5 +1,5 @@
 import os
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QPointF, Signal
 
 from PySide6.QtCore import QRectF, QSizeF, Qt, QUrl
 from PySide6.QtGui import QPainter
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.subtitle_controller import SubtitleController
+from core.subtitle_placement import PlacementEditSession
 from player.subtitle_overlay import SubtitleOverlay
 from ui.animations.animation_config import SubtitleAnimationConfig
 from ui.animations.animation_types import SubtitleRenderInput
@@ -92,6 +93,8 @@ class CustomGraphicsView(QGraphicsView):
 
 class VideoPlayerWidget(QWidget):
     timeline_position_changed = Signal(int)
+    subtitle_placement_preview_changed = Signal(object)
+    subtitle_placement_committed = Signal(object)
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -100,6 +103,9 @@ class VideoPlayerWidget(QWidget):
         
         # [FIX] Thêm biến theo dõi dòng đang được Highlight để tránh spam UI
         self._last_highlighted_stt = None 
+        self._position_edit_mode = False
+        self._placement_drag_session = None
+        self._placement_drag_offset = QPointF()
         
         self.init_ui()
         self.init_player()
@@ -126,6 +132,7 @@ class VideoPlayerWidget(QWidget):
 
         # 3. Tạo khung nhìn tổng
         self.view = CustomGraphicsView(self.scene, self.video_item, self.overlay_proxy)
+        self.view.viewport().installEventFilter(self)
         layout.addWidget(self.view, stretch=1)
         
         # =============================================================
@@ -211,6 +218,43 @@ class VideoPlayerWidget(QWidget):
         controls_layout.addWidget(self.slider_volume)
 
         layout.addLayout(controls_layout)
+
+    def set_position_edit_mode(self, enabled: bool):
+        self._position_edit_mode = bool(enabled)
+        if not self._position_edit_mode:
+            self._placement_drag_session = None
+
+    def _overlay_local_point(self, viewport_point):
+        scene_point = self.view.mapToScene(viewport_point)
+        return scene_point - self.overlay_proxy.geometry().topLeft()
+
+    def eventFilter(self, obj, event):
+        if obj is self.view.viewport() and self._position_edit_mode:
+            event_type = event.type()
+            if event_type == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                local_point = self._overlay_local_point(event.position().toPoint())
+                layout = self.subtitle_overlay.calculate_layout()
+                if layout and self.subtitle_overlay.hit_test(local_point):
+                    self._placement_drag_offset = layout.base_anchor - local_point
+                    self._placement_drag_session = PlacementEditSession(
+                        self.subtitle_placement_committed.emit,
+                        self.subtitle_overlay.placement_state,
+                    )
+                    return True
+            elif event_type == QEvent.MouseMove and self._placement_drag_session:
+                local_point = self._overlay_local_point(event.position().toPoint())
+                anchor = local_point + self._placement_drag_offset
+                width = max(1, self.subtitle_overlay.width())
+                height = max(1, self.subtitle_overlay.height())
+                placement = self._placement_drag_session.move(anchor.x() / width, anchor.y() / height)
+                self.subtitle_overlay.set_placement_state(placement.mode, placement.x, placement.y)
+                self.subtitle_placement_preview_changed.emit(placement)
+                return True
+            elif event_type == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and self._placement_drag_session:
+                self._placement_drag_session.release()
+                self._placement_drag_session = None
+                return True
+        return super().eventFilter(obj, event)
 
     def init_player(self):
         self.player = QMediaPlayer()

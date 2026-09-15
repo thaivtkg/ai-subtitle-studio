@@ -61,6 +61,7 @@ from core.services.project_service import ProjectService
 from core.services.workspace_service import WorkspaceService
 from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from core.subtitle_editing.selection_controller import SubtitleSelectionController
+from core.subtitle_placement import SubtitlePlacementState
 from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
@@ -471,6 +472,14 @@ class MainWindow(QMainWindow):
         self.dock_tabs = dock_tabs
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
         self.inspector_panel.style_changed.connect(self._on_subtitle_style_changed)
+        self.video_player.subtitle_placement_committed.connect(
+            self._on_subtitle_placement_committed
+        )
+        self.video_player.subtitle_placement_preview_changed.connect(
+            lambda placement: self.inspector_panel.set_placement_state(
+                placement.mode, placement.x, placement.y, emit=False
+            )
+        )
         self.generation_dock.setWidget(dock_tabs)
         self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
 
@@ -726,10 +735,54 @@ class MainWindow(QMainWindow):
         self.inspector_panel.emit_current_style()
 
     # --- HÀM THỰC THI SIGNAL AN TOÀN TRÊN MAIN THREAD ---
+    def _apply_subtitle_placement(self, placement, *, mark_dirty=False):
+        """Apply one semantic placement value across project state and UI."""
+        placement = SubtitlePlacementState(
+            mode=getattr(placement, "mode", "bottom"),
+            x=getattr(placement, "x", 0.5),
+            y=getattr(placement, "y", 0.85),
+        )
+
+        project = getattr(getattr(self, "project_service", None), "current_project", None)
+        state = getattr(project, "state", None)
+        previous = getattr(state, "subtitle_placement", None)
+        changed = state is not None and previous != placement
+        if state is not None:
+            state.subtitle_placement = SubtitlePlacementState(
+                mode=placement.mode,
+                x=placement.x,
+                y=placement.y,
+            )
+
+        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+        if overlay is not None:
+            overlay.set_placement_state(placement.mode, placement.x, placement.y)
+
+        inspector = getattr(self, "inspector_panel", None)
+        if inspector is not None:
+            inspector.set_placement_state(
+                placement.mode, placement.x, placement.y, emit=False
+            )
+
+        if mark_dirty and changed:
+            project_service = getattr(self, "project_service", None)
+            if project_service is not None and project is not None:
+                project_service.mark_dirty()
+
+    def _sync_subtitle_placement_from_project(self):
+        project = getattr(getattr(self, "project_service", None), "current_project", None)
+        placement = getattr(getattr(project, "state", None), "subtitle_placement", None)
+        if placement is not None:
+            self._apply_subtitle_placement(placement, mark_dirty=False)
+
+    @Slot(object)
+    def _on_subtitle_placement_committed(self, placement):
+        self._apply_subtitle_placement(placement, mark_dirty=True)
+
     @Slot(dict)
     def _on_subtitle_style_changed(self, style: dict):
         """Adapt inspector's public style schema to the overlay renderer."""
-        position = {"top": "Top", "center": "Middle", "bottom": "Bottom"}.get(
+        position = {"top": "Top", "center": "Middle", "bottom": "Bottom", "custom": "Custom"}.get(
             str(style.get("position", "bottom")).lower(), "Bottom"
         )
         self.video_player.subtitle_overlay.update_style(
@@ -740,6 +793,16 @@ class MainWindow(QMainWindow):
             out_width=style.get("outline_width", style.get("out_width")),
             position=position,
         )
+        current_placement = self.video_player.subtitle_overlay.placement_state
+        self._apply_subtitle_placement(
+            SubtitlePlacementState(
+                mode=style.get("position", "bottom"),
+                x=style.get("x", current_placement.x),
+                y=style.get("y", current_placement.y),
+            ),
+            mark_dirty=True,
+        )
+        self.video_player.set_position_edit_mode(style.get("position_edit_mode", False))
 
     # Backwards-compatible name for callers from the first refactor pass.
     _apply_subtitle_style = _on_subtitle_style_changed
@@ -1279,6 +1342,7 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         self.project_service.open_project(project_dir)
+                self._sync_subtitle_placement_from_project()
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
                 self._refresh_transcription_context_views()
@@ -1427,7 +1491,8 @@ class MainWindow(QMainWindow):
             output_dir=out_dir,
             font_size=self.page_settings.size_spin.value(),
             font_color="white",
-            font_name=self.page_settings.font_combo.currentText()
+            font_name=self.page_settings.font_combo.currentText(),
+            project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -1445,7 +1510,7 @@ class MainWindow(QMainWindow):
         Toast.show_success(self, f"Render Hardsub xong: {path}")
         self.progress_bar.setValue(100)
         self.page_dashboard.quick_progress.setValue(100)
-        QTimer.singleShot(2500, self._cleanup_ui_after_task)
+        QTimer.singleShot(400, self._cleanup_ui_after_task)
 
     def _on_manual_hardsub_error(self, err):
         Toast.show_error(self, f"Lỗi Hardsub: {err}")
@@ -1635,6 +1700,7 @@ class MainWindow(QMainWindow):
             font_size=self.page_settings.size_spin.value(),
             font_color="white",
             font_name=self.page_settings.font_combo.currentText(),
+            project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -1681,6 +1747,7 @@ class MainWindow(QMainWindow):
             font_size=self.page_settings.size_spin.value(),
             font_color="white",
             font_name=self.page_settings.font_combo.currentText(),
+            project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2248,6 +2315,7 @@ class MainWindow(QMainWindow):
             
             try:
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
+                self._sync_subtitle_placement_from_project()
                 self.revision_tracker.reset_for_new_document()
                 self._switch_recovery_session()
                 
@@ -2272,6 +2340,7 @@ class MainWindow(QMainWindow):
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
+            self._sync_subtitle_placement_from_project()
             self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
             self.video_player.load_video(result.local_path)
             self.revision_tracker.reset_for_new_document()
@@ -2378,6 +2447,7 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(False)
 
             self.project_service.open_project(project_dir)
+            self._sync_subtitle_placement_from_project()
             self.revision_tracker.reset_for_new_document()
             self._switch_recovery_session()
             source_path = self.project_service.current_project.source.path
@@ -2442,6 +2512,7 @@ class MainWindow(QMainWindow):
             self.activateWindow()
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
             self.project_service.open_project(request.path)
+            self._sync_subtitle_placement_from_project()
             self.workspace_service.restore_workspace()
             self._refresh_transcription_context_views()
             self.activateWindow()

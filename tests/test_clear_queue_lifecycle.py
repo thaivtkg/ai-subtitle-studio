@@ -84,6 +84,7 @@ class TestClearQueueLifecycle(unittest.TestCase):
         recovery_manager = MagicMock()
         return SimpleNamespace(
             queue_mgr=queue_mgr,
+            _queue_project_dirs={},
             project_service=project_service,
             revision_tracker=revision_tracker,
             recovery_manager=recovery_manager,
