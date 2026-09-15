@@ -7,6 +7,7 @@ from dataclasses import asdict
 from core.project.project import Project, SourceInfo as ProjectSourceInfo
 from core.project.source_fingerprint import generate_source_info, SourceInfo
 from core.project.project_state import ProjectState, WorkspaceState, TimingState
+from core.subtitle_placement import SubtitlePlacementState
 from core.project.transcription_context import TranscriptionContext
 from core.artifacts.artifact_store import ArtifactStore
 from core.utils.file_utils import atomic_save_json
@@ -127,6 +128,7 @@ class ProjectService:
             "subtitle_artifact_id": self.current_project.state.subtitle_artifact_id,
             "selected_segment_id": self.current_project.state.selected_segment_id,
             "dirty": False,
+            "subtitle_placement": asdict(self.current_project.state.subtitle_placement),
             # [S7.1-T05] Lưu TimingState
             "timing": asdict(self.current_project.state.timing)
         }
@@ -179,6 +181,17 @@ class ProjectService:
                 project_state.active_artifact_id = s_data.get("active_artifact_id")
                 project_state.subtitle_artifact_id = s_data.get("subtitle_artifact_id")
                 project_state.selected_segment_id = s_data.get("selected_segment_id")
+
+                raw_placement = s_data.get("subtitle_placement")
+                if isinstance(raw_placement, dict):
+                    try:
+                        project_state.subtitle_placement = SubtitlePlacementState(
+                            mode=raw_placement.get("mode", "bottom"),
+                            x=raw_placement.get("x", 0.5),
+                            y=raw_placement.get("y", 0.85),
+                        )
+                    except (TypeError, ValueError):
+                        project_state.subtitle_placement = SubtitlePlacementState()
                 
                 # --- [S7.1-T05 & T08] Backward Compatibility cho TimingState ---
                 if "timing" in s_data:

@@ -1,12 +1,13 @@
 import re
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
 from ui.animations.animation_types import SubtitleAnimationState, SubtitleRenderInput
 from ui.animations.subtitle_animation_controller import SubtitleAnimationController
+from core.subtitle_placement import SubtitlePlacementState
 
 
 @dataclass
@@ -14,6 +15,15 @@ class VisualLine:
     text: str
     start_char_idx: int
     end_char_idx: int
+
+
+@dataclass
+class SubtitleLayout:
+    visual_lines: list[VisualLine]
+    line_origins: list[QPointF]
+    base_bounds: QRectF
+    rendered_bounds: QRectF
+    base_anchor: QPointF
 
 
 class SubtitleOverlay(QLabel):
@@ -33,6 +43,7 @@ class SubtitleOverlay(QLabel):
         self.outline_color = QColor("black")
         self.outline_width = 2
         self.position_mode = "Bottom"
+        self.placement_state = SubtitlePlacementState()
         self.highlight_color = QColor("#00E5FF")
 
         self.update_style()
@@ -43,11 +54,32 @@ class SubtitleOverlay(QLabel):
         if color: self.text_color = QColor(color)
         if out_color: self.outline_color = QColor(out_color)
         if out_width is not None: self.outline_width = int(out_width)
-        if position: self.position_mode = position
+        if position:
+            self.position_mode = position
+            mode = {"Top": "top", "Middle": "center", "Center": "center", "Bottom": "bottom", "Custom": "custom"}.get(position, "bottom")
+            self.placement_state = SubtitlePlacementState(
+                mode=mode,
+                x=self.placement_state.x,
+                y=self.placement_state.y,
+            )
 
         self.custom_font = QFont(self.font_family)
         self.custom_font.setPixelSize(self.font_size)
         self.custom_font.setBold(True)
+        self.update()
+
+    def set_placement_state(self, mode, x=None, y=None):
+        self.placement_state = SubtitlePlacementState(
+            mode=mode,
+            x=self.placement_state.x if x is None else x,
+            y=self.placement_state.y if y is None else y,
+        )
+        self.position_mode = {
+            "top": "Top",
+            "center": "Middle",
+            "bottom": "Bottom",
+            "custom": "Custom",
+        }[self.placement_state.mode]
         self.update()
 
     def update_subtitle(self, render_input: SubtitleRenderInput, current_time_ms: int):
@@ -113,17 +145,79 @@ class SubtitleOverlay(QLabel):
             idx += 1
         return idx
 
-    def paintEvent(self, event):
+    def calculate_layout(self) -> SubtitleLayout | None:
         if not self.render_input or not self.render_input.text.strip():
-            return
+            return None
 
         visual_state = (
             self.anim_controller.calculate_state(self.current_time_ms, self.render_input)
             if self.anim_controller
             else None
         )
-
         if visual_state and (visual_state.animation_state == SubtitleAnimationState.HIDDEN or visual_state.opacity <= 0):
+            return None
+
+        fm = QFontMetricsF(self.custom_font)
+        lines = self._wrap_text_with_mapping(self.render_input.text, fm, self.width() * 0.90)
+        if not lines:
+            return None
+
+        outline = float(self.outline_width)
+        line_height = fm.height()
+        total_height = line_height * len(lines)
+        max_line_width = max(fm.horizontalAdvance(line.text) for line in lines)
+        half_width = (max_line_width + outline * 2) / 2
+        half_height = (total_height + outline * 2) / 2
+
+        mode = self.placement_state.mode
+        if mode == "top":
+            anchor_y = 40 + half_height
+        elif mode == "center":
+            anchor_y = self.height() / 2
+        elif mode == "custom":
+            anchor_y = self.placement_state.y * self.height()
+        else:
+            anchor_y = self.height() - 40 - half_height
+        anchor_x = self.width() / 2 if mode != "custom" else self.placement_state.x * self.width()
+
+        anchor_x = max(half_width, min(self.width() - half_width, anchor_x))
+        anchor_y = max(half_height, min(self.height() - half_height, anchor_y))
+        base_anchor = QPointF(anchor_x, anchor_y)
+        top_left_x = anchor_x - max_line_width / 2
+        top_left_y = anchor_y - total_height / 2
+
+        line_origins = []
+        current_y = top_left_y + fm.ascent()
+        for line in lines:
+            line_origins.append(QPointF(anchor_x - fm.horizontalAdvance(line.text) / 2, current_y))
+            current_y += line_height
+
+        base_bounds = QRectF(
+            anchor_x - half_width,
+            anchor_y - half_height,
+            half_width * 2,
+            half_height * 2,
+        )
+        y_offset = visual_state.y_offset if visual_state else 0.0
+        rendered_bounds = base_bounds.translated(0, y_offset)
+        rendered_origins = [origin + QPointF(0, y_offset) for origin in line_origins]
+        return SubtitleLayout(lines, rendered_origins, base_bounds, rendered_bounds, base_anchor)
+
+    def is_inside_video(self, bounds: QRectF) -> bool:
+        return bounds.left() >= 0 and bounds.top() >= 0 and bounds.right() <= self.width() and bounds.bottom() <= self.height()
+
+    def hit_test(self, point) -> bool:
+        if not isinstance(point, QPointF):
+            point = QPointF(*point)
+        layout = self.calculate_layout()
+        return bool(layout and layout.rendered_bounds.contains(point))
+
+    def paintEvent(self, event):
+        if not self.render_input or not self.render_input.text.strip():
+            return
+
+        layout = self.calculate_layout()
+        if not layout:
             return
 
         painter = QPainter(self)
@@ -132,45 +226,26 @@ class SubtitleOverlay(QLabel):
         painter.setFont(self.custom_font)
 
         fm = QFontMetricsF(self.custom_font)
-        max_text_width = self.width() * 0.90
-        lines = self._wrap_text_with_mapping(self.render_input.text, fm, max_text_width)
-        
-        line_height = fm.height()
-        total_height = line_height * len(lines)
-        y_offset = visual_state.y_offset if visual_state else 0.0
-
-        margin = 40
-        if self.position_mode == "Top":
-            start_y = margin + fm.ascent() + y_offset
-        elif self.position_mode == "Middle":
-            start_y = (self.height() - total_height) / 2 + fm.ascent() + y_offset
-        else:
-            start_y = self.height() - margin - total_height + fm.ascent() + y_offset
-
+        visual_state = self.anim_controller.calculate_state(self.current_time_ms, self.render_input) if self.anim_controller else None
         if visual_state:
             painter.setOpacity(visual_state.opacity)
-            self._draw_animated(painter, fm, lines, start_y, visual_state)
+            self._draw_animated(painter, fm, layout, visual_state)
         else:
             painter.setOpacity(1.0)
-            self._draw_static(painter, fm, lines, start_y)
+            self._draw_static(painter, fm, layout)
 
-    def _draw_static(self, painter, fm, lines: list[VisualLine], start_y: float):
-        current_y = start_y
-        for v_line in lines:
-            line_width = fm.horizontalAdvance(v_line.text)
-            start_x = (self.width() - line_width) / 2
-            self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
-            current_y += fm.height()
+    def _draw_static(self, painter, fm, layout: SubtitleLayout):
+        for v_line, origin in zip(layout.visual_lines, layout.line_origins):
+            self._draw_text_path(painter, origin.x(), origin.y(), v_line.text, self.text_color)
 
-    def _draw_animated(self, painter, fm, lines: list[VisualLine], start_y: float, state):
-        current_y = start_y
+    def _draw_animated(self, painter, fm, layout: SubtitleLayout, state):
         is_reveal = state.visible_chars != -1
         is_highlight = state.highlight_chars > 0
 
-        for v_line in lines:
+        for v_line, origin in zip(layout.visual_lines, layout.line_origins):
             # Layout cố định hình học theo toàn bộ dòng chữ
-            full_line_width = fm.horizontalAdvance(v_line.text)
-            start_x = (self.width() - full_line_width) / 2
+            start_x = origin.x()
+            current_y = origin.y()
 
             if is_reveal:
                 if state.visible_chars <= v_line.start_char_idx:
