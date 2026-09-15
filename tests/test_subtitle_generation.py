@@ -786,8 +786,14 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
     def test_timing_mode_resume_routes_to_timing_pipeline(self):
         """Resume in Timing Draft must not invoke the subtitle checkpoint flow."""
         class ValueControl:
+            def __init__(self, data=None):
+                self.data = data
+
             def currentData(self):
-                return "timing"
+                return self.data
+
+            def currentText(self):
+                return self.data
 
             def value(self):
                 return 10
@@ -807,8 +813,10 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
                 self.resume_calls += 1
 
         panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
-        panel.cmb_mode = ValueControl()
+        panel.cmb_mode = ValueControl("timing")
         panel.spin_batch_val = ValueControl()
+        panel.cmb_model = ValueControl("large-v3")
+        panel.cmb_compute = ValueControl("float16")
         panel.timing_resume_requested = CapturingSignal()
         panel.generation_service = SubtitleService()
         panel._set_ui_state_running = lambda: None
@@ -817,7 +825,15 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
 
         self.assertEqual(
             panel.timing_resume_requested.calls,
-            [(10, {"use_vad": True, "min_silence_ms": 500})],
+            [(
+                10,
+                {
+                    "model_size": "large-v3",
+                    "compute_type": "float16",
+                    "use_vad": True,
+                    "min_silence_ms": 500,
+                },
+            )],
         )
         self.assertEqual(panel.generation_service.resume_calls, 0)
 
@@ -880,6 +896,9 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
             def currentData(self):
                 return self.data
 
+            def currentText(self):
+                return self.data
+
             def value(self):
                 return self.value_data
 
@@ -924,8 +943,8 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         panel.cmb_batch_mode = Control(data="segments")
         panel.spin_batch_val = Control(value=10)
         panel.model_group = Control()
-        panel.cmb_model = Control()
-        panel.cmb_compute = Control()
+        panel.cmb_model = Control(data="large-v3")
+        panel.cmb_compute = Control(data="float16")
         panel.cmb_language = Control()
         panel.chk_word_timestamps = Control()
         panel.chk_vad = Control()
@@ -944,7 +963,15 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         self.assertEqual(panel.cmb_batch_mode.index_changes, [])
         self.assertEqual(
             panel.timing_start_requested.calls,
-            [(10, {"use_vad": True, "min_silence_ms": 500})],
+            [(
+                10,
+                {
+                    "model_size": "large-v3",
+                    "compute_type": "float16",
+                    "use_vad": True,
+                    "min_silence_ms": 500,
+                },
+            )],
         )
 
     def test_timing_generate_continues_from_existing_checkpoint(self):
@@ -953,9 +980,18 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
             def currentData(self):
                 return "timing"
 
+            def currentText(self):
+                return "timing"
+
         class ValueControl:
+            def __init__(self, data=10):
+                self.data = data
+
             def value(self):
-                return 10
+                return self.data
+
+            def currentText(self):
+                return self.data
 
         class CapturingSignal:
             def __init__(self):
@@ -978,6 +1014,8 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
         panel.cmb_mode = ModeControl()
         panel.spin_batch_val = ValueControl()
+        panel.cmb_model = ValueControl("large-v3")
+        panel.cmb_compute = ValueControl("float16")
         panel.video_duration_ms = 600000
         panel.timing_start_requested = CapturingSignal()
         panel.timing_resume_requested = CapturingSignal()
@@ -989,7 +1027,15 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         self.assertEqual(panel.timing_start_requested.calls, [])
         self.assertEqual(
             panel.timing_resume_requested.calls,
-            [(10, {"use_vad": True, "min_silence_ms": 500})],
+            [(
+                10,
+                {
+                    "model_size": "large-v3",
+                    "compute_type": "float16",
+                    "use_vad": True,
+                    "min_silence_ms": 500,
+                },
+            )],
         )
 
     def test_asr_allows_segment_batching_from_draft_timing_artifact(self):

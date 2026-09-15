@@ -348,7 +348,12 @@ class SubtitleGenerationPanel(QWidget):
             return
 
         if self._is_timing_mode():
-            timing_settings = {"use_vad": True, "min_silence_ms": 500}
+            timing_settings = {
+                "model_size": self.cmb_model.currentText(),
+                "compute_type": self.cmb_compute.currentText(),
+                "use_vad": True,
+                "min_silence_ms": 500,
+            }
             self._set_ui_state_running()
             if self._has_resumable_timing_checkpoint():
                 self.timing_resume_requested.emit(
@@ -404,7 +409,12 @@ class SubtitleGenerationPanel(QWidget):
             if self._is_timing_mode():
                 self.timing_resume_requested.emit(
                     self.spin_batch_val.value(),
-                    {"use_vad": True, "min_silence_ms": 500},
+                    {
+                        "model_size": self.cmb_model.currentText(),
+                        "compute_type": self.cmb_compute.currentText(),
+                        "use_vad": True,
+                        "min_silence_ms": 500,
+                    },
                 )
             else:
                 self.generation_service.resume_generation()
