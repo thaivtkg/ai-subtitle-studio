@@ -3,7 +3,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class _FakeStdout:
@@ -141,11 +141,13 @@ class TestSubtitleExportIntegrationContracts(unittest.TestCase):
 
             errors = []
             worker.error_signal.connect(errors.append)
-            with patch.dict(sys.modules, {"torch": types.ModuleType("torch")}), \
+            fake_backend = types.ModuleType("core.Backend")
+            burn = MagicMock(name="burn_hardsub")
+            fake_backend.burn_hardsub = burn
+            with patch.dict(sys.modules, {"core.Backend": fake_backend}), \
                     patch("workers.TaskQueue.psutil.cpu_percent", return_value=0.0), \
                     patch("workers.TaskQueue.get_video_duration", return_value=1.0), \
-                    patch("workers.TaskQueue.OutputPathService.build_hardsub_path", return_value=output), \
-                    patch("core.Backend.burn_hardsub") as burn:
+                    patch("workers.TaskQueue.OutputPathService.build_hardsub_path", return_value=output):
                 worker.run()
 
             self.assertEqual(errors, [])
