@@ -1,6 +1,7 @@
 import os
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStyle
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter
 
 # Nạp Design System
 from ui.theme import Theme
@@ -32,7 +33,14 @@ class QueueItemWidget(QFrame):
         self.lbl_name.setStyleSheet(f"color: {Theme.TEXT_PRIMARY}; font-size: 13px; border: none;")
         self.lbl_name.setAttribute(Qt.WA_TransparentForMouseEvents)
         
-        self.btn_remove = QPushButton("✕")
+        self.btn_remove = QPushButton()
+        close_pixmap = self.style().standardIcon(QStyle.SP_DialogCloseButton).pixmap(14, 14)
+        painter = QPainter(close_pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(close_pixmap.rect(), QColor(Theme.TEXT_PRIMARY))
+        painter.end()
+        self.btn_remove.setIcon(QIcon(close_pixmap))
+        self.btn_remove.setIconSize(QSize(14, 14))
         self.btn_remove.setFixedSize(24, 24)
         self.btn_remove.setToolTip("Xóa video khỏi hàng đợi")
         self.btn_remove.setStyleSheet(f"""
