@@ -15,6 +15,17 @@ class WorkspaceState:
 @dataclass
 class TimingState:
     """Trạng thái Runtime của tiến trình Timing trong dự án"""
+    # Project-level Timing preferences. Defaults preserve the current panel
+    # behavior and make legacy state files load without a migration write.
+    model_size: str = "large-v3-turbo"
+    compute_type: str = "float16"
+    use_vad: bool = True
+    min_silence_ms: int = 500
+    fix_overlap: bool = True
+    overlap_gap_ms: int = 50
+    overlap_ms: int = 800
+    max_window_ms: int = 120000
+
     status: str = "IDLE"  # IDLE, RUNNING, COMPLETED, FAILED
     batch_size: int = 10
     next_segment_index: int = 1
@@ -25,6 +36,7 @@ class TimingState:
 
 @dataclass
 class ProjectState:
+    task_mode: str = "asr"
     timing_status: str = "EMPTY"  
     text_status: str = "EMPTY"    
     export_status: str = "EMPTY"  

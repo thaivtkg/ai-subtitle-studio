@@ -17,3 +17,5 @@ class TimingRunRequest:
     compute_type: str = "float16"
     use_vad: bool = True
     min_silence_ms: int = 500
+    fix_overlap: bool = True
+    overlap_gap_ms: int = 50

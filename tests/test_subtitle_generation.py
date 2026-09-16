@@ -110,6 +110,51 @@ from core.subtitle_generation.subtitle_generation_service import (
 )
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from workers.TimingBatchWorker import TimingBatchWorker
+
+
+class _TimingSettingsControl:
+    def __init__(self, data=None, checked=False, value=10):
+        self.data = data
+        self.enabled = None
+        self.checked = checked
+        self.value_data = value
+        self.text = ""
+
+    def currentData(self):
+        return self.data
+
+    def currentText(self):
+        return self.data
+
+    def value(self):
+        return self.value_data
+
+    def setEnabled(self, enabled):
+        self.enabled = enabled
+
+    def setChecked(self, checked):
+        self.checked = checked
+
+    def isChecked(self):
+        return self.checked
+
+    def setText(self, text):
+        self.text = text
+
+    def setValue(self, value):
+        self.value_data = value
+
+
+class _TimingSettingsSignal:
+    def __init__(self):
+        self.calls = []
+
+    def emit(self, *args):
+        self.calls.append(args)
+
+
+class _TimingSettingsGroup(_TimingSettingsControl):
+    pass
 from workers.subtitle_generation_worker import SubtitleGenerationWorker
 
 
@@ -832,6 +877,10 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
                     "compute_type": "float16",
                     "use_vad": True,
                     "min_silence_ms": 500,
+                    "fix_overlap": True,
+                    "overlap_gap_ms": 50,
+                    "overlap_ms": 800,
+                    "max_window_ms": 120000,
                 },
             )],
         )
@@ -970,6 +1019,10 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
                     "compute_type": "float16",
                     "use_vad": True,
                     "min_silence_ms": 500,
+                    "fix_overlap": True,
+                    "overlap_gap_ms": 50,
+                    "overlap_ms": 800,
+                    "max_window_ms": 120000,
                 },
             )],
         )
@@ -1034,6 +1087,10 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
                     "compute_type": "float16",
                     "use_vad": True,
                     "min_silence_ms": 500,
+                    "fix_overlap": True,
+                    "overlap_gap_ms": 50,
+                    "overlap_ms": 800,
+                    "max_window_ms": 120000,
                 },
             )],
         )
@@ -1080,6 +1137,330 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         panel.refresh_batch_mode_availability()
 
         self.assertTrue(panel.cmb_batch_mode.item_enabled)
+
+
+class TestTimingDraftSettingsContract(unittest.TestCase):
+    def _panel(self, mode="timing"):
+        panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
+        panel.cmb_mode = _TimingSettingsControl(mode)
+        panel.model_group = _TimingSettingsGroup()
+        panel.cmb_model = _TimingSettingsControl("large-v3-turbo")
+        panel.cmb_compute = _TimingSettingsControl("float16")
+        panel.cmb_language = _TimingSettingsControl("Auto Detect")
+        panel.chk_word_timestamps = _TimingSettingsControl(checked=False)
+        panel.cmb_batch_mode = _TimingSettingsControl("segments")
+        panel.spin_batch_val = _TimingSettingsControl(value=10)
+        panel.chk_vad = _TimingSettingsControl(checked=False)
+        panel.btn_resume = _TimingSettingsControl()
+        panel.generation_service = types.SimpleNamespace(is_running=False)
+        panel.check_resumable_state = lambda: None
+        panel.refresh_batch_mode_availability = lambda: None
+        panel._render_context_status = lambda: None
+        return panel
+
+    def _persisted_project_service(self):
+        root = tempfile.mkdtemp()
+        video_path = os.path.join(root, "video.mp4")
+        with open(video_path, "wb") as handle:
+            handle.write(b"video")
+        project_dir = os.path.join(root, "project.ai-subtitle")
+        service = ProjectService(ArtifactStore())
+        service.create_project(project_dir, "video.mp4", video_path)
+        return root, video_path, project_dir, service
+
+    def test_t1_timing_model_selector_is_editable(self):
+        panel = self._panel()
+        panel._on_mode_changed()
+        self.assertTrue(panel.cmb_model.enabled)
+
+    def test_t2_timing_compute_selector_is_editable(self):
+        panel = self._panel()
+        panel._on_mode_changed()
+        self.assertTrue(panel.cmb_compute.enabled)
+
+    def test_t3_timing_language_remains_disabled(self):
+        panel = self._panel()
+        panel._on_mode_changed()
+        self.assertFalse(panel.cmb_language.enabled)
+
+    def test_t4_timing_word_timestamps_remain_disabled(self):
+        panel = self._panel()
+        panel._on_mode_changed()
+        self.assertFalse(panel.chk_word_timestamps.enabled)
+
+    def test_t5_timing_vad_is_locked_on(self):
+        panel = self._panel()
+        panel._on_mode_changed()
+        self.assertTrue(panel.chk_vad.checked)
+        self.assertFalse(panel.chk_vad.enabled)
+
+    def test_t6_timing_generate_forwards_all_result_settings(self):
+        panel = self._panel()
+        panel.video_duration_ms = 1
+        panel.timing_start_requested = _TimingSettingsSignal()
+        panel._set_ui_state_running = lambda: None
+        panel._has_resumable_timing_checkpoint = lambda: False
+        panel.chk_fix_overlap = _TimingSettingsControl(checked=True)
+        panel.spin_overlap_gap = _TimingSettingsControl(value=50)
+        panel._on_generate_clicked()
+        settings = panel.timing_start_requested.calls[0][1]
+        self.assertEqual(
+            settings,
+            {
+                "model_size": "large-v3-turbo",
+                "compute_type": "float16",
+                "use_vad": True,
+                "min_silence_ms": 500,
+                "fix_overlap": True,
+                "overlap_gap_ms": 50,
+                "overlap_ms": 800,
+                "max_window_ms": 120000,
+            },
+        )
+
+    def test_t7_timing_resume_reconstructs_request_from_checkpoint(self):
+        resolver = getattr(TimingBatchService, "_settings_from_checkpoint", None)
+        self.assertTrue(callable(resolver))
+        settings = resolver(
+            types.SimpleNamespace(
+                model_size="small",
+                compute_type="int8",
+                use_vad=True,
+                min_silence_ms=700,
+                fix_overlap=True,
+                overlap_gap_ms=75,
+                overlap_ms=800,
+                max_window_ms=120000,
+            )
+        )
+        self.assertEqual(settings["model_size"], "small")
+        self.assertEqual(settings["compute_type"], "int8")
+        self.assertEqual(settings["min_silence_ms"], 700)
+        self.assertEqual(settings["overlap_gap_ms"], 75)
+
+    def test_t8_cpu_effective_compute_type_is_int8_without_overwriting_configured(self):
+        resolver = getattr(TimingBatchWorker, "effective_compute_type", None)
+        self.assertTrue(callable(resolver))
+        self.assertEqual(resolver("cpu", "float16"), "int8")
+        self.assertEqual("float16", "float16")
+
+    def test_t9_reopen_restores_timing_model_settings(self):
+        root, _video, project_dir, service = self._persisted_project_service()
+        try:
+            service.current_project.state.timing.model_size = "small"
+            service.current_project.state.timing.compute_type = "int8"
+            service.save_project()
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            self.assertEqual(getattr(reopened.current_project.state.timing, "model_size", None), "small")
+            self.assertEqual(getattr(reopened.current_project.state.timing, "compute_type", None), "int8")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t10_project_switch_isolates_timing_settings(self):
+        root, video_a, project_a, service = self._persisted_project_service()
+        video_b = os.path.join(root, "video-b.mp4")
+        with open(video_b, "wb") as handle:
+            handle.write(b"video-b")
+        project_b = os.path.join(root, "project-b.ai-subtitle")
+        try:
+            service.current_project.state.timing.model_size = "tiny"
+            service.current_project.state.timing.compute_type = "int8"
+            service.save_project()
+            service.create_project(project_b, "video-b.mp4", video_b)
+            service.current_project.state.timing.model_size = "large-v3"
+            service.current_project.state.timing.compute_type = "float16"
+            service.save_project()
+            service.open_project(project_a)
+            self.assertEqual(getattr(service.current_project.state.timing, "model_size", None), "tiny")
+            self.assertEqual(getattr(service.current_project.state.timing, "compute_type", None), "int8")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t11_programmatic_timing_restore_does_not_dirty(self):
+        root, _video, project_dir, service = self._persisted_project_service()
+        try:
+            service.current_project.state.timing.model_size = "small"
+            service.current_project.state.timing.compute_type = "int8"
+            service.save_project()
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            self.assertEqual(getattr(reopened.current_project.state.timing, "model_size", None), "small")
+            self.assertEqual(getattr(reopened.current_project.state.timing, "compute_type", None), "int8")
+            self.assertFalse(reopened.current_project.state.dirty)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t12_checkpoint_owns_every_result_affecting_timing_setting(self):
+        fields = TimingCheckpoint.__dataclass_fields__
+        self.assertTrue(
+            {
+                "model_size",
+                "compute_type",
+                "use_vad",
+                "min_silence_ms",
+                "fix_overlap",
+                "overlap_gap_ms",
+            }.issubset(fields)
+        )
+
+    def test_t12_legacy_checkpoint_resume_is_blocked_with_reason(self):
+        guard = getattr(TimingBatchService, "_settings_from_checkpoint", None)
+        self.assertTrue(callable(guard))
+        with self.assertRaisesRegex(ValueError, "created before model settings were stored"):
+            guard(types.SimpleNamespace())
+
+    def test_t13_legacy_project_gets_deterministic_timing_defaults(self):
+        root, _video, project_dir, service = self._persisted_project_service()
+        try:
+            service.save_project()
+            state_path = os.path.join(project_dir, "state.json")
+            with open(state_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            data["timing"].pop("model_size", None)
+            data["timing"].pop("compute_type", None)
+            with open(state_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            self.assertEqual(getattr(reopened.current_project.state.timing, "model_size", None), "large-v3-turbo")
+            self.assertEqual(getattr(reopened.current_project.state.timing, "compute_type", None), "float16")
+            self.assertFalse(reopened.current_project.state.dirty)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t14_timing_exposes_fix_overlap_toggle(self):
+        self.assertTrue(hasattr(SubtitleGenerationPanel, "_timing_settings_controls"))
+
+    def test_t15_timing_exposes_overlap_gap_setting(self):
+        panel = self._panel()
+        panel.video_duration_ms = 1
+        panel.timing_start_requested = _TimingSettingsSignal()
+        panel._set_ui_state_running = lambda: None
+        panel._has_resumable_timing_checkpoint = lambda: False
+        panel.chk_fix_overlap = _TimingSettingsControl(checked=False)
+        panel.spin_overlap_gap = _TimingSettingsControl(value=125)
+        panel._on_generate_clicked()
+        self.assertEqual(panel.timing_start_requested.calls[0][1].get("overlap_gap_ms"), 125)
+
+    def _normalize(self, segments, fix_overlap=True, gap=50):
+        normalizer = getattr(TimingBatchService, "normalize_segments", None)
+        self.assertTrue(callable(normalizer))
+        return normalizer(segments, fix_overlap=fix_overlap, overlap_gap_ms=gap)
+
+    def test_t16_real_overlap_trims_previous_end_and_keeps_next_start(self):
+        result = self._normalize(
+            [{"start_ms": 1000, "end_ms": 3500}, {"start_ms": 3000, "end_ms": 5000}]
+        )
+        self.assertEqual(result[0]["end_ms"], 2950)
+        self.assertEqual(result[1]["start_ms"], 3000)
+
+    def test_t17_touching_boundary_is_a_conflict(self):
+        result = self._normalize(
+            [{"start_ms": 1000, "end_ms": 3000}, {"start_ms": 3000, "end_ms": 5000}]
+        )
+        self.assertEqual(result[0]["end_ms"], 2950)
+
+    def test_t18_already_safe_boundary_is_unchanged(self):
+        segments = [{"start_ms": 1000, "end_ms": 2900}, {"start_ms": 3000, "end_ms": 5000}]
+        self.assertEqual(self._normalize(segments), segments)
+
+    def test_t19_overlap_fix_off_preserves_timestamps(self):
+        segments = [{"start_ms": 1000, "end_ms": 3500}, {"start_ms": 3000, "end_ms": 5000}]
+        self.assertEqual(self._normalize(segments, fix_overlap=False), segments)
+
+    def test_t20_overlap_never_creates_invalid_duration(self):
+        segments = [{"start_ms": 1000, "end_ms": 1020}, {"start_ms": 1000, "end_ms": 5000}]
+        diagnostics = []
+        result = TimingBatchService.normalize_segments(
+            segments, fix_overlap=True, overlap_gap_ms=50, diagnostics=diagnostics
+        )
+        self.assertGreater(result[0]["end_ms"], result[0]["start_ms"])
+        self.assertEqual(diagnostics[0]["type"], "UNRESOLVED_OVERLAP")
+
+    def test_t21_reopen_restores_overlap_settings(self):
+        root, _video, project_dir, service = self._persisted_project_service()
+        try:
+            timing = service.current_project.state.timing
+            timing.fix_overlap = False
+            timing.overlap_gap_ms = 125
+            service.save_project()
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            timing = reopened.current_project.state.timing
+            self.assertFalse(getattr(timing, "fix_overlap", None))
+            self.assertEqual(getattr(timing, "overlap_gap_ms", None), 125)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t22_project_switch_isolates_overlap_settings(self):
+        root, _video, project_a, service = self._persisted_project_service()
+        video_b = os.path.join(root, "video-b.mp4")
+        with open(video_b, "wb") as handle:
+            handle.write(b"video-b")
+        project_b = os.path.join(root, "project-b.ai-subtitle")
+        try:
+            service.current_project.state.timing.fix_overlap = True
+            service.current_project.state.timing.overlap_gap_ms = 50
+            service.save_project()
+            service.create_project(project_b, "video-b.mp4", video_b)
+            service.current_project.state.timing.fix_overlap = False
+            service.current_project.state.timing.overlap_gap_ms = 200
+            service.save_project()
+            service.open_project(project_a)
+            timing = service.current_project.state.timing
+            self.assertTrue(getattr(timing, "fix_overlap", None))
+            self.assertEqual(getattr(timing, "overlap_gap_ms", None), 50)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_t23_resume_uses_checkpoint_overlap_configuration(self):
+        fields = TimingCheckpoint.__dataclass_fields__
+        self.assertIn("fix_overlap", fields)
+        self.assertIn("overlap_gap_ms", fields)
+
+    def test_d1_new_run_clears_previous_diagnostics_before_validation(self):
+        service = TimingBatchService(MagicMock())
+        service._last_timing_diagnostics = [{"type": "UNRESOLVED_OVERLAP"}]
+        service._validate_source_and_state = MagicMock(side_effect=ValueError("rejected"))
+        with self.assertRaises(ValueError):
+            service.start_timing(1, {})
+        self.assertEqual(service._last_timing_diagnostics, [])
+        service._last_timing_diagnostics = [{"type": "UNRESOLVED_OVERLAP"}]
+        with self.assertRaises(ValueError):
+            service.continue_timing(1, {})
+        self.assertEqual(service._last_timing_diagnostics, [])
+
+    def test_d2_worker_error_clears_previous_diagnostics(self):
+        service = TimingBatchService(MagicMock())
+        service._last_timing_diagnostics = [{"type": "UNRESOLVED_OVERLAP"}]
+        service._on_worker_error("failed")
+        self.assertEqual(service._last_timing_diagnostics, [])
+
+    def test_d3_cancel_clears_previous_diagnostics(self):
+        service = TimingBatchService(MagicMock())
+        service._last_timing_diagnostics = [{"type": "UNRESOLVED_OVERLAP"}]
+        service.cancel_timing()
+        self.assertEqual(service._last_timing_diagnostics, [])
+
+    def test_d4_retry_clears_diagnostics_before_rejected_retry(self):
+        service = TimingBatchService(MagicMock())
+        service._last_timing_diagnostics = [{"type": "UNRESOLVED_OVERLAP"}]
+        service._validate_source_and_state = MagicMock(side_effect=ValueError("rejected"))
+        with self.assertRaises(ValueError):
+            service.retry_timing(1, {})
+        self.assertEqual(service._last_timing_diagnostics, [])
+
+    def test_d5_current_run_diagnostics_remain_available(self):
+        service = TimingBatchService(MagicMock())
+        service._last_timing_diagnostics = []
+        TimingBatchService.normalize_segments(
+            [{"start_ms": 1000, "end_ms": 1020}, {"start_ms": 1000, "end_ms": 5000}],
+            fix_overlap=True,
+            overlap_gap_ms=50,
+            diagnostics=service._last_timing_diagnostics,
+        )
+        self.assertEqual(service._last_timing_diagnostics[0]["type"], "UNRESOLVED_OVERLAP")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
+from core.project.project_state import TimingState
 from ui.theme import Theme
 
 
@@ -29,6 +30,9 @@ class SubtitleGenerationPanel(QWidget):
     timing_resume_requested = Signal(int, dict)
     timing_cancel_requested = Signal()
     request_context_edit = Signal()
+    _timing_settings_controls = (
+        "cmb_model", "cmb_compute", "chk_vad", "chk_fix_overlap", "spin_overlap_gap"
+    )
 
     def __init__(self, generation_service, parent=None):
         super().__init__(parent)
@@ -85,6 +89,7 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_mode.currentIndexChanged.connect(
             lambda _index: self._on_mode_changed()
         )
+        self.cmb_mode.currentIndexChanged.connect(self._on_task_mode_changed)
 
         self.model_group = QGroupBox("Model Configuration")
         model_layout = QVBoxLayout(self.model_group)
@@ -101,6 +106,8 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_compute.setCurrentText("float16")
         model_layout.addWidget(QLabel("Compute Type:"))
         model_layout.addWidget(self.cmb_compute)
+        self.lbl_effective_compute = QLabel("Effective: not run")
+        model_layout.addWidget(self.lbl_effective_compute)
 
         self.cmb_language = QComboBox()
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
@@ -113,6 +120,19 @@ class SubtitleGenerationPanel(QWidget):
         self.chk_vad = QCheckBox("Enable VAD (lọc khoảng lặng)")
         self.chk_vad.setChecked(True)
         advanced_layout.addWidget(self.chk_vad)
+
+        self.chk_fix_overlap = QCheckBox("Fix subtitle overlap")
+        self.chk_fix_overlap.setChecked(True)
+        advanced_layout.addWidget(self.chk_fix_overlap)
+
+        overlap_layout = QHBoxLayout()
+        overlap_layout.addWidget(QLabel("Overlap gap:"))
+        self.spin_overlap_gap = QSpinBox()
+        self.spin_overlap_gap.setRange(1, 500)
+        self.spin_overlap_gap.setValue(50)
+        self.spin_overlap_gap.setSuffix(" ms")
+        overlap_layout.addWidget(self.spin_overlap_gap)
+        advanced_layout.addLayout(overlap_layout)
 
         self.chk_word_timestamps = QCheckBox("Word-level Timestamps")
         advanced_layout.addWidget(self.chk_word_timestamps)
@@ -138,6 +158,11 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_batch_mode.currentIndexChanged.connect(
             lambda _index: self._on_batch_mode_changed()
         )
+        self.chk_fix_overlap.toggled.connect(self._on_timing_setting_changed)
+        self.spin_overlap_gap.valueChanged.connect(self._on_timing_setting_changed)
+        self.cmb_model.currentTextChanged.connect(self._on_timing_setting_changed)
+        self.cmb_compute.currentTextChanged.connect(self._on_timing_setting_changed)
+        self.chk_vad.toggled.connect(self._on_timing_setting_changed)
         layout.addWidget(advanced_group)
 
         context_layout = QHBoxLayout()
@@ -224,9 +249,9 @@ class SubtitleGenerationPanel(QWidget):
 
         # Lock each control directly so a stylesheet cannot hide the disabled
         # state of the individual model settings.
-        self.model_group.setEnabled(is_asr)
-        self.cmb_model.setEnabled(is_asr)
-        self.cmb_compute.setEnabled(is_asr)
+        self.model_group.setEnabled(True)
+        self.cmb_model.setEnabled(True)
+        self.cmb_compute.setEnabled(True)
         self.cmb_language.setEnabled(is_asr)
         self.chk_word_timestamps.setEnabled(is_asr)
         self.cmb_batch_mode.setEnabled(True)
@@ -243,6 +268,13 @@ class SubtitleGenerationPanel(QWidget):
             self.chk_vad.setEnabled(False)
             self.chk_vad.setText("Enable VAD (Bắt buộc cho chế độ này)")
 
+        fix_overlap = getattr(self, "chk_fix_overlap", None)
+        overlap_gap = getattr(self, "spin_overlap_gap", None)
+        if fix_overlap is not None:
+            fix_overlap.setEnabled(not is_asr)
+        if overlap_gap is not None:
+            overlap_gap.setEnabled(not is_asr and fix_overlap.isChecked())
+
         if hasattr(self, "btn_resume"):
             self.check_resumable_state()
         self.refresh_batch_mode_availability()
@@ -250,6 +282,17 @@ class SubtitleGenerationPanel(QWidget):
 
     def _is_timing_mode(self) -> bool:
         return self.cmb_mode.currentData() == "timing"
+
+    def _on_task_mode_changed(self, *_args):
+        if getattr(self, "_restoring_timing_settings", False):
+            return
+        project_service = getattr(self.generation_service, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        state = getattr(project, "state", None)
+        if state is None or not hasattr(state, "task_mode"):
+            return
+        state.task_mode = self.cmb_mode.currentData()
+        project_service.mark_dirty()
 
     @Slot()
     def _on_batch_mode_changed(self):
@@ -348,12 +391,7 @@ class SubtitleGenerationPanel(QWidget):
             return
 
         if self._is_timing_mode():
-            timing_settings = {
-                "model_size": self.cmb_model.currentText(),
-                "compute_type": self.cmb_compute.currentText(),
-                "use_vad": True,
-                "min_silence_ms": 500,
-            }
+            timing_settings = self._timing_settings()
             self._set_ui_state_running()
             if self._has_resumable_timing_checkpoint():
                 self.timing_resume_requested.emit(
@@ -409,12 +447,7 @@ class SubtitleGenerationPanel(QWidget):
             if self._is_timing_mode():
                 self.timing_resume_requested.emit(
                     self.spin_batch_val.value(),
-                    {
-                        "model_size": self.cmb_model.currentText(),
-                        "compute_type": self.cmb_compute.currentText(),
-                        "use_vad": True,
-                        "min_silence_ms": 500,
-                    },
+                    self._timing_settings(),
                 )
             else:
                 self.generation_service.resume_generation()
@@ -441,6 +474,10 @@ class SubtitleGenerationPanel(QWidget):
         self.spin_batch_val.setEnabled(False)
         self.chk_vad.setEnabled(False)
         self.chk_word_timestamps.setEnabled(False)
+        if hasattr(self, "chk_fix_overlap"):
+            self.chk_fix_overlap.setEnabled(False)
+        if hasattr(self, "spin_overlap_gap"):
+            self.spin_overlap_gap.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_PRIMARY};")
@@ -460,6 +497,90 @@ class SubtitleGenerationPanel(QWidget):
         self.check_resumable_state()
         # Re-apply the current mode after every run/error/cancel transition.
         self._on_mode_changed()
+
+    def _timing_settings(self) -> dict:
+        project_service = getattr(self.generation_service, "project_service", None)
+        timing = getattr(
+            getattr(getattr(project_service, "current_project", None), "state", None),
+            "timing",
+            None,
+        )
+        if timing is not None and hasattr(timing, "model_size"):
+            values = {
+                name: getattr(timing, name, getattr(TimingState(), name))
+                for name in (
+                    "model_size", "compute_type", "use_vad", "min_silence_ms",
+                    "fix_overlap", "overlap_gap_ms", "overlap_ms", "max_window_ms",
+                )
+            }
+            if self._is_timing_mode():
+                values["use_vad"] = True
+            return values
+        return {
+            "model_size": self.cmb_model.currentText(),
+            "compute_type": self.cmb_compute.currentText(),
+            "use_vad": True,
+            "min_silence_ms": 500,
+            "fix_overlap": getattr(self, "chk_fix_overlap", None).isChecked()
+            if hasattr(self, "chk_fix_overlap") else True,
+            "overlap_gap_ms": getattr(self, "spin_overlap_gap", None).value()
+            if hasattr(self, "spin_overlap_gap") else 50,
+            "overlap_ms": 800,
+            "max_window_ms": 120000,
+        }
+
+    def _on_timing_setting_changed(self, *_args):
+        if getattr(self, "_restoring_timing_settings", False) or not self._is_timing_mode():
+            return
+        project_service = getattr(self.generation_service, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        timing = getattr(getattr(project, "state", None), "timing", None)
+        if timing is None:
+            return
+        values = self._timing_settings()
+        values.update(
+            {
+                "model_size": self.cmb_model.currentText(),
+                "compute_type": self.cmb_compute.currentText(),
+                "use_vad": True,
+                "fix_overlap": self.chk_fix_overlap.isChecked(),
+                "overlap_gap_ms": self.spin_overlap_gap.value(),
+            }
+        )
+        for name, value in values.items():
+            setattr(timing, name, value)
+        project_service.mark_dirty()
+        if hasattr(self, "spin_overlap_gap"):
+            self.spin_overlap_gap.setEnabled(self.chk_fix_overlap.isChecked())
+
+    def sync_timing_settings_from_project(self):
+        project_service = getattr(self.generation_service, "project_service", None)
+        timing = getattr(
+            getattr(getattr(project_service, "current_project", None), "state", None),
+            "timing",
+            None,
+        )
+        if not isinstance(timing, TimingState):
+            return
+        self._restoring_timing_settings = True
+        try:
+            task_mode = getattr(getattr(project_service.current_project, "state", None), "task_mode", "asr")
+            mode_index = self.cmb_mode.findData(task_mode)
+            if mode_index >= 0:
+                self.cmb_mode.setCurrentIndex(mode_index)
+            self.cmb_model.setCurrentText(timing.model_size)
+            self.cmb_compute.setCurrentText(timing.compute_type)
+            self.chk_vad.setChecked(timing.use_vad)
+            self.chk_fix_overlap.setChecked(timing.fix_overlap)
+            self.spin_overlap_gap.setValue(timing.overlap_gap_ms)
+            self._on_mode_changed()
+        finally:
+            self._restoring_timing_settings = False
+
+    def set_effective_compute_type(self, configured: str, effective: str):
+        self.lbl_effective_compute.setText(
+            f"Configured: {configured} · Effective: {effective}"
+        )
 
     def _update_progress(self, percent: int, message: str):
         self.progress_bar.setValue(max(0, min(100, int(percent))))

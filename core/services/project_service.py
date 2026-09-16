@@ -21,6 +21,22 @@ class ProjectService:
         self.current_project: Project | None = None
         self.project_dir: str | None = None
 
+    @staticmethod
+    def serialize_project_state(state: ProjectState) -> dict:
+        """Build the canonical persisted state payload without performing I/O."""
+        return {
+            "task_mode": state.task_mode,
+            "timing_status": state.timing_status,
+            "text_status": state.text_status,
+            "export_status": state.export_status,
+            "active_artifact_id": state.active_artifact_id,
+            "subtitle_artifact_id": state.subtitle_artifact_id,
+            "selected_segment_id": state.selected_segment_id,
+            "dirty": False,
+            "subtitle_placement": asdict(state.subtitle_placement),
+            "timing": asdict(state.timing),
+        }
+
     def save_draft(self, filepath: str, segments: list[dict], video_path: str = ""):
         data = {"version": 2.0, "video_path": video_path, "segments": []}
         for segment in segments:
@@ -120,18 +136,7 @@ class ProjectService:
         atomic_save_json(os.path.join(self.project_dir, "project.json"), proj_data)
         
         # 2. Lưu state.json
-        state_data = {
-            "timing_status": self.current_project.state.timing_status,
-            "text_status": self.current_project.state.text_status,
-            "export_status": self.current_project.state.export_status,
-            "active_artifact_id": self.current_project.state.active_artifact_id,
-            "subtitle_artifact_id": self.current_project.state.subtitle_artifact_id,
-            "selected_segment_id": self.current_project.state.selected_segment_id,
-            "dirty": False,
-            "subtitle_placement": asdict(self.current_project.state.subtitle_placement),
-            # [S7.1-T05] Lưu TimingState
-            "timing": asdict(self.current_project.state.timing)
-        }
+        state_data = self.serialize_project_state(self.current_project.state)
         atomic_save_json(os.path.join(self.project_dir, "state.json"), state_data)
         
         # 3. Lưu workspace.json
@@ -175,6 +180,7 @@ class ProjectService:
         if os.path.exists(state_file):
             with open(state_file, 'r', encoding='utf-8') as f:
                 s_data = json.load(f)
+                project_state.task_mode = s_data.get("task_mode", "asr")
                 project_state.timing_status = s_data.get("timing_status", "EMPTY")
                 project_state.text_status = s_data.get("text_status", "EMPTY")
                 project_state.export_status = s_data.get("export_status", "EMPTY")

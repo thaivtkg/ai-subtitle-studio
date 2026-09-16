@@ -296,7 +296,7 @@ class TestSprint12MainWindowIntegration(unittest.TestCase):
             worker_cls.return_value = MagicMock()
             timing_service._execute_run(
                 0, 5,
-                {"model_size": "tiny", "compute_type": "float32", "use_vad": False,
+                {"model_size": "tiny", "compute_type": "float32", "use_vad": True,
                  "min_silence_ms": 300},
             )
             request = worker_cls.call_args.args[0]

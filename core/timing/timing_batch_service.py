@@ -11,6 +11,7 @@ from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
 from core.timing.timing_checkpoint import TimingCheckpoint
 from core.timing.timing_batch import TimingBatch, BatchStatus
 from core.timing.timing_run_request import TimingRunRequest
+from core.project.project_state import TimingState
 from workers.TimingBatchWorker import TimingBatchWorker
 
 class TimingBatchService(QObject):
@@ -20,12 +21,89 @@ class TimingBatchService(QObject):
     timing_finished_signal = Signal()
     error_signal = Signal(str)
     state_changed_signal = Signal(str, str)
+    effective_compute_signal = Signal(str, str)
 
     def __init__(self, project_service: ProjectService):
         super().__init__()
         self.project_service = project_service
         self.worker = None
         self._current_settings = None
+        self._last_timing_diagnostics = []
+
+    def _clear_timing_diagnostics(self):
+        self._last_timing_diagnostics = []
+
+    @staticmethod
+    def _settings_from_checkpoint(checkpoint):
+        required = (
+            "model_size", "compute_type", "use_vad", "min_silence_ms",
+            "fix_overlap", "overlap_gap_ms", "overlap_ms", "max_window_ms",
+        )
+        if any(getattr(checkpoint, name, None) is None for name in required):
+            raise ValueError(
+                "This checkpoint was created before model settings were stored. "
+                "Resume cannot safely determine the original model configuration. "
+                "Start a new Timing generation run."
+            )
+        settings = {name: getattr(checkpoint, name) for name in required}
+        return TimingBatchService._validate_settings(settings)
+
+    @staticmethod
+    def _validate_settings(settings: dict | None, defaults: TimingState | None = None) -> dict:
+        defaults = defaults or TimingState()
+        settings = settings or {}
+        result = {
+            name: settings.get(name, getattr(defaults, name))
+            for name in (
+                "model_size", "compute_type", "use_vad", "min_silence_ms",
+                "fix_overlap", "overlap_gap_ms", "overlap_ms", "max_window_ms",
+            )
+        }
+        result["min_silence_ms"] = int(result["min_silence_ms"])
+        result["overlap_gap_ms"] = int(result["overlap_gap_ms"])
+        result["overlap_ms"] = int(result["overlap_ms"])
+        result["max_window_ms"] = int(result["max_window_ms"])
+        if result["use_vad"] is not True:
+            raise ValueError("Timing generation requires VAD to be enabled.")
+        if not 1 <= result["overlap_gap_ms"] <= 500:
+            raise ValueError("Overlap gap must be between 1 and 500 ms.")
+        if result["overlap_ms"] < 0 or result["max_window_ms"] <= 0:
+            raise ValueError("Timing window settings are invalid.")
+        return result
+
+    @staticmethod
+    def normalize_segments(
+        segments: list[dict],
+        *,
+        fix_overlap: bool = True,
+        overlap_gap_ms: int = 50,
+        diagnostics: list | None = None,
+    ) -> list[dict]:
+        if not 1 <= int(overlap_gap_ms) <= 500:
+            raise ValueError("Overlap gap must be between 1 and 500 ms.")
+        normalized = [dict(segment) for segment in segments]
+        if not fix_overlap:
+            return normalized
+        diagnostics = diagnostics if diagnostics is not None else []
+        gap = int(overlap_gap_ms)
+        for index in range(len(normalized) - 1):
+            current = normalized[index]
+            following = normalized[index + 1]
+            desired_end = int(following["start_ms"]) - gap
+            if int(current["end_ms"]) < desired_end:
+                continue
+            if desired_end > int(current["start_ms"]):
+                current["end_ms"] = desired_end
+            else:
+                diagnostics.append({
+                    "type": "UNRESOLVED_OVERLAP",
+                    "index": index,
+                    "next_index": index + 1,
+                    "start_ms": int(current["start_ms"]),
+                    "end_ms": int(current["end_ms"]),
+                    "next_start_ms": int(following["start_ms"]),
+                })
+        return normalized
 
     def _validate_source_and_state(self):
         project = self.project_service.current_project
@@ -48,9 +126,13 @@ class TimingBatchService(QObject):
             raise ValueError("ID của Timing Artifact không khớp với Checkpoint.")
 
     def start_timing(self, batch_size: int, settings: dict):
+        self._clear_timing_diagnostics()
         self._validate_source_and_state()
         project = self.project_service.current_project
         timing_state = project.state.timing
+        settings = self._validate_settings(settings, timing_state)
+        for name, value in settings.items():
+            setattr(timing_state, name, value)
         
         timing_state.batch_size = batch_size
         timing_state.next_segment_index = 1
@@ -82,7 +164,8 @@ class TimingBatchService(QObject):
             active_batch=self.active_batch_data,
             next_segment_index=1,
             last_completed_end_ms=0,
-            completed_batches=[]
+            completed_batches=[],
+            **settings,
         )
         self.project_service.save_timing_checkpoint(checkpoint)
         
@@ -91,14 +174,17 @@ class TimingBatchService(QObject):
         self._execute_run(start_ms=0, target_count=batch_size, settings=settings)
 
     def continue_timing(self, batch_size: int, settings: dict):
+        self._clear_timing_diagnostics()
         self._validate_source_and_state()
         project = self.project_service.current_project
         timing_state = project.state.timing
-        timing_state.batch_size = batch_size
-        
         checkpoint = self.project_service.load_timing_checkpoint()
         if not checkpoint:
             raise ValueError("Không tìm thấy dữ liệu Checkpoint.")
+
+        settings = self._settings_from_checkpoint(checkpoint)
+        batch_size = checkpoint.batch_size
+        timing_state.batch_size = batch_size
             
         self._validate_checkpoint_identity(checkpoint)
             
@@ -142,6 +228,7 @@ class TimingBatchService(QObject):
 
     # [S7.1-FIX-04] Dọn dẹp chỉ giữ một hàm Retry duy nhất
     def retry_timing(self, batch_size: int, settings: dict):
+        self._clear_timing_diagnostics()
         self._validate_source_and_state()
         checkpoint = self.project_service.load_timing_checkpoint()
         
@@ -149,6 +236,7 @@ class TimingBatchService(QObject):
             raise ValueError("Không có Batch nào đang ở trạng thái lỗi để Retry.")
             
         self._validate_checkpoint_identity(checkpoint)
+        settings = self._settings_from_checkpoint(checkpoint)
         
         # Cho phép sửa Batch Size khi Retry
         checkpoint.active_batch["status"] = "RUNNING"
@@ -165,6 +253,7 @@ class TimingBatchService(QObject):
         self._execute_run(start_ms=checkpoint.active_batch["start_ms"], target_count=batch_size, settings=settings)
 
     def cancel_timing(self):
+        self._clear_timing_diagnostics()
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             project = self.project_service.current_project
@@ -181,26 +270,36 @@ class TimingBatchService(QObject):
             self.state_changed_signal.emit("READY", "Đã hủy tiến trình.")
 
     def _execute_run(self, start_ms: int, target_count: int, settings: dict):
-        self._current_settings = settings
         project = self.project_service.current_project
+        settings = self._validate_settings(settings, project.state.timing)
+        self._current_settings = settings
         request = TimingRunRequest(
             video_path=project.source.path,
             start_ms=start_ms,
             target_segment_count=target_count,
-            overlap_ms=800,
-            model_size=settings.get("model_size", "base"),
-            compute_type=settings.get("compute_type", "float16"),
-            use_vad=settings.get("use_vad", True),
-            min_silence_ms=settings.get("min_silence_ms", 500)
+            overlap_ms=settings["overlap_ms"],
+            max_window_ms=settings["max_window_ms"],
+            model_size=settings["model_size"],
+            compute_type=settings["compute_type"],
+            use_vad=settings["use_vad"],
+            min_silence_ms=settings["min_silence_ms"],
+            fix_overlap=settings["fix_overlap"],
+            overlap_gap_ms=settings["overlap_gap_ms"],
         )
         self.worker = TimingBatchWorker(request)
         self.worker.progress_signal.connect(self.progress_signal.emit)
         self.worker.log_signal.connect(self.log_signal.emit)
         self.worker.finished_signal.connect(self._on_worker_finished)
         self.worker.error_signal.connect(self._on_worker_error)
+        self.worker.effective_compute_signal.connect(
+            lambda effective: self.effective_compute_signal.emit(
+                request.compute_type, effective
+            )
+        )
         self.worker.start()
 
     def _on_worker_error(self, err: str):
+        self._clear_timing_diagnostics()
         if hasattr(self, 'active_batch_data') and self.active_batch_data:
             self.active_batch_data["status"] = "FAILED"
             checkpoint = self.project_service.load_timing_checkpoint()
@@ -218,6 +317,20 @@ class TimingBatchService(QObject):
     def _on_worker_finished(self, new_segments: list, is_end_of_source: bool):
         project = self.project_service.current_project
         timing_state = project.state.timing
+        settings = self._current_settings or self._validate_settings({}, timing_state)
+        self._last_timing_diagnostics = []
+        new_segments = self.normalize_segments(
+            new_segments,
+            fix_overlap=settings["fix_overlap"],
+            overlap_gap_ms=settings["overlap_gap_ms"],
+            diagnostics=self._last_timing_diagnostics,
+        )
+        for diagnostic in self._last_timing_diagnostics:
+            self.log_signal.emit(
+                "[Timing] Unresolved subtitle overlap "
+                f"between rows {diagnostic['index'] + 1} and "
+                f"{diagnostic['next_index'] + 1}; timestamps preserved."
+            )
 
         # A first Timing batch that finds no speech must not create an empty
         # artifact and advertise it as completed. That state makes Segment
@@ -300,7 +413,8 @@ class TimingBatchService(QObject):
             next_segment_index=start_index + added_count,
             last_completed_end_ms=last_end_ms,
             completed_batches=checkpoint.completed_batches if checkpoint else [],
-            updated_at=datetime.now().isoformat()
+            updated_at=datetime.now().isoformat(),
+            **settings,
         )
         if added_count > 0 and hasattr(self, 'active_batch_data'):
             new_checkpoint.completed_batches.append(self.active_batch_data["batch_id"])
@@ -368,16 +482,7 @@ class TimingBatchService(QObject):
 
         chk_data = json.dumps(asdict(checkpoint_obj), ensure_ascii=False, indent=2)
         man_data = json.dumps(self.project_service.artifact_store.to_dict(proj_dir), ensure_ascii=False, indent=2)
-        state_dict = {
-            "timing_status": project.state.timing_status,
-            "text_status": project.state.text_status,
-            "export_status": project.state.export_status,
-            "active_artifact_id": project.state.active_artifact_id,
-            "subtitle_artifact_id": project.state.subtitle_artifact_id,
-            "selected_segment_id": project.state.selected_segment_id,
-            "dirty": False,
-            "timing": asdict(project.state.timing)
-        }
+        state_dict = ProjectService.serialize_project_state(project.state)
         state_data = json.dumps(state_dict, ensure_ascii=False, indent=2)
 
         # PHA 1: Viết ra RAM và ép xuống đĩa vật lý qua file tạm
