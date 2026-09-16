@@ -47,10 +47,21 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
   * Cơ chế **Checkpoint & Resume** tự động ghi nhận tiến độ theo từng Batch (Hỗ trợ băm theo thời gian hoặc số câu), cho phép tiếp tục chạy ngay cả khi sập nguồn hoặc hủy ngang.
   * Tự động đồng bộ và ghi đè dữ liệu Timeline xuống chính xác tập tin đang mở khi nhấn `Ctrl+S`.
 
+* ⏱️ **Timing Draft (VAD Only)**
+  * Cho phép chọn **Model Size** và **Compute Type** riêng cho Timing Draft; VAD luôn bắt buộc trong chế độ này.
+  * **Fix Subtitle Overlap** là tùy chọn theo dự án, với khoảng cách cấu hình được từ `1–500 ms`.
+  * Checkpoint Timing lưu các thiết lập ảnh hưởng đến kết quả. Resume và Retry dùng thiết lập của checkpoint, trong khi tùy chọn hiện tại của dự án vẫn độc lập.
+  * Checkpoint cũ thiếu đủ thiết lập sẽ bị chặn Resume/Retry thay vì tự đoán cấu hình.
+
 * 🎨 **Hiệu ứng Chữ & Trình phát Video Tối ưu**
   * Xem trước phụ đề nổi thời gian thực trên khung hình chuẩn tỉ lệ (Aspect Ratio Locked).
   * Tích hợp bộ điều khiển hoạt ảnh (Fade, Rise, Drop, Highlight Reveal).
-  * Tùy biến đầy đủ Font, Cỡ chữ, Màu sắc, Viền chữ (Outline), Vị trí (Top, Center, Bottom).
+  * Tùy biến đầy đủ Font, Cỡ chữ, Màu sắc, Viền chữ (Outline) và preset vị trí (Top, Center, Bottom).
+  * Có thể kéo phụ đề trực tiếp trong khung preview để tạo vị trí Custom; vị trí chuẩn hóa được lưu theo dự án và được giữ khi export.
+
+* 🧭 **Help Center & Getting Started**
+  * Help Center hỗ trợ tìm kiếm hướng dẫn và phím tắt.
+  * Getting Started guided tour có thể mở lại từ Help Center, kèm nội dung hướng dẫn và media tutorial nội bộ.
 
 * 🎬 **Xuất xưởng Đa Định dạng & Render Hardsub GPU/CPU**
   * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
@@ -106,15 +117,18 @@ Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo b�
 | **Python**           | Python 3.10               | Python 3.10.x hoặc 3.11.x                 |
 | **RAM**              | 8 GB                      | 16 GB trở lên                             |
 | **GPU**              | Không bắt buộc (chạy CPU) | NVIDIA GPU (≥ 4GB VRAM, GTX 1650 trở lên) |
-| **CUDA / cuDNN**     | CUDA 11.8 hoặc 12.x       | cuDNN tương thích với phiên bản PyTorch   |
+| **CUDA / cuDNN**     | Không bắt buộc khi chạy CPU | `requirements-runtime.txt` dùng PyTorch CUDA 12.1; cần driver tương thích |
 | **Dung lượng trống** | 5 GB SSD                  | 15 GB SSD                                 |
 
 ### Dependency profiles
 
-- `requirements.txt`: dependency chính cho môi trường phát triển.
-- `requirements-runtime.txt`: bộ dependency đã ghim phiên bản cho runtime/CI reproducible.
+- `requirements.txt`: bộ dependency nền linh hoạt cho môi trường chạy mã nguồn.
+- `requirements-runtime.txt`: profile nền thay thế, ghim phiên bản để tạo runtime/CI reproducible; hiện dùng PyTorch CUDA 12.1.
+- `requirements-dev.txt`: phần bổ sung chỉ dành cho development/test; hiện gồm Pillow cho demo-capture và asset validation.
 
-Python 3.11 được khuyến nghị. FFmpeg/FFprobe cần có trong `ffmpeg/` hoặc trên `PATH`.
+`requirements-dev.txt` được cài thêm sau một trong hai profile nền ở trên. Không cần cài đồng thời `requirements.txt` và `requirements-runtime.txt`.
+
+Python 3.10/3.11 được khuyến nghị. FFmpeg/FFprobe cần có trong `ffmpeg/` hoặc trên `PATH`.
 
 ## 📦 Hướng dẫn cài đặt & Chạy mã nguồn
 
@@ -122,7 +136,7 @@ Python 3.11 được khuyến nghị. FFmpeg/FFprobe cần có trong `ffmpeg/` h
 
 
 ```bash
-git clone https://github.com/your-username/ai-subtitle-studio.git
+git clone https://github.com/thaivtkg/ai-subtitle-studio.git
 cd ai-subtitle-studio
 
 ```
@@ -132,13 +146,13 @@ cd ai-subtitle-studio
 
 ```bash
 # Tạo môi trường ảo
-python -m venv venv
+python -m venv .venv
 
 # Kích hoạt trên Windows PowerShell:
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 
 # Hoặc trên Command Prompt (cmd):
-.\venv\Scripts\activate.bat
+.\.venv\Scripts\activate.bat
 
 ```
 
@@ -146,14 +160,16 @@ python -m venv venv
 
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
-Để cài bộ runtime đã ghim các dependency chính:
+Đường dẫn trên là profile chạy mã nguồn/development. Nếu cần profile runtime đã ghim, dùng nó thay cho `requirements.txt`, sau đó vẫn cài phần dev:
 
 ```bash
-pip install -r requirements-runtime.txt
+python -m pip install -r requirements-runtime.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 ### Bước 4: Cấu hình FFmpeg
@@ -191,12 +207,15 @@ python main.py
 ```
 ai-subtitle-studio/
 ├── ffmpeg/                       # Binary FFmpeg / FFprobe độc lập
+├── resources/                    # Icon, tutorial catalog và media nội bộ
+├── tools/                        # Công cụ phát triển, gồm demo-capture
 ├── core/                         # Tầng Logic Xử lý Cốt lõi
 │   ├── artifacts/                # Quản lý Artifact & Vòng đời Subtitle/Draft
 │   ├── subtitle_generation/      # Domain Faster-Whisper, Planner, Reconciler, Checkpoint
 │   ├── services/                 # Quản lý Trạng thái Dự án & Workspace
 │   ├── timeline/                 # Động cơ Timeline & Quản lý Lệnh (Undo/Redo)
 │   ├── timing/                   # Thuật toán Timing & VAD Batching
+│   ├── tutorial/                 # Guided tour và progress store
 │   ├── waveform/                 # Dịch vụ Trích xuất Sóng âm Background
 │   └── queue_manager.py          # Quản lý danh sách hàng đợi Video
 ├── installer/                    # Kịch bản đóng gói Inno Setup
@@ -205,15 +224,23 @@ ai-subtitle-studio/
 │   └── test_subtitle_generation.py
 ├── ui/                           # Giao diện Người dùng PySide6 (Qt6)
 │   ├── subtitle_generation_panel.py # Panel ngăn kéo cấu hình ASR & Batch
+│   ├── demo_capture/             # Encoder/capture cho tutorial tooling
 │   ├── Gui.py                    # Cửa sổ Chính & Điều phối Sự kiện Toàn cục
 │   └── SubEditor.py              # Bảng Biên tập Phụ đề Dạng Lưới
 ├── workers/                      # Background Worker Threads (Hardsub, Subtitle Gen)
-├── requirements.txt              # Dependency môi trường phát triển
-└── requirements-runtime.txt      # Dependency runtime đã ghim phiên bản
+├── requirements.txt              # Profile dependency nền linh hoạt
+├── requirements-runtime.txt      # Profile runtime/reproducible đã ghim
+└── requirements-dev.txt          # Dependency development/test-only
 
 ```
 
 ## 🧪 Kiểm thử tự động (Automated Testing)
+
+Sau khi kích hoạt `.venv`, cài phần bổ sung dành cho development/test:
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
 
 Chạy bộ kiểm thử tích hợp (bao gồm kiểm tra Time/Segment Planner, Stale Guard, Checkpoint Resume và Boundary Reconciliation):
 
