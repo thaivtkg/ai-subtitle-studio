@@ -401,6 +401,10 @@ class MainWindow(QMainWindow):
             self._on_timing_state_changed
         )
         self.timing_service.error_signal.connect(self._on_timing_error)
+        self.timing_service.effective_compute_signal.connect(
+            self.generation_panel.set_effective_compute_type
+        )
+        self.generation_panel.sync_timing_settings_from_project()
         self._restore_panel_callbacks()
         self.generation_dock = QDockWidget("AI Workspace", self)
         self.generation_dock.setObjectName("SubtitleGenerationDock")
@@ -1769,7 +1773,14 @@ class MainWindow(QMainWindow):
         """Continue the Timing checkpoint without entering the ASR pipeline."""
         try:
             checkpoint = self.project_service.load_timing_checkpoint()
-            if checkpoint and checkpoint.timing_artifact_id:
+            checkpoint_settings_present = checkpoint and all(
+                getattr(checkpoint, field, None) is not None
+                for field in (
+                    "model_size", "compute_type", "use_vad", "min_silence_ms",
+                    "fix_overlap", "overlap_gap_ms", "overlap_ms", "max_window_ms",
+                )
+            )
+            if checkpoint and (checkpoint.timing_artifact_id or not checkpoint_settings_present):
                 self.timing_service.continue_timing(batch_minutes, settings)
             else:
                 # No Timing Artifact exists when cancellation happens before
@@ -2316,6 +2327,7 @@ class MainWindow(QMainWindow):
             try:
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 self._sync_subtitle_placement_from_project()
+                self.generation_panel.sync_timing_settings_from_project()
                 self.revision_tracker.reset_for_new_document()
                 self._switch_recovery_session()
                 
@@ -2341,6 +2353,7 @@ class MainWindow(QMainWindow):
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
             self._sync_subtitle_placement_from_project()
+            self.generation_panel.sync_timing_settings_from_project()
             self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
             self.video_player.load_video(result.local_path)
             self.revision_tracker.reset_for_new_document()
@@ -2448,6 +2461,7 @@ class MainWindow(QMainWindow):
 
             self.project_service.open_project(project_dir)
             self._sync_subtitle_placement_from_project()
+            self.generation_panel.sync_timing_settings_from_project()
             self.revision_tracker.reset_for_new_document()
             self._switch_recovery_session()
             source_path = self.project_service.current_project.source.path
@@ -2513,6 +2527,7 @@ class MainWindow(QMainWindow):
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
             self.project_service.open_project(request.path)
             self._sync_subtitle_placement_from_project()
+            self.generation_panel.sync_timing_settings_from_project()
             self.workspace_service.restore_workspace()
             self._refresh_transcription_context_views()
             self.activateWindow()

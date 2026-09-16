@@ -11,11 +11,16 @@ class TimingBatchWorker(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(list, bool) 
     error_signal = Signal(str)
+    effective_compute_signal = Signal(str)
 
     def __init__(self, request: TimingRunRequest):
         super().__init__()
         self.request = request
         self.is_cancelled = False
+
+    @staticmethod
+    def effective_compute_type(device: str, configured: str) -> str:
+        return configured if device == "cuda" else "int8"
 
     def _transcribe_with_vad_retry(self, model, chunk_wav):
         """Retry one empty VAD result at a lower, still-VAD threshold."""
@@ -66,7 +71,8 @@ class TimingBatchWorker(QThread):
             # [TỐI ƯU HÓA HIỆU NĂNG]
             # Chỉ nạp Whisper Model vào RAM/VRAM đúng 1 lần duy nhất cho toàn bộ Batch
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            compute_type = self.request.compute_type if device == "cuda" else "int8"
+            compute_type = self.effective_compute_type(device, self.request.compute_type)
+            self.effective_compute_signal.emit(compute_type)
             
             self.log_signal.emit(f"[Batch Worker] Đang tải Model Whisper ({self.request.model_size})...")
             # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
