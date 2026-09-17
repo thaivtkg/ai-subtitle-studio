@@ -472,6 +472,14 @@ class MainWindow(QMainWindow):
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
         dock_tabs.addTab(self.inspector_panel, "🎨 Style")
+        from ui.quality_inspector_panel import QualityInspectorPanel
+        self.quality_inspector_panel = QualityInspectorPanel(self)
+        self.quality_inspector_panel.jump_requested.connect(self.sub_editor.select_segment)
+        self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+        self.sub_editor.live_edit_applied.connect(
+            lambda _segments: self.quality_inspector_panel.mark_segments_stale(self.sub_editor.all_segments)
+        )
+        dock_tabs.addTab(self.quality_inspector_panel, "🔎 Quality")
         dock_tabs.addTab(self.log_box, "📜 Log")
         self.dock_tabs = dock_tabs
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
@@ -1305,6 +1313,8 @@ class MainWindow(QMainWindow):
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
+            if getattr(self, "quality_inspector_panel", None):
+                self.quality_inspector_panel.set_segments([])
 
     def on_queue_item_clicked(self, vid_path, fresh_project=False):
         self.queue_mgr.set_active(vid_path)
@@ -1418,6 +1428,9 @@ class MainWindow(QMainWindow):
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
 
+        if getattr(self, "quality_inspector_panel", None):
+            self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+
     def on_queue_item_removed_handler(self, vid_path):
         self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
@@ -1427,6 +1440,8 @@ class MainWindow(QMainWindow):
             self.sub_editor.all_segments.clear()
             self.sub_editor.render_page()
             self.video_player.sub_controller.load_srt(None)
+            if getattr(self, "quality_inspector_panel", None):
+                self.quality_inspector_panel.set_segments([])
         elif self.queue_mgr.active_vid:
             self.on_queue_item_clicked(self.queue_mgr.active_vid)
 
@@ -1455,6 +1470,8 @@ class MainWindow(QMainWindow):
         self.video_player.load_video(target_vid)
         self.sub_editor.load_draft_file(draft_path)
         self.video_player.sub_controller.load_srt(draft_path)
+        if getattr(self, "quality_inspector_panel", None):
+            self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
         self.switch_page(1)
         self.bottom_tabs.setCurrentIndex(0)
@@ -1843,6 +1860,8 @@ class MainWindow(QMainWindow):
 
         try:
             self.sub_editor.load_srt_file(artifact.path)
+            if getattr(self, "quality_inspector_panel", None):
+                self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
             self.video_player.sub_controller.load_srt(artifact.path)
             duration_ms = self.generation_panel.video_duration_ms
             if duration_ms <= 0 and hasattr(self.video_player, "player"):
@@ -1915,6 +1934,8 @@ class MainWindow(QMainWindow):
         """Reload editor, player and timeline only after a full ASR run completes."""
 
         self.sub_editor.load_srt_file(shadow_srt_path)
+        if getattr(self, "quality_inspector_panel", None):
+            self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
         self.video_player.sub_controller.load_srt(shadow_srt_path)
 
         duration_ms = self.generation_panel.video_duration_ms
@@ -2105,6 +2126,8 @@ class MainWindow(QMainWindow):
         # recovered in-memory segments must be applied after it so unsaved
         # edits win without writing back to the project or artifact files.
         self.sub_editor.all_segments = copy.deepcopy(state.segments)
+        if getattr(self, "quality_inspector_panel", None):
+            self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
         duration_ms = 0
         if linked and hasattr(self, "video_player"):
