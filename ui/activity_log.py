@@ -36,6 +36,39 @@ _SOURCE_ALIASES = {
     "HỆ THỐNG": "SYSTEM",
 }
 
+_SOURCE_COLORS = {
+    "SYSTEM": Theme.TEXT_MUTED,
+    "TIMING": Theme.WARNING,
+    "QUEUE": Theme.PRIMARY_PURPLE,
+    "AI": Theme.CYAN,
+    "FFMPEG": Theme.SUCCESS,
+    "SYNC": Theme.CYAN,
+    "WAVEFORM": Theme.CYAN,
+    "PROJECT": Theme.PRIMARY_PURPLE,
+}
+
+_LEVEL_COLORS = {
+    "DEBUG": Theme.TEXT_MUTED,
+    "INFO": Theme.TEXT_PRIMARY,
+    "WARNING": Theme.WARNING,
+    "ERROR": Theme.DANGER,
+}
+
+_TOKEN_PATTERN = re.compile(
+    r"(?:"
+    r"\b\d{2}:\d{2}:\d{2}[,.]\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\b"
+    r"|\b\d{2}:\d{2}:\d{2}[,.]\d{3}\b"
+    r"|(?:[A-Za-z]:[\\/]|/)[^\s<>]+?\.(?:mp4|mkv|mov|srt|ass|vtt|json|ai-subtitle-draft)\b"
+    r"|\bspeed=\d+(?:\.\d+)?x\b"
+    r"|\b\d+(?:\.\d+)?%"
+    r"|\b(?:PASS(?:ED)?|SUCCESS(?:FUL(?:LY)?)?|SUCCEEDED|COMPLETED|READY|DONE)\b"
+    r"|\b(?:FAIL(?:ED)?|ERROR|FATAL)\b"
+    r"|\b(?:WARN(?:ING)?)\b"
+    r"|\b(?:CPU|GPU|CUDA|VRAM|ETA)\b"
+    r")",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class ActivityLogEntry:
@@ -285,16 +318,42 @@ class ActivityLogView(QFrame):
         timestamp = html.escape(entry.timestamp.strftime("%H:%M:%S"))
         level = html.escape(entry.level)
         source = html.escape(entry.source)
-        message = html.escape(entry.message)
-        level_color = {
-            "DEBUG": Theme.TEXT_MUTED,
-            "INFO": Theme.TEXT_PRIMARY,
-            "WARNING": Theme.WARNING,
-            "ERROR": Theme.DANGER,
-        }.get(entry.level, Theme.TEXT_PRIMARY)
+        level_color = ActivityLogView._message_color(entry.level)
         return (
             f'<span style="color:{Theme.TEXT_MUTED}">{timestamp}</span> '
             f'<span style="color:{level_color}">{level}</span> '
-            f'<span style="color:{Theme.CYAN}">{source}</span> '
-            f'<span style="color:{Theme.TEXT_PRIMARY}">{message}</span>'
+            f'<span style="color:{ActivityLogView._source_color(entry.source)}">{source}</span> '
+            f'{ActivityLogView._render_message(entry.message, entry.level)}'
         )
+
+    @staticmethod
+    def _source_color(source):
+        return _SOURCE_COLORS.get(str(source).strip().upper(), Theme.TEXT_SECONDARY)
+
+    @staticmethod
+    def _message_color(level):
+        return _LEVEL_COLORS.get(str(level).strip().upper(), Theme.TEXT_PRIMARY)
+
+    @staticmethod
+    def _render_message(message, level="INFO"):
+        base_color = ActivityLogView._message_color(level)
+        rendered = []
+        cursor = 0
+        for match in _TOKEN_PATTERN.finditer(str(message)):
+            rendered.append(html.escape(str(message)[cursor:match.start()]))
+            token = match.group(0)
+            upper = token.upper()
+            if upper in {"PASS", "PASSED", "SUCCESS", "SUCCESSFUL", "SUCCESSFULLY", "SUCCEEDED", "COMPLETED", "READY", "DONE"}:
+                color = Theme.SUCCESS
+            elif upper in {"FAIL", "FAILED", "ERROR", "FATAL"}:
+                color = Theme.DANGER
+            elif upper in {"WARN", "WARNING"}:
+                color = Theme.WARNING
+            else:
+                color = Theme.CYAN
+            rendered.append(
+                f'<span style="color:{color}; font-weight:600">{html.escape(token)}</span>'
+            )
+            cursor = match.end()
+        rendered.append(html.escape(str(message)[cursor:]))
+        return f'<span style="color:{base_color}">{"".join(rendered)}</span>'
