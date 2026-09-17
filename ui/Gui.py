@@ -472,6 +472,17 @@ class MainWindow(QMainWindow):
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
         dock_tabs.addTab(self.inspector_panel, "🎨 Style")
+        from ui.quality_inspector_panel import QualityInspectorPanel
+        self.quality_inspector_panel = QualityInspectorPanel(self)
+        self.quality_inspector_panel.jump_requested.connect(self.sub_editor.select_segment)
+        self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+        self.sub_editor.live_edit_applied.connect(
+            lambda _segments: self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+        )
+        dock_tabs.currentChanged.connect(
+            lambda _index: self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+        )
+        dock_tabs.addTab(self.quality_inspector_panel, "🔎 Quality")
         dock_tabs.addTab(self.log_box, "📜 Log")
         self.dock_tabs = dock_tabs
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
