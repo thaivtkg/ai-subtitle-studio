@@ -91,15 +91,17 @@ class TestQualityInspectorPanel(unittest.TestCase):
 
     def test_source_switch_replaces_old_issue_set(self):
         panel = QualityInspectorPanel()
-        panel.set_segments([{"id": "old", "start": 0, "end": 400, "text": "x" * 20}])
+        panel.set_segments([{"id": "old", "start": 0, "end": 3000, "text": "x" * 43}])
         panel.refresh()
-        self.assertGreater(panel.issue_list.count(), 0)
+        self.assertIn("line_too_long", panel.issue_list.item(0).text())
 
-        panel.set_segments([{"id": "new", "start": 0, "end": 2000, "text": "ok"}])
+        panel.set_segments([{"id": "new", "start": 0, "end": 1000, "text": "x" * 21}])
 
         self.assertEqual(panel.issue_list.count(), 0)
         panel.refresh()
-        self.assertEqual(panel.issue_list.count(), 0)
+        self.assertEqual(panel.issue_list.count(), 1)
+        self.assertIn("reading_speed", panel.issue_list.item(0).text())
+        self.assertNotIn("line_too_long", panel.issue_list.item(0).text())
 
 
 if __name__ == "__main__":
