@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtWidgets import QApplication
     from ui.quality_inspector_panel import QualityInspectorPanel
+    from ui.theme import Theme
 except (ImportError, ModuleNotFoundError):
     QApplication = None
     QualityInspectorPanel = None
@@ -53,6 +54,26 @@ class TestQualityInspectorPanel(unittest.TestCase):
         panel.set_segments(segments)
         panel.refresh()
         self.assertEqual(panel.issue_list.count(), 2)
+
+    def test_issue_list_has_explicit_dark_readable_quality_theme(self):
+        panel = QualityInspectorPanel()
+        panel.set_segments([
+            {"id": "error", "start": 0, "end": 1000, "text": "x" * 21},
+            {"id": "warning", "start": 900, "end": 2000, "text": "ok"},
+        ])
+        panel.refresh()
+
+        style = panel.issue_list.styleSheet()
+        self.assertIn(f"background-color: {Theme.SURFACE}", style)
+        self.assertIn(f"background-color: {Theme.SURFACE_SOFT}", style)
+        self.assertIn(f"color: {Theme.TEXT_PRIMARY}", style)
+        self.assertIn("QListWidget::item:selected", style)
+        item_colors = {
+            panel.issue_list.item(index).foreground().color().name().lower()
+            for index in range(panel.issue_list.count())
+        }
+        self.assertIn(Theme.DANGER.lower(), item_colors)
+        self.assertIn(Theme.WARNING.lower(), item_colors)
 
 
 if __name__ == "__main__":

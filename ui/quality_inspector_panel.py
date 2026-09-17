@@ -1,9 +1,11 @@
 import copy
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
 
 from core.subtitle_quality import QualitySeverity, SubtitleQualityAnalyzer
+from ui.theme import Theme
 
 
 class QualityInspectorPanel(QWidget):
@@ -22,6 +24,22 @@ class QualityInspectorPanel(QWidget):
         self.filter_combo.currentIndexChanged.connect(self._render_issues)
         layout.addWidget(self.filter_combo)
         self.issue_list = QListWidget()
+        self.issue_list.setStyleSheet(
+            f"""
+            QListWidget, QListWidget::viewport {{
+                background-color: {Theme.SURFACE};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
+            }}
+            QListWidget::item {{
+                padding: 6px;
+            }}
+            QListWidget::item:hover, QListWidget::item:selected {{
+                background-color: {Theme.SURFACE_SOFT};
+                color: {Theme.TEXT_PRIMARY};
+            }}
+            """
+        )
         layout.addWidget(self.issue_list)
         self.jump_button = QPushButton("Jump to subtitle")
         self.jump_button.clicked.connect(self._jump_to_selected)
@@ -59,9 +77,14 @@ class QualityInspectorPanel(QWidget):
             self.issue_list.addItem(
                 f"{issue.severity.name.title()} · #{issue.subtitle_index + 1} {issue.rule_id}\n{issue.message}"
             )
-            self.issue_list.item(self.issue_list.count() - 1).setData(
-                Qt.UserRole, issue.subtitle_index
-            )
+            item = self.issue_list.item(self.issue_list.count() - 1)
+            item.setData(Qt.UserRole, issue.subtitle_index)
+            severity_color = {
+                QualitySeverity.ERROR: Theme.DANGER,
+                QualitySeverity.WARNING: Theme.WARNING,
+                QualitySeverity.INFO: Theme.CYAN,
+            }[issue.severity]
+            item.setForeground(QColor(severity_color))
 
     def _jump_to_selected(self):
         item = self.issue_list.currentItem()
