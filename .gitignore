@@ -1,4 +1,12 @@
 venv/
+.venv/
+
+# Local runtime diagnostics
+Error.txt
+
+# Local manual acceptance fixtures
+MA4_MA7_manual_test_data.zip
+
 build/ai_subtitle_studio/
 dist/
 __pycache__/
