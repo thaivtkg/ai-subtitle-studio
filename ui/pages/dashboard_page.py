@@ -6,12 +6,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ui.theme import Theme
+from ui.activity_log import ActivityLogModel, ActivityLogView
 
 
 class DashboardPage(QWidget):
@@ -19,6 +19,7 @@ class DashboardPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.activity_log_model = ActivityLogModel()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
@@ -104,17 +105,20 @@ class DashboardPage(QWidget):
         log_layout.setContentsMargins(14, 14, 14, 14)
         log_layout.setSpacing(8)
 
-        lbl_log_title = QLabel("📜 Activity Stream")
-        lbl_log_title.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {Theme.TEXT_MUTED}; border: none;")
-        lbl_log_title.setMinimumHeight(18)
-        log_layout.addWidget(lbl_log_title)
-
-        self.activity_log = QTextEdit()
-        self.activity_log.setReadOnly(True)
-        self.activity_log.setPlaceholderText("Hệ thống sẵn sàng...")
+        self.activity_log = ActivityLogView(self.activity_log_model)
+        self.activity_level_filter = self.activity_log.level_filter
+        self.activity_source_filter = self.activity_log.source_filter
+        self.activity_auto_scroll = self.activity_log.auto_scroll_control
+        self.activity_clear_button = self.activity_log.clear_button
         log_layout.addWidget(self.activity_log)
 
         layout.addWidget(log_frame, stretch=1)
+
+    def append_activity_log(self, raw):
+        self.activity_log_model.append(raw)
+
+    def clear_activity_log(self):
+        self.activity_log_model.clear()
 
     def _create_card(self, title, val, color):
         f = QFrame()

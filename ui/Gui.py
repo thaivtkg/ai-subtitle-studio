@@ -80,6 +80,7 @@ from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.pages.dashboard_page import DashboardPage
+from ui.activity_log import ActivityLogView
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
@@ -374,8 +375,7 @@ class MainWindow(QMainWindow):
         self.workspace_vertical_splitter.addWidget(self.top_horizontal_splitter)
 
         # Live log is hosted in the generation dock tab.
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
+        self.log_box = ActivityLogView(self.page_dashboard.activity_log_model, self)
         self.log_box.setPlaceholderText("Nhật ký trạng thái...")
 
         # --- [SPRINT 9] RIGHT DOCK: SUBTITLE GENERATION + LIVE LOG ---
@@ -1601,7 +1601,6 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.page_dashboard.card_status_val.setText("Processing")
-        self.log_box.clear()
         self.process_next_batch_item()
 
     def process_next_batch_item(self):
@@ -1976,8 +1975,7 @@ class MainWindow(QMainWindow):
             self.lbl_speed_eta.setText(msg)
 
     def append_log(self, msg):
-        self.log_box.append(msg)
-        self.page_dashboard.activity_log.append(msg)
+        self.page_dashboard.append_activity_log(msg)
         speed_match = re.search(r"speed=\s*([0-9\.]+x)", msg)
         if speed_match:
             self.lbl_speed_eta.setText(f"Speed: {speed_match.group(1)}")
