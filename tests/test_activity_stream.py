@@ -300,6 +300,31 @@ class ActivityStreamUiContractTests(unittest.TestCase):
     def _combo_values(self, combo):
         return [combo.itemText(index) for index in range(combo.count())]
 
+    def _view_class(self):
+        view = getattr(self._module(), "ActivityLogView", None)
+        self.assertIsNotNone(view, "ActivityLogView must be available")
+        return view
+
+    def _source_color(self, source):
+        color = getattr(self._view_class(), "_source_color", None)
+        self.assertIsNotNone(color, "ActivityLogView must expose _source_color")
+        return color(source)
+
+    def _level_color(self, level):
+        color = getattr(self._view_class(), "_message_color", None)
+        self.assertIsNotNone(color, "ActivityLogView must expose _message_color")
+        return color(level)
+
+    def _render_message(self, message, level="INFO"):
+        render = getattr(self._view_class(), "_render_message", None)
+        self.assertIsNotNone(render, "ActivityLogView must expose _render_message")
+        return render(message, level)
+
+    def _theme(self):
+        from ui.theme import Theme
+
+        return Theme
+
     def test_g1_main_window_append_log_keeps_raw_dock_log_and_accepts_legacy_signal(self):
         from ui.Gui import MainWindow
         from ui.pages.dashboard_page import DashboardPage
@@ -484,6 +509,93 @@ class ActivityStreamUiContractTests(unittest.TestCase):
         self.assertIsNotNone(getattr(page, "activity_source_filter", None))
         self.assertIsNotNone(getattr(page, "activity_auto_scroll", None))
         self.assertIsNotNone(getattr(page, "activity_clear_button", None))
+
+    def test_colorful_c1_known_sources_are_differentiated(self):
+        Theme = self._theme()
+        expected = {
+            "SYSTEM": Theme.TEXT_MUTED,
+            "TIMING": Theme.WARNING,
+            "QUEUE": Theme.PRIMARY_PURPLE,
+            "AI": Theme.CYAN,
+            "FFMPEG": Theme.SUCCESS,
+            "SYNC": Theme.CYAN,
+            "WAVEFORM": Theme.CYAN,
+            "PROJECT": Theme.PRIMARY_PURPLE,
+        }
+        colors = {source: self._source_color(source) for source in expected}
+        self.assertEqual(colors, expected)
+        self.assertGreater(len(set(colors.values())), 3)
+
+    def test_colorful_c2_levels_keep_semantic_colors(self):
+        Theme = self._theme()
+        self.assertEqual(self._level_color("DEBUG"), Theme.TEXT_MUTED)
+        self.assertEqual(self._level_color("INFO"), Theme.TEXT_PRIMARY)
+        self.assertEqual(self._level_color("WARNING"), Theme.WARNING)
+        self.assertEqual(self._level_color("ERROR"), Theme.DANGER)
+
+    def test_colorful_c3_error_message_gets_error_tint(self):
+        self.assertIn(self._theme().DANGER, self._render_message("export failed", "ERROR"))
+
+    def test_colorful_c4_warning_message_gets_warning_tint(self):
+        self.assertIn(self._theme().WARNING, self._render_message("overlap detected", "WARNING"))
+
+    def test_colorful_c5_info_message_remains_readable(self):
+        Theme = self._theme()
+        rendered = self._render_message("normal information", "INFO")
+        self.assertIn(Theme.TEXT_PRIMARY, rendered)
+        self.assertNotIn(Theme.CYAN, rendered)
+        self.assertNotIn(Theme.PRIMARY_PURPLE, rendered)
+
+    def test_colorful_c6_success_keywords_are_highlighted(self):
+        self.assertIn(self._theme().SUCCESS, self._render_message("Export SUCCESS"))
+
+    def test_colorful_c7_failure_keywords_are_highlighted(self):
+        self.assertIn(self._theme().DANGER, self._render_message("FAILED with ERROR"))
+
+    def test_colorful_c8_hardware_and_performance_tokens_are_highlighted(self):
+        Theme = self._theme()
+        rendered = self._render_message("CPU GPU CUDA VRAM speed=1.42x ETA")
+        self.assertIn(Theme.CYAN, rendered)
+        self.assertIn("speed=1.42x", rendered)
+        self.assertIn("ETA", rendered)
+
+    def test_colorful_c9_percentage_is_highlighted(self):
+        self.assertIn(self._theme().CYAN, self._render_message("Progress 73%"))
+
+    def test_colorful_c10_subtitle_time_range_is_highlighted(self):
+        rendered = self._render_message("00:01:02,300 --> 00:01:04,100")
+        self.assertIn(self._theme().CYAN, rendered)
+        single = self._render_message("at 00:01:02,300")
+        self.assertIn(self._theme().CYAN, single)
+
+    def test_colorful_c11_file_path_is_highlighted(self):
+        rendered = self._render_message(r"D:\Video\output.mp4 /tmp/output.srt")
+        self.assertIn(self._theme().CYAN, rendered)
+        self.assertIn(r"D:\Video\output.mp4", rendered)
+        self.assertIn("/tmp/output.srt", rendered)
+
+    def test_colorful_c12_html_message_remains_literal_text(self):
+        from ui.pages.dashboard_page import DashboardPage
+
+        page = DashboardPage()
+        self._append(page, "[INFO] <b>x</b>&")
+        self.assertIn("<b>x</b>&", page.activity_log.toPlainText())
+
+    def test_colorful_c13_rendering_preserves_plain_text_contract(self):
+        from ui.pages.dashboard_page import DashboardPage
+
+        page = DashboardPage()
+        self._append(page, "[DEBUG-WAVEFORM] GPU READY")
+        rendered = page.activity_log.toPlainText()
+        self.assertIn("DEBUG", rendered)
+        self.assertIn("WAVEFORM", rendered)
+        self.assertIn("GPU READY", rendered)
+
+    def test_colorful_c14_unknown_source_uses_safe_fallback_color(self):
+        Theme = self._theme()
+        self.assertEqual(self._source_color("CUSTOMPLUGIN"), Theme.TEXT_SECONDARY)
+        rendered = self._render_message("hello")
+        self.assertIn("hello", rendered)
 
 
 if __name__ == "__main__":
