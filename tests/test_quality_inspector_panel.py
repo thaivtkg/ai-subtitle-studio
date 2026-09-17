@@ -75,6 +75,32 @@ class TestQualityInspectorPanel(unittest.TestCase):
         self.assertIn(Theme.DANGER.lower(), item_colors)
         self.assertIn(Theme.WARNING.lower(), item_colors)
 
+    def test_replacing_snapshot_clears_previous_results_and_disables_jump(self):
+        panel = QualityInspectorPanel()
+        panel.set_segments([{"id": "old", "start": 0, "end": 400, "text": "x" * 20}])
+        panel.refresh()
+        self.assertGreater(panel.issue_list.count(), 0)
+
+        panel.set_segments([])
+        panel.refresh()
+
+        self.assertEqual(panel.issue_list.count(), 0)
+        self.assertEqual(panel.summary_label.text(), "0 Errors · 0 Warnings · 0 Info")
+        self.assertFalse(panel.jump_button.isEnabled())
+        self.assertIn("No active subtitles to inspect", panel.empty_state_label.text())
+
+    def test_source_switch_replaces_old_issue_set(self):
+        panel = QualityInspectorPanel()
+        panel.set_segments([{"id": "old", "start": 0, "end": 400, "text": "x" * 20}])
+        panel.refresh()
+        self.assertGreater(panel.issue_list.count(), 0)
+
+        panel.set_segments([{"id": "new", "start": 0, "end": 2000, "text": "ok"}])
+
+        self.assertEqual(panel.issue_list.count(), 0)
+        panel.refresh()
+        self.assertEqual(panel.issue_list.count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

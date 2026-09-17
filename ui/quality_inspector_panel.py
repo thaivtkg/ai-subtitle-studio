@@ -41,6 +41,10 @@ class QualityInspectorPanel(QWidget):
             """
         )
         layout.addWidget(self.issue_list)
+        self.empty_state_label = QLabel()
+        self.empty_state_label.setAlignment(Qt.AlignCenter)
+        self.empty_state_label.setStyleSheet(f"color: {Theme.TEXT_MUTED}; padding: 12px;")
+        layout.addWidget(self.empty_state_label)
         self.jump_button = QPushButton("Jump to subtitle")
         self.jump_button.clicked.connect(self._jump_to_selected)
         layout.addWidget(self.jump_button)
@@ -50,9 +54,16 @@ class QualityInspectorPanel(QWidget):
 
     def set_segments(self, segments):
         self._segments = copy.deepcopy(list(segments or []))
+        self._issues = []
+        self._update_summary()
+        self._render_issues()
 
     def refresh(self):
         self._issues = SubtitleQualityAnalyzer.analyze(self._segments)
+        self._update_summary()
+        self._render_issues()
+
+    def _update_summary(self):
         counts = {
             severity: sum(issue.severity is severity for issue in self._issues)
             for severity in QualitySeverity
@@ -62,7 +73,6 @@ class QualityInspectorPanel(QWidget):
             f"{counts[QualitySeverity.WARNING]} Warnings · "
             f"{counts[QualitySeverity.INFO]} Info"
         )
-        self._render_issues()
 
     def _render_issues(self):
         severity = {
@@ -85,6 +95,16 @@ class QualityInspectorPanel(QWidget):
                 QualitySeverity.INFO: Theme.CYAN,
             }[issue.severity]
             item.setForeground(QColor(severity_color))
+        has_issues = self.issue_list.count() > 0
+        self.empty_state_label.setVisible(not has_issues)
+        self.empty_state_label.setText(
+            "" if has_issues else (
+                "No active subtitles to inspect"
+                if not self._segments
+                else "No quality issues found"
+            )
+        )
+        self.jump_button.setEnabled(has_issues)
 
     def _jump_to_selected(self):
         item = self.issue_list.currentItem()

@@ -42,6 +42,7 @@ class TestClearQueueLifecycle(unittest.TestCase):
                 all_segments=[{"text": "unsaved"}],
                 render_page=MagicMock(),
             ),
+            quality_inspector_panel=SimpleNamespace(set_segments=MagicMock()),
             project_service=project_service,
             revision_tracker=revision_tracker,
             recovery_manager=recovery_manager,
@@ -53,6 +54,7 @@ class TestClearQueueLifecycle(unittest.TestCase):
         fake_window.timeline_widget.clear.assert_called_once_with()
         self.assertEqual(fake_window.sub_editor.all_segments, [])
         fake_window.sub_editor.render_page.assert_called_once_with()
+        fake_window.quality_inspector_panel.set_segments.assert_called_once_with([])
         fake_window.video_player.sub_controller.load_srt.assert_called_once_with(None)
         project_service.close_project.assert_not_called()
         revision_tracker.reset_for_new_document.assert_not_called()
