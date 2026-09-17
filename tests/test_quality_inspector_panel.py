@@ -5,10 +5,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
     from ui.quality_inspector_panel import QualityInspectorPanel
     from ui.theme import Theme
 except (ImportError, ModuleNotFoundError):
     QApplication = None
+    QTest = None
     QualityInspectorPanel = None
 
 
@@ -27,7 +29,10 @@ def lifecycle_fixture():
     ]
 
 
-@unittest.skipIf(QApplication is None, "PySide6 is unavailable in bundled runtime")
+@unittest.skipIf(
+    QApplication is None or QTest is None,
+    "PySide6 is unavailable in bundled runtime",
+)
 class TestQualityInspectorPanel(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -185,6 +190,24 @@ class TestQualityInspectorPanel(unittest.TestCase):
             (2, "duration_too_short"),
             {(issue.subtitle_index, issue.rule_id) for issue in panel._issues},
         )
+
+    def test_edit_auto_reanalyzes_after_debounce(self):
+        panel = QualityInspectorPanel()
+        segments = lifecycle_fixture()
+        panel.set_segments(segments)
+        panel.refresh()
+
+        edited = [dict(segment) for segment in segments]
+        edited[2]["end"] = 6900
+        panel.mark_segments_stale(edited)
+        self.assertEqual(panel.analysis_state, "STALE")
+
+        QTest.qWait(350)
+
+        self.assertEqual(panel.analysis_state, "CURRENT")
+        issue_keys = {(issue.subtitle_index, issue.rule_id) for issue in panel._issues}
+        self.assertNotIn((2, "duration_too_short"), issue_keys)
+        self.assertIn((1, "reading_speed"), issue_keys)
 
 
 if __name__ == "__main__":

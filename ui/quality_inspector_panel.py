@@ -1,6 +1,6 @@
 import copy
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
 
@@ -16,6 +16,10 @@ class QualityInspectorPanel(QWidget):
         self._segments = []
         self._issues = []
         self.analysis_state = "NO_SOURCE"
+        self._analysis_timer = QTimer(self)
+        self._analysis_timer.setSingleShot(True)
+        self._analysis_timer.setInterval(300)
+        self._analysis_timer.timeout.connect(self.refresh)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("QUALITY INSPECTOR"))
         self.summary_label = QLabel("0 Errors · 0 Warnings · 0 Info")
@@ -57,10 +61,13 @@ class QualityInspectorPanel(QWidget):
         layout.addWidget(self.refresh_button)
 
     def set_segments(self, segments):
+        self._analysis_timer.stop()
         self._replace_snapshot(segments, "STALE")
 
     def mark_segments_stale(self, segments):
         self._replace_snapshot(segments, "STALE")
+        if self._segments:
+            self._analysis_timer.start()
 
     def _replace_snapshot(self, segments, state):
         self._segments = copy.deepcopy(list(segments or []))
@@ -70,6 +77,7 @@ class QualityInspectorPanel(QWidget):
         self._render_issues()
 
     def refresh(self):
+        self._analysis_timer.stop()
         if not self._segments:
             self._replace_snapshot([], "NO_SOURCE")
             return
