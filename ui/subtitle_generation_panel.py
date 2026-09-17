@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -11,6 +12,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -71,11 +74,28 @@ class SubtitleGenerationPanel(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(12)
 
+        self.settings_scroll_area = QScrollArea(self)
+        self.settings_scroll_area.setWidgetResizable(True)
+        self.settings_scroll_area.setFrameShape(QFrame.NoFrame)
+        self.settings_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.settings_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.settings_scroll_area.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+
+        self.settings_scroll_content = QWidget()
+        self.settings_scroll_content.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Minimum
+        )
+        settings_layout = QVBoxLayout(self.settings_scroll_content)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(12)
+
         title = QLabel("✨ Generate Subtitle")
         title.setStyleSheet(
             f"font-size: 16px; font-weight: bold; color: {Theme.TEXT_PRIMARY};"
         )
-        layout.addWidget(title)
+        settings_layout.addWidget(title)
 
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Task Mode:"))
@@ -84,7 +104,7 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
         self.cmb_mode.setStyleSheet("font-weight: bold;")
         mode_layout.addWidget(self.cmb_mode, stretch=1)
-        layout.addLayout(mode_layout)
+        settings_layout.addLayout(mode_layout)
         # Adapt Qt's int payload to the no-argument policy slot.
         self.cmb_mode.currentIndexChanged.connect(
             lambda _index: self._on_mode_changed()
@@ -113,7 +133,7 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
         model_layout.addWidget(QLabel("Language:"))
         model_layout.addWidget(self.cmb_language)
-        layout.addWidget(self.model_group)
+        settings_layout.addWidget(self.model_group)
 
         advanced_group = QGroupBox("Advanced Settings")
         advanced_layout = QVBoxLayout(advanced_group)
@@ -163,7 +183,7 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_model.currentTextChanged.connect(self._on_timing_setting_changed)
         self.cmb_compute.currentTextChanged.connect(self._on_timing_setting_changed)
         self.chk_vad.toggled.connect(self._on_timing_setting_changed)
-        layout.addWidget(advanced_group)
+        settings_layout.addWidget(advanced_group)
 
         context_layout = QHBoxLayout()
         self.lbl_context_status = QLabel("Context: not configured")
@@ -173,18 +193,26 @@ class SubtitleGenerationPanel(QWidget):
         self.edit_context_btn = self.btn_context_edit
         context_layout.addWidget(self.lbl_context_status, stretch=1)
         context_layout.addWidget(self.btn_context_edit)
-        layout.addLayout(context_layout)
-        layout.addStretch()
+        settings_layout.addLayout(context_layout)
+        settings_layout.addStretch()
+        self.settings_scroll_area.setWidget(self.settings_scroll_content)
+        layout.addWidget(self.settings_scroll_area, stretch=1)
+
+        self.action_footer = QWidget(self)
+        footer_layout = QVBoxLayout(self.action_footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(8)
+
         self.lbl_status = QLabel("Ready")
         self._configure_status_label(self.lbl_status)
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED};")
-        layout.addWidget(self.lbl_status)
+        footer_layout.addWidget(self.lbl_status)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        layout.addWidget(self.progress_bar)
+        footer_layout.addWidget(self.progress_bar)
 
         button_layout = QHBoxLayout()
         self.btn_generate = QPushButton("Generate")
@@ -198,7 +226,8 @@ class SubtitleGenerationPanel(QWidget):
         button_layout.addWidget(self.btn_generate)
         button_layout.addWidget(self.btn_resume)
         button_layout.addWidget(self.btn_cancel)
-        layout.addLayout(button_layout)
+        footer_layout.addLayout(button_layout)
+        layout.addWidget(self.action_footer, stretch=0)
 
         # Apply the initial batching and ASR/Timing policies before the panel is shown.
         self._on_batch_mode_changed()
