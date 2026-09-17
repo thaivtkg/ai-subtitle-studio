@@ -477,10 +477,7 @@ class MainWindow(QMainWindow):
         self.quality_inspector_panel.jump_requested.connect(self.sub_editor.select_segment)
         self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
         self.sub_editor.live_edit_applied.connect(
-            lambda _segments: self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
-        )
-        dock_tabs.currentChanged.connect(
-            lambda _index: self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
+            lambda _segments: self.quality_inspector_panel.mark_segments_stale(self.sub_editor.all_segments)
         )
         dock_tabs.addTab(self.quality_inspector_panel, "🔎 Quality")
         dock_tabs.addTab(self.log_box, "📜 Log")

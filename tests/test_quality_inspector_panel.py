@@ -12,6 +12,21 @@ except (ImportError, ModuleNotFoundError):
     QualityInspectorPanel = None
 
 
+def lifecycle_fixture():
+    return [
+        {"id": "one", "start": 1000, "end": 3000, "text": "normal"},
+        {"id": "two", "start": 4000, "end": 4900, "text": "x" * 43},
+        {"id": "three", "start": 6000, "end": 6600, "text": "short"},
+        {"id": "four", "start": 8000, "end": 16000, "text": "long"},
+        {"id": "five", "start": 17000, "end": 20000, "text": "x" * 43},
+        {"id": "six", "start": 21000, "end": 24000, "text": "a\nb\nc"},
+        {"id": "seven", "start": 25000, "end": 27000, "text": "overlap"},
+        {"id": "eight", "start": 26800, "end": 29000, "text": "overlap"},
+        {"id": "nine", "start": 30000, "end": 32000, "text": "gap"},
+        {"id": "ten", "start": 32050, "end": 34000, "text": "gap"},
+    ]
+
+
 @unittest.skipIf(QApplication is None, "PySide6 is unavailable in bundled runtime")
 class TestQualityInspectorPanel(unittest.TestCase):
     @classmethod
@@ -102,6 +117,74 @@ class TestQualityInspectorPanel(unittest.TestCase):
         self.assertEqual(panel.issue_list.count(), 1)
         self.assertIn("reading_speed", panel.issue_list.item(0).text())
         self.assertNotIn("line_too_long", panel.issue_list.item(0).text())
+
+    def test_edit_marks_analysis_stale_without_false_clean_state(self):
+        panel = QualityInspectorPanel()
+        segments = lifecycle_fixture()
+        panel.set_segments(segments)
+        panel.refresh()
+        self.assertIn("duration_too_short", [issue.rule_id for issue in panel._issues])
+
+        edited = [dict(segment) for segment in segments]
+        edited[2]["end"] = 6900
+        mark_stale = getattr(panel, "mark_segments_stale", None)
+        self.assertTrue(callable(mark_stale))
+        mark_stale(edited)
+
+        self.assertEqual(getattr(panel, "analysis_state", None), "STALE")
+        self.assertEqual(panel.issue_list.count(), 0)
+        self.assertNotIn("No quality issues found", panel.empty_state_label.text())
+        self.assertIn("Refresh to reanalyze", panel.empty_state_label.text())
+        self.assertFalse(panel.jump_button.isEnabled())
+
+    def test_refresh_after_edit_keeps_unrelated_issues(self):
+        panel = QualityInspectorPanel()
+        segments = lifecycle_fixture()
+        panel.set_segments(segments)
+        panel.refresh()
+
+        edited = [dict(segment) for segment in segments]
+        edited[2]["end"] = 6900
+        panel.mark_segments_stale(edited)
+        panel.refresh()
+
+        issue_keys = {(issue.subtitle_index, issue.rule_id) for issue in panel._issues}
+        self.assertNotIn((2, "duration_too_short"), issue_keys)
+        for expected in [
+            (1, "reading_speed"),
+            (1, "line_too_long"),
+            (3, "duration_too_long"),
+            (4, "line_too_long"),
+            (5, "too_many_lines"),
+            (6, "subtitle_overlap"),
+            (8, "gap_too_small"),
+        ]:
+            self.assertIn(expected, issue_keys)
+        self.assertEqual(getattr(panel, "analysis_state", None), "CURRENT")
+
+    def test_edit_violation_returns_after_refresh(self):
+        panel = QualityInspectorPanel()
+        segments = lifecycle_fixture()
+        panel.set_segments(segments)
+        panel.refresh()
+
+        edited = [dict(segment) for segment in segments]
+        edited[2]["end"] = 6900
+        panel.mark_segments_stale(edited)
+        panel.refresh()
+        self.assertNotIn(
+            (2, "duration_too_short"),
+            {(issue.subtitle_index, issue.rule_id) for issue in panel._issues},
+        )
+
+        edited[2]["end"] = 6500
+        panel.mark_segments_stale(edited)
+        self.assertEqual(panel.analysis_state, "STALE")
+        panel.refresh()
+        self.assertIn(
+            (2, "duration_too_short"),
+            {(issue.subtitle_index, issue.rule_id) for issue in panel._issues},
+        )
 
 
 if __name__ == "__main__":
