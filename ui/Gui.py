@@ -1372,6 +1372,7 @@ class MainWindow(QMainWindow):
             project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
+                self._prepare_recovery_session_switch()
                 if fresh_project:
                     self.project_service.create_auto_project(
                         output_dir,
@@ -1395,6 +1396,8 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         self.project_service.open_project(project_dir)
+                self.revision_tracker.reset_for_new_document()
+                self._switch_recovery_session()
                 self._sync_subtitle_placement_from_project()
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
@@ -2404,6 +2407,13 @@ class MainWindow(QMainWindow):
         self.autosave_coordinator.bind_session(session.session_id)
         return session
 
+    def _prepare_recovery_session_switch(self):
+        """Invalidate the old autosave identity before replacing project state."""
+        self._autosave_generation += 1
+        coordinator = getattr(self, "autosave_coordinator", None)
+        if coordinator:
+            coordinator.clear_session()
+
     def action_new_project(self):
         dialog = NewProjectDialog(self)
         if dialog.exec():
@@ -2414,6 +2424,7 @@ class MainWindow(QMainWindow):
             full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
             
             try:
+                self._prepare_recovery_session_switch()
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 self._sync_subtitle_placement_from_project()
                 self.generation_panel.sync_timing_settings_from_project()
@@ -2438,6 +2449,7 @@ class MainWindow(QMainWindow):
             return
         self.first_run_controller.on_workflow_started()
         try:
+            self._prepare_recovery_session_switch()
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
@@ -2543,6 +2555,7 @@ class MainWindow(QMainWindow):
             return
             
         try:
+            self._prepare_recovery_session_switch()
             # 1. CHUYỂN TRANG NGAY LẬP TỨC: Giấu đi thời gian chờ nạp dữ liệu
             self.switch_page(1)
             # Ép Qt vẽ xong màn hình Workspace trước khi CPU bị chặn bởi việc nạp file
@@ -2617,9 +2630,12 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
+            self._prepare_recovery_session_switch()
             self.project_service.open_project(request.path)
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
+            self.revision_tracker.reset_for_new_document()
+            self._switch_recovery_session()
             self.workspace_service.restore_workspace()
             self._refresh_transcription_context_views()
             self.activateWindow()

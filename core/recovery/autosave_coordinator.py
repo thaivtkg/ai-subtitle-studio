@@ -48,7 +48,6 @@ class AutosaveCoordinator:
         self._bound = True
         self._bound_session_id = session_id
         self._cancel_cycle()
-        self._log("autosave session bound", session_id=session_id)
         self._ensure_cycle_if_dirty()
 
     def clear_session(self):
@@ -56,11 +55,9 @@ class AutosaveCoordinator:
         self._bound = False
         self._bound_session_id = None
         self._cancel_cycle()
-        self._log("autosave session cleared")
 
     def manual_save_succeeded(self):
         self._cancel_cycle()
-        self._log("autosave cancelled after manual save")
 
     def dispose(self):
         self._cancel_cycle()

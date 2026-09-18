@@ -24,6 +24,14 @@ class RecoveryManager(QObject):
     """Own recovery-session files without touching canonical project files."""
 
     _SLOTS = ("current", "previous", "older")
+    _TEMP_ARTIFACTS = (
+        "manifest.tmp",
+        "snapshot.tmp",
+        "manifest.previous.tmp",
+        "snapshot.previous.tmp",
+        "manifest.older.tmp",
+        "snapshot.older.tmp",
+    )
     _SEMANTIC_STAGES = (
         "temp_snapshot",
         "temp_manifest",
@@ -175,8 +183,13 @@ class RecoveryManager(QObject):
             valid_pair_found = False
             slot_present = any(
                 path.exists()
-                for slot in self._SLOTS
-                for path in self._slot_paths(directory, slot)
+                for path in (
+                    directory / "snapshot.json",
+                    directory / "manifest.previous.json",
+                    directory / "snapshot.previous.json",
+                    directory / "manifest.older.json",
+                    directory / "snapshot.older.json",
+                )
             )
             last_error = "NO_VALID_RECOVERY_PAIR"
             for slot in self._SLOTS:
@@ -279,6 +292,7 @@ class RecoveryManager(QObject):
             "snapshot.previous.json",
             "manifest.older.json",
             "snapshot.older.json",
+            *self._TEMP_ARTIFACTS,
         ):
             (directory / name).unlink(missing_ok=True)
         try:

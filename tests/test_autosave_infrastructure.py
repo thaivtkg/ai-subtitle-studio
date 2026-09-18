@@ -320,6 +320,16 @@ class AutosaveCoordinatorContractTests(unittest.TestCase):
         self.assertEqual(self.tracker.edit_revision, revision_before)
         self.assertTrue(self.tracker.is_dirty)
 
+    def test_AS17_lifecycle_events_do_not_pollute_activity_stream(self):
+        coordinator = self.coordinator()
+
+        coordinator.start()
+        coordinator.bind_session("session-b")
+        coordinator.clear_session()
+        coordinator.manual_save_succeeded()
+
+        self.assertEqual(self.logs, [])
+
     def test_AS18_read_only_activity_does_not_schedule_autosave(self):
         coordinator = self.coordinator()
         coordinator.start()
@@ -463,6 +473,38 @@ class PairedRecoveryContractTests(unittest.TestCase):
         for slot in ("current", "previous", "older"):
             fixture.invalidate_slot(slot)
         self.assertEqual(fixture.manager.scan_candidates(), [])
+
+    def test_AS26_manifest_only_session_is_not_quarantined(self):
+        fixture = RecoveryFixture(self)
+
+        self.assertEqual(fixture.manager.scan_candidates(), [])
+        self.assertTrue(fixture.directory.exists())
+        self.assertEqual(list(fixture.quarantine.iterdir()), [])
+
+        fixture.tracker.edit_revision = 1
+        fixture.tracker.is_dirty = True
+        self.assertTrue(fixture.manager.write_snapshot(fixture.state(1)))
+        fixture.manager.record_explicit_save()
+
+        self.assertEqual(fixture.manager.scan_candidates(), [])
+        self.assertTrue(fixture.directory.exists())
+        self.assertEqual(list(fixture.quarantine.iterdir()), [])
+
+    def test_AS27_discard_removes_recovery_temp_artifacts(self):
+        fixture = RecoveryFixture(self)
+        for name in (
+            "manifest.tmp",
+            "snapshot.tmp",
+            "manifest.previous.tmp",
+            "snapshot.previous.tmp",
+            "manifest.older.tmp",
+            "snapshot.older.tmp",
+        ):
+            (fixture.directory / name).write_text("stale", encoding="utf-8")
+
+        fixture.manager.discard_session(fixture.session.session_id)
+
+        self.assertFalse(fixture.directory.exists())
 
 
 class RecoveryFixture:
