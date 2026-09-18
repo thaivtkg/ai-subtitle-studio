@@ -296,6 +296,11 @@ class MainWindow(QMainWindow):
         
         # Nút Lưu Dự Án
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
+        self.canonical_save_status_label = QLabel("Auto Save · Saved")
+        self.canonical_save_status_label.setStyleSheet(
+            f"color: {Theme.TEXT_MUTED}; padding: 4px; border: none;"
+        )
+        sidebar_layout.addWidget(self.canonical_save_status_label)
         
         # Nút Clear Queue
         sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
@@ -637,7 +642,16 @@ class MainWindow(QMainWindow):
         self.page_settings.appear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.disappear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.text_effect_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
+        self.page_settings.canonical_autosave_checkbox.stateChanged.connect(
+            self._on_canonical_autosave_enabled_changed
+        )
+        self.page_settings.canonical_autosave_delay_combo.currentIndexChanged.connect(
+            self._on_canonical_autosave_delay_changed
+        )
         self.stack.addWidget(self.page_settings)
+        self._canonical_status_timer = QTimer(self)
+        self._canonical_status_timer.timeout.connect(self._update_canonical_save_status)
+        self._canonical_status_timer.start(100)
 
         # Page 7 (Index 6): Help Center
         self.tour_catalog = TourCatalog(RuntimePaths.get_resources_dir() / "tutorials")
@@ -1172,6 +1186,20 @@ class MainWindow(QMainWindow):
     def apply_saved_settings(self):
         s = load_settings()
         if not s: return
+        enabled = s.get("canonical_auto_save_enabled", True)
+        delay = s.get("canonical_auto_save_delay_ms", 1000)
+        if delay not in (500, 1000, 2000, 5000):
+            delay = 1000
+        self.page_settings.canonical_autosave_checkbox.blockSignals(True)
+        self.page_settings.canonical_autosave_delay_combo.blockSignals(True)
+        self.page_settings.canonical_autosave_checkbox.setChecked(bool(enabled))
+        delay_index = self.page_settings.canonical_autosave_delay_combo.findData(delay)
+        if delay_index >= 0:
+            self.page_settings.canonical_autosave_delay_combo.setCurrentIndex(delay_index)
+        self.page_settings.canonical_autosave_checkbox.blockSignals(False)
+        self.page_settings.canonical_autosave_delay_combo.blockSignals(False)
+        self.canonical_save_coordinator.set_enabled(bool(enabled))
+        self.canonical_save_coordinator.set_delay_ms(delay)
         if "motion_preset" in s:
             idx = self.page_settings.motion_preset_combo.findData(s["motion_preset"])
             if idx >= 0: self.page_settings.motion_preset_combo.setCurrentIndex(idx)
@@ -1206,6 +1234,34 @@ class MainWindow(QMainWindow):
             self.page_settings.font_combo.setCurrentText(s["font_name"])
         if "font_size" in s:
             self.page_settings.size_spin.setValue(s["font_size"])
+
+    def _persist_canonical_setting(self, key, value):
+        settings = load_settings()
+        settings[key] = value
+        save_settings(settings)
+
+    def _on_canonical_autosave_enabled_changed(self, state):
+        enabled = bool(state)
+        self.canonical_save_coordinator.set_enabled(enabled)
+        self._persist_canonical_setting("canonical_auto_save_enabled", enabled)
+
+    def _on_canonical_autosave_delay_changed(self, index):
+        delay = self.page_settings.canonical_autosave_delay_combo.itemData(index)
+        if delay is None:
+            return
+        self.canonical_save_coordinator.set_delay_ms(int(delay))
+        self._persist_canonical_setting("canonical_auto_save_delay_ms", int(delay))
+
+    def _update_canonical_save_status(self):
+        coordinator = getattr(self, "canonical_save_coordinator", None)
+        label = getattr(self, "canonical_save_status_label", None)
+        if coordinator is None or label is None:
+            return
+        text = f"Auto Save · {coordinator.status_text()}"
+        countdown = coordinator.countdown_text()
+        if countdown:
+            text += f" · {countdown}"
+        label.setText(text)
     def on_motion_preset_changed(self):
         preset = self.page_settings.motion_preset_combo.currentData()
         
@@ -2292,6 +2348,9 @@ class MainWindow(QMainWindow):
 
         if getattr(self, "autosave_coordinator", None):
             self.autosave_coordinator.dispose()
+
+        if getattr(self, "_canonical_status_timer", None):
+            self._canonical_status_timer.stop()
 
         if getattr(self, "canonical_save_coordinator", None):
             self.canonical_save_coordinator.dispose()
