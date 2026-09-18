@@ -769,6 +769,13 @@ class MainWindow(QMainWindow):
         # 5. Initialization
         self.switch_page(0)
         self.on_queue_updated()
+        active_recovery_session = getattr(
+            self.recovery_manager, "_active_session", None
+        )
+        if active_recovery_session is not None:
+            self.autosave_coordinator.bind_session(
+                active_recovery_session.session_id
+            )
         self.update_hardware_info()
         self.update_cpu_usage()
         self.apply_saved_settings()
@@ -1396,7 +1403,7 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         self.project_service.open_project(project_dir)
-                self._complete_recovery_session_switch()
+                self._complete_recovery_session_switch(reset_tracker=False)
                 self._sync_subtitle_placement_from_project()
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
@@ -2412,10 +2419,11 @@ class MainWindow(QMainWindow):
         if coordinator:
             coordinator.clear_session()
 
-    def _complete_recovery_session_switch(self):
+    def _complete_recovery_session_switch(self, *, reset_tracker=True):
         """Retire old recovery state before resetting the tracker for the new project."""
         self.recovery_manager.release_active_session_for_switch()
-        self.revision_tracker.reset_for_new_document()
+        if reset_tracker:
+            self.revision_tracker.reset_for_new_document()
         return self._switch_recovery_session()
 
     def _rollback_recovery_session_switch(self):
