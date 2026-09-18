@@ -23,6 +23,25 @@ from core.recovery.revision_tracker import RevisionTracker
 class RecoveryManager(QObject):
     """Own recovery-session files without touching canonical project files."""
 
+    _SLOTS = ("current", "previous", "older")
+    _TEMP_ARTIFACTS = (
+        "manifest.tmp",
+        "snapshot.tmp",
+        "manifest.previous.tmp",
+        "snapshot.previous.tmp",
+        "manifest.older.tmp",
+        "snapshot.older.tmp",
+    )
+    _SEMANTIC_STAGES = (
+        "temp_snapshot",
+        "temp_manifest",
+        "previous_to_older",
+        "current_to_previous",
+        "before_current_publication",
+        "current_snapshot_publication",
+        "current_manifest_publication",
+    )
+
     snapshot_written = Signal(str, int)
     session_quarantined = Signal(str, str)
 
@@ -88,33 +107,66 @@ class RecoveryManager(QObject):
         revision = state.edit_revision
         directory = self._active_session.directory
         snapshot_path = directory / "snapshot.json"
-        previous_snapshot = (
-            self.snapshot_store.read_json(snapshot_path)
-            if snapshot_path.exists()
-            else None
-        )
+        manifest_path = directory / "manifest.json"
         updated_manifest = replace(
             self._active_session.manifest,
             edit_revision=revision,
             snapshot_revision=revision,
             last_snapshot_at=self._timestamp(),
         )
-        try:
-            self.snapshot_store.write_json_atomic(snapshot_path, asdict(state))
-            self.snapshot_store.write_json_atomic(
-                directory / "manifest.json", asdict(updated_manifest)
-            )
-        except (OSError, TypeError, ValueError):
-            try:
-                if previous_snapshot is None:
-                    snapshot_path.unlink(missing_ok=True)
-                else:
-                    self.snapshot_store.write_json_atomic(
-                        snapshot_path, previous_snapshot
-                    )
-            except OSError:
-                pass
+        validation = self.validator.validate_data(updated_manifest, state)
+        if not validation.is_valid:
             return False
+
+        try:
+            current_pair = self._read_pair(directory, "current")
+        except OSError:
+            return False
+        except (TypeError, ValueError):
+            current_pair = None
+        try:
+            previous_pair = self._read_pair(directory, "previous")
+        except OSError:
+            return False
+        except (TypeError, ValueError):
+            previous_pair = None
+        snapshot_tmp = None
+        manifest_tmp = None
+        try:
+            self._before_stage("temp_snapshot")
+            snapshot_tmp = self.snapshot_store.write_json_temp(
+                snapshot_path, asdict(state)
+            )
+            self._before_stage("temp_manifest")
+            manifest_tmp = self.snapshot_store.write_json_temp(
+                manifest_path, asdict(updated_manifest)
+            )
+
+            self._before_stage("previous_to_older")
+            if previous_pair is not None:
+                self._write_pair(directory, "older", *previous_pair)
+
+            self._before_stage("current_to_previous")
+            if current_pair is not None:
+                self._write_pair(directory, "previous", *current_pair)
+
+            self._before_stage("before_current_publication")
+            self._before_stage("current_snapshot_publication")
+            self.snapshot_store.publish_temp(snapshot_tmp, snapshot_path)
+            snapshot_tmp = None
+
+            self._before_stage("current_manifest_publication")
+            self.snapshot_store.publish_temp(manifest_tmp, manifest_path)
+            manifest_tmp = None
+        except (OSError, TypeError, ValueError):
+            return False
+        finally:
+            for temporary in (snapshot_tmp, manifest_tmp):
+                if temporary is not None:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
         self._active_session = replace(self._active_session, manifest=updated_manifest)
         self.revision_tracker.record_snapshot_success(revision)
@@ -128,23 +180,35 @@ class RecoveryManager(QObject):
         for directory in self.sessions_dir.iterdir():
             if not directory.is_dir() or not (directory / "active.lock").exists():
                 continue
-            manifest_path = directory / "manifest.json"
-            snapshot_path = directory / "snapshot.json"
-            if not manifest_path.exists() or not snapshot_path.exists():
-                continue
-            try:
-                manifest = RecoveryManifest(**self.snapshot_store.read_json(manifest_path))
-                snapshot = RecoveryWorkingState(**self.snapshot_store.read_json(snapshot_path))
-                result = self.validator.validate_data(manifest, snapshot)
-                if not result.is_valid:
-                    raise ValueError(result.reason)
-            except (OSError, ValueError, TypeError) as error:
-                self.quarantine_session(directory.name, str(error))
-                continue
-            if manifest.snapshot_revision > max(
-                manifest.last_saved_revision, manifest.last_clean_revision
-            ):
-                candidates.append(RecoveryCandidate(manifest, snapshot, directory))
+            valid_pair_found = False
+            slot_present = any(
+                path.exists()
+                for path in (
+                    directory / "snapshot.json",
+                    directory / "manifest.previous.json",
+                    directory / "snapshot.previous.json",
+                    directory / "manifest.older.json",
+                    directory / "snapshot.older.json",
+                )
+            )
+            last_error = "NO_VALID_RECOVERY_PAIR"
+            for slot in self._SLOTS:
+                try:
+                    pair = self._read_pair(directory, slot)
+                except (OSError, ValueError, TypeError) as error:
+                    pair = None
+                    last_error = str(error)
+                if pair is None:
+                    continue
+                valid_pair_found = True
+                manifest, snapshot = pair
+                if manifest.snapshot_revision > max(
+                    manifest.last_saved_revision, manifest.last_clean_revision
+                ):
+                    candidates.append(RecoveryCandidate(manifest, snapshot, directory))
+                    break
+            if slot_present and not valid_pair_found:
+                self.quarantine_session(directory.name, last_error)
         return candidates
 
     def invalidate_snapshot_at_clean_point(self, clean_revision: int) -> None:
@@ -157,7 +221,7 @@ class RecoveryManager(QObject):
         self.snapshot_store.write_json_atomic(
             self._active_session.directory / "manifest.json", asdict(updated)
         )
-        (self._active_session.directory / "snapshot.json").unlink(missing_ok=True)
+        self._remove_snapshot_history(self._active_session.directory)
         self._active_session = replace(self._active_session, manifest=updated)
 
     def validate_candidate(
@@ -212,15 +276,33 @@ class RecoveryManager(QObject):
         self.snapshot_store.write_json_atomic(
             self._active_session.directory / "manifest.json", asdict(manifest)
         )
-        snapshot_path.unlink(missing_ok=True)
+        self._remove_snapshot_history(self._active_session.directory)
         self.revision_tracker.record_explicit_save_success()
         self._active_session = replace(self._active_session, manifest=manifest)
+
+    def release_active_session_for_switch(self) -> None:
+        """Retire the current session using the current document's dirty state."""
+        if self._active_session is None:
+            return
+        if self.revision_tracker.is_dirty:
+            self._active_session = None
+            return
+        self.finalize_clean_shutdown()
 
     def discard_session(self, session_id: str) -> None:
         directory = self.sessions_dir / session_id
         if not directory.exists():
             return
-        for name in ("active.lock", "snapshot.json", "manifest.json"):
+        for name in (
+            "active.lock",
+            "manifest.json",
+            "snapshot.json",
+            "manifest.previous.json",
+            "snapshot.previous.json",
+            "manifest.older.json",
+            "snapshot.older.json",
+            *self._TEMP_ARTIFACTS,
+        ):
             (directory / name).unlink(missing_ok=True)
         try:
             directory.rmdir()
@@ -245,6 +327,50 @@ class RecoveryManager(QObject):
             return source
         self.session_quarantined.emit(session_id, reason)
         return target
+
+    def _before_stage(self, stage: str) -> None:
+        callback = getattr(self.snapshot_store, "before_stage", None)
+        if callable(callback):
+            callback(stage)
+
+    def _slot_paths(self, directory: Path, slot: str) -> tuple[Path, Path]:
+        suffix = {"current": "", "previous": ".previous", "older": ".older"}[slot]
+        return (
+            directory / f"manifest{suffix}.json",
+            directory / f"snapshot{suffix}.json",
+        )
+
+    def _read_pair(
+        self, directory: Path, slot: str
+    ) -> tuple[RecoveryManifest, RecoveryWorkingState] | None:
+        manifest_path, snapshot_path = self._slot_paths(directory, slot)
+        if not manifest_path.exists() or not snapshot_path.exists():
+            return None
+        manifest = RecoveryManifest(**self.snapshot_store.read_json(manifest_path))
+        snapshot = RecoveryWorkingState(**self.snapshot_store.read_json(snapshot_path))
+        result = self.validator.validate_data(manifest, snapshot)
+        if not result.is_valid:
+            return None
+        return manifest, snapshot
+
+    def _write_pair(
+        self,
+        directory: Path,
+        slot: str,
+        manifest: RecoveryManifest,
+        snapshot: RecoveryWorkingState,
+    ) -> None:
+        manifest_path, snapshot_path = self._slot_paths(directory, slot)
+        self.snapshot_store.write_json_atomic(manifest_path, asdict(manifest))
+        self.snapshot_store.write_json_atomic(snapshot_path, asdict(snapshot))
+
+    def _remove_snapshot_history(self, directory: Path) -> None:
+        for slot in self._SLOTS:
+            _, snapshot_path = self._slot_paths(directory, slot)
+            snapshot_path.unlink(missing_ok=True)
+            if slot != "current":
+                manifest_path, _ = self._slot_paths(directory, slot)
+                manifest_path.unlink(missing_ok=True)
 
     @staticmethod
     def _timestamp() -> str:

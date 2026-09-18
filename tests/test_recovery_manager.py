@@ -149,14 +149,14 @@ class TestRecoveryManager(unittest.TestCase):
             self.manager.write_snapshot(self.make_state("manifest-failure", 1))
         )
 
-        original_write = self.manager.snapshot_store.write_json_atomic
+        original_write = self.manager.snapshot_store.write_json_temp
 
         def fail_manifest(path, payload):
             if path.name == "manifest.json":
                 raise OSError("manifest failed")
             original_write(path, payload)
 
-        self.manager.snapshot_store.write_json_atomic = fail_manifest
+        self.manager.snapshot_store.write_json_temp = fail_manifest
         self.tracker.edit_revision = 2
         self.assertFalse(
             self.manager.write_snapshot(self.make_state("manifest-failure", 2))

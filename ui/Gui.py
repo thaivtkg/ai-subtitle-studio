@@ -51,6 +51,7 @@ from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
+from core.recovery.autosave_coordinator import AutosaveCoordinator
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
@@ -117,6 +118,31 @@ class StreamRedirector(QObject):
     def flush(self):
         pass
 
+
+class _QtScheduler:
+    def __init__(self, parent):
+        self.parent = parent
+
+    def call_later(self, delay_ms, callback):
+        timer = QTimer(self.parent)
+        timer.setSingleShot(True)
+
+        def fire():
+            try:
+                callback()
+            finally:
+                timer.deleteLater()
+
+        timer.timeout.connect(fire)
+        timer.start(delay_ms)
+        return timer
+
+    @staticmethod
+    def cancel(timer):
+        timer.stop()
+        timer.deleteLater()
+
+
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
@@ -153,10 +179,17 @@ class MainWindow(QMainWindow):
         self.revision_tracker.clean_point_reached.connect(
             self.recovery_manager.invalidate_snapshot_at_clean_point
         )
-        self.autosave_timer = QTimer(self)
-        self.autosave_timer.setInterval(30_000)
-        self.autosave_timer.timeout.connect(self._on_autosave_timeout)
-        self.autosave_timer.start()
+        self._autosave_generation = 0
+        self._autosave_scheduler = _QtScheduler(self)
+        self.autosave_coordinator = AutosaveCoordinator(
+            revision_tracker=self.revision_tracker,
+            session_provider=self._autosave_session_identity,
+            snapshot_provider=self.capture_recovery_working_state,
+            persist_snapshot=self.recovery_manager.write_snapshot,
+            scheduler=self._autosave_scheduler,
+            activity_logger=self._log_autosave_event,
+        )
+        self.autosave_coordinator.start()
         self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
@@ -736,6 +769,13 @@ class MainWindow(QMainWindow):
         # 5. Initialization
         self.switch_page(0)
         self.on_queue_updated()
+        active_recovery_session = getattr(
+            self.recovery_manager, "_active_session", None
+        )
+        if active_recovery_session is not None:
+            self.autosave_coordinator.bind_session(
+                active_recovery_session.session_id
+            )
         self.update_hardware_info()
         self.update_cpu_usage()
         self.apply_saved_settings()
@@ -1292,6 +1332,9 @@ class MainWindow(QMainWindow):
         self.queue_mgr.clear_queue()
         self.project_service.close_project()
         self.revision_tracker.reset_for_new_document()
+        coordinator = getattr(self, "autosave_coordinator", None)
+        if coordinator:
+            coordinator.clear_session()
         if getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
 
@@ -1308,6 +1351,9 @@ class MainWindow(QMainWindow):
         self.page_dashboard.lbl_queue_overview.setText(f"Queue: {count} videos loaded | Output: {self.out_input.text() or 'Default'}")
         
         if count == 0:
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.clear_session()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -1333,6 +1379,7 @@ class MainWindow(QMainWindow):
             project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
+                self._prepare_recovery_session_switch()
                 if fresh_project:
                     self.project_service.create_auto_project(
                         output_dir,
@@ -1356,6 +1403,7 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         self.project_service.open_project(project_dir)
+                self._complete_recovery_session_switch(reset_tracker=False)
                 self._sync_subtitle_placement_from_project()
                 self._queue_project_dirs[vid_path] = project_dir
                 self.generation_panel.check_resumable_state()
@@ -1435,6 +1483,9 @@ class MainWindow(QMainWindow):
         self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
         if not items:
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.clear_session()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -2113,6 +2164,25 @@ class MainWindow(QMainWindow):
             transcription_context=context_data,
         )
 
+    def _autosave_session_identity(self):
+        session = getattr(self.recovery_manager, "_active_session", None)
+        if session is None:
+            return None
+        return {
+            "session_id": session.session_id,
+            "generation": self._autosave_generation,
+        }
+
+    def _log_autosave_event(self, event):
+        if isinstance(event, dict):
+            message = event.get("event", "autosave")
+            error = event.get("error")
+            if error:
+                message = f"{message}: {error}"
+            self.append_log(f"[AUTOSAVE] {message}")
+            return
+        self.append_log(str(event))
+
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
         if linked:
             if not state.project_file_path:
@@ -2170,8 +2240,7 @@ class MainWindow(QMainWindow):
         self._refresh_transcription_context_views()
 
     def _on_autosave_timeout(self):
-        if self.revision_tracker.is_dirty and self.revision_tracker.edit_revision > self.revision_tracker.snapshot_revision:
-            self.recovery_manager.write_snapshot(self.capture_recovery_working_state())
+        self.autosave_coordinator.trigger_now()
 
     def _update_window_title_dirty_marker(self, is_dirty: bool):
         title = self.windowTitle().replace(" *", "")
@@ -2203,6 +2272,9 @@ class MainWindow(QMainWindow):
                     return
         elif getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
+
+        if getattr(self, "autosave_coordinator", None):
+            self.autosave_coordinator.dispose()
 
         save_settings({
             "output_dir": self.out_input.text().strip(),
@@ -2324,17 +2396,48 @@ class MainWindow(QMainWindow):
         proj_path = getattr(self.project_service, "current_project_path", None) or self.project_service.project_dir or ""
         active = getattr(self.recovery_manager, "_active_session", None)
         if active and active.manifest.project_id == proj_id and active.manifest.project_file_path == proj_path:
+            self.autosave_coordinator.bind_session(active.session_id)
             return active
         if active:
-            self.recovery_manager.finalize_clean_shutdown()
+            self.autosave_coordinator.clear_session()
+            self.recovery_manager.release_active_session_for_switch()
         source = getattr(project, "source", None)
-        return self.recovery_manager.create_session(RecoveryContext(
+        self._autosave_generation += 1
+        session = self.recovery_manager.create_session(RecoveryContext(
             proj_id,
             proj_path,
             getattr(source, "path", "") if source else "",
             getattr(source, "fingerprint", "") if source else "",
             getattr(source, "modified_at", 0.0) if source else 0.0,
         ))
+        self.autosave_coordinator.bind_session(session.session_id)
+        return session
+
+    def _prepare_recovery_session_switch(self):
+        """Invalidate the old autosave identity before replacing project state."""
+        coordinator = getattr(self, "autosave_coordinator", None)
+        if coordinator:
+            coordinator.clear_session()
+
+    def _complete_recovery_session_switch(self, *, reset_tracker=True):
+        """Retire old recovery state before resetting the tracker for the new project."""
+        self.recovery_manager.release_active_session_for_switch()
+        if reset_tracker:
+            self.revision_tracker.reset_for_new_document()
+        return self._switch_recovery_session()
+
+    def _rollback_recovery_session_switch(self):
+        """Restore autosave for the old project when a switch did not complete."""
+        active = getattr(self.recovery_manager, "_active_session", None)
+        project = getattr(self.project_service, "current_project", None)
+        if active is None or project is None:
+            return
+        project_id = getattr(project, "project_id", None)
+        if active.manifest.project_id != project_id:
+            return
+        coordinator = getattr(self, "autosave_coordinator", None)
+        if coordinator:
+            coordinator.bind_session(active.session_id)
 
     def action_new_project(self):
         dialog = NewProjectDialog(self)
@@ -2346,11 +2449,11 @@ class MainWindow(QMainWindow):
             full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
             
             try:
+                self._prepare_recovery_session_switch()
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
+                self._complete_recovery_session_switch()
                 self._sync_subtitle_placement_from_project()
                 self.generation_panel.sync_timing_settings_from_project()
-                self.revision_tracker.reset_for_new_document()
-                self._switch_recovery_session()
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
@@ -2358,6 +2461,7 @@ class MainWindow(QMainWindow):
                 
                 QMessageBox.information(self, "Thành công", f"Đã khởi tạo dự án: {data['name']}\nĐừng quên nhấn Ctrl+S để lưu tiến độ nhé!")
             except (OSError, ValueError, RuntimeError) as e:
+                self._rollback_recovery_session_switch()
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{e!s}")
 
     def _on_new_from_url(self):
@@ -2370,19 +2474,20 @@ class MainWindow(QMainWindow):
             return
         self.first_run_controller.on_workflow_started()
         try:
+            self._prepare_recovery_session_switch()
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
+            self._complete_recovery_session_switch()
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
             self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
             self.video_player.load_video(result.local_path)
-            self.revision_tracker.reset_for_new_document()
-            self._switch_recovery_session()
             self.workspace_service.restore_workspace()
             self.generation_panel.check_resumable_state()
             self._refresh_transcription_context_views()
         except (OSError, ValueError, RuntimeError) as exc:
+            self._rollback_recovery_session_switch()
             QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
 
     def _on_add_url_to_queue(self):
@@ -2455,6 +2560,9 @@ class MainWindow(QMainWindow):
             self.recovery_manager.record_explicit_save()
             self.revision_tracker.record_explicit_save_success()
             self.global_undo_manager.mark_saved()
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.manual_save_succeeded()
             self._update_window_title_dirty_marker(False)
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True
@@ -2472,6 +2580,7 @@ class MainWindow(QMainWindow):
             return
             
         try:
+            self._prepare_recovery_session_switch()
             # 1. CHUYỂN TRANG NGAY LẬP TỨC: Giấu đi thời gian chờ nạp dữ liệu
             self.switch_page(1)
             # Ép Qt vẽ xong màn hình Workspace trước khi CPU bị chặn bởi việc nạp file
@@ -2481,10 +2590,9 @@ class MainWindow(QMainWindow):
             self.page_workspace.setUpdatesEnabled(False)
 
             self.project_service.open_project(project_dir)
+            self._complete_recovery_session_switch()
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
-            self.revision_tracker.reset_for_new_document()
-            self._switch_recovery_session()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
@@ -2531,6 +2639,7 @@ class MainWindow(QMainWindow):
             self._refresh_transcription_context_views()
             
         except (OSError, ValueError, KeyError, RuntimeError) as e:
+            self._rollback_recovery_session_switch()
             Toast.show_error(self, f"File dự án bị hỏng hoặc không hợp lệ:\n{e!s}")
             print(f"[LỖI CRASH MỞ PROJECT] {e}")
         finally:
@@ -2546,12 +2655,18 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
-            self.project_service.open_project(request.path)
-            self._sync_subtitle_placement_from_project()
-            self.generation_panel.sync_timing_settings_from_project()
-            self.workspace_service.restore_workspace()
-            self._refresh_transcription_context_views()
-            self.activateWindow()
+            self._prepare_recovery_session_switch()
+            try:
+                self.project_service.open_project(request.path)
+                self._complete_recovery_session_switch()
+                self._sync_subtitle_placement_from_project()
+                self.generation_panel.sync_timing_settings_from_project()
+                self.workspace_service.restore_workspace()
+                self._refresh_transcription_context_views()
+                self.activateWindow()
+            except (OSError, ValueError, KeyError, RuntimeError):
+                self._rollback_recovery_session_switch()
+                raise
         elif request.action is IpcAction.OPEN_MEDIA and request.path:
             if hasattr(self, "queue_mgr"):
                 self.queue_mgr.add_video(request.path)
