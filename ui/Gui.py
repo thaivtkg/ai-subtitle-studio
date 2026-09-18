@@ -2515,6 +2515,10 @@ class MainWindow(QMainWindow):
         return self._flush_canonical_save_before_transition()
 
     def _flush_canonical_save_before_transition(self):
+        sub_editor = getattr(self, "sub_editor", None)
+        commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+        if commit_pending_edit:
+            commit_pending_edit()
         coordinator = getattr(self, "canonical_save_coordinator", None)
         if coordinator is None or not coordinator.enabled:
             return True
@@ -2619,6 +2623,11 @@ class MainWindow(QMainWindow):
             if notify_user:
                 Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
             return False
+
+        sub_editor = getattr(self, "sub_editor", None)
+        commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+        if commit_pending_edit:
+            commit_pending_edit()
 
         target_revision = (
             self.revision_tracker.edit_revision

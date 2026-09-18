@@ -128,6 +128,11 @@ class CurrentSubtitleEditor(QWidget):
     def _schedule_emit(self):
         self._debounce.start()
 
+    def commit_pending_edit(self):
+        if self._debounce.isActive():
+            self._debounce.stop()
+            self._emit_changed()
+
     def _emit_changed(self):
         self.changed.emit({"start": self.start_edit.text(), "end": self.end_edit.text(), "text": self.text_edit.toPlainText()})
 
@@ -432,6 +437,9 @@ class SubtitleEditorWidget(QWidget):
             except: stt = 0
             data.append((start_ms, end_ms, raw_text, stt))
         self.live_edit_applied.emit(data)
+
+    def commit_pending_edit(self):
+        self.current_editor.commit_pending_edit()
 
     def on_table_edit(self, row, col):
         if self.is_rendering or self.undo_manager is None: return
