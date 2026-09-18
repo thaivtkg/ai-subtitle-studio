@@ -51,6 +51,7 @@ from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
+from core.recovery.autosave_coordinator import AutosaveCoordinator
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
@@ -117,6 +118,31 @@ class StreamRedirector(QObject):
     def flush(self):
         pass
 
+
+class _QtScheduler:
+    def __init__(self, parent):
+        self.parent = parent
+
+    def call_later(self, delay_ms, callback):
+        timer = QTimer(self.parent)
+        timer.setSingleShot(True)
+
+        def fire():
+            try:
+                callback()
+            finally:
+                timer.deleteLater()
+
+        timer.timeout.connect(fire)
+        timer.start(delay_ms)
+        return timer
+
+    @staticmethod
+    def cancel(timer):
+        timer.stop()
+        timer.deleteLater()
+
+
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
@@ -153,10 +179,17 @@ class MainWindow(QMainWindow):
         self.revision_tracker.clean_point_reached.connect(
             self.recovery_manager.invalidate_snapshot_at_clean_point
         )
-        self.autosave_timer = QTimer(self)
-        self.autosave_timer.setInterval(30_000)
-        self.autosave_timer.timeout.connect(self._on_autosave_timeout)
-        self.autosave_timer.start()
+        self._autosave_generation = 0
+        self._autosave_scheduler = _QtScheduler(self)
+        self.autosave_coordinator = AutosaveCoordinator(
+            revision_tracker=self.revision_tracker,
+            session_provider=self._autosave_session_identity,
+            snapshot_provider=self.capture_recovery_working_state,
+            persist_snapshot=self.recovery_manager.write_snapshot,
+            scheduler=self._autosave_scheduler,
+            activity_logger=self._log_autosave_event,
+        )
+        self.autosave_coordinator.start()
         self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
@@ -1292,6 +1325,9 @@ class MainWindow(QMainWindow):
         self.queue_mgr.clear_queue()
         self.project_service.close_project()
         self.revision_tracker.reset_for_new_document()
+        coordinator = getattr(self, "autosave_coordinator", None)
+        if coordinator:
+            coordinator.clear_session()
         if getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
 
@@ -1308,6 +1344,9 @@ class MainWindow(QMainWindow):
         self.page_dashboard.lbl_queue_overview.setText(f"Queue: {count} videos loaded | Output: {self.out_input.text() or 'Default'}")
         
         if count == 0:
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.clear_session()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -1435,6 +1474,9 @@ class MainWindow(QMainWindow):
         self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
         if not items:
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.clear_session()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -2113,6 +2155,25 @@ class MainWindow(QMainWindow):
             transcription_context=context_data,
         )
 
+    def _autosave_session_identity(self):
+        session = getattr(self.recovery_manager, "_active_session", None)
+        if session is None:
+            return None
+        return {
+            "session_id": session.session_id,
+            "generation": self._autosave_generation,
+        }
+
+    def _log_autosave_event(self, event):
+        if isinstance(event, dict):
+            message = event.get("event", "autosave")
+            error = event.get("error")
+            if error:
+                message = f"{message}: {error}"
+            self.append_log(f"[AUTOSAVE] {message}")
+            return
+        self.append_log(str(event))
+
     def apply_recovery_working_state(self, state: RecoveryWorkingState, *, linked: bool) -> None:
         if linked:
             if not state.project_file_path:
@@ -2170,8 +2231,7 @@ class MainWindow(QMainWindow):
         self._refresh_transcription_context_views()
 
     def _on_autosave_timeout(self):
-        if self.revision_tracker.is_dirty and self.revision_tracker.edit_revision > self.revision_tracker.snapshot_revision:
-            self.recovery_manager.write_snapshot(self.capture_recovery_working_state())
+        self.autosave_coordinator.trigger_now()
 
     def _update_window_title_dirty_marker(self, is_dirty: bool):
         title = self.windowTitle().replace(" *", "")
@@ -2203,6 +2263,9 @@ class MainWindow(QMainWindow):
                     return
         elif getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
+
+        if getattr(self, "autosave_coordinator", None):
+            self.autosave_coordinator.dispose()
 
         save_settings({
             "output_dir": self.out_input.text().strip(),
@@ -2324,17 +2387,22 @@ class MainWindow(QMainWindow):
         proj_path = getattr(self.project_service, "current_project_path", None) or self.project_service.project_dir or ""
         active = getattr(self.recovery_manager, "_active_session", None)
         if active and active.manifest.project_id == proj_id and active.manifest.project_file_path == proj_path:
+            self.autosave_coordinator.bind_session(active.session_id)
             return active
         if active:
+            self.autosave_coordinator.clear_session()
             self.recovery_manager.finalize_clean_shutdown()
         source = getattr(project, "source", None)
-        return self.recovery_manager.create_session(RecoveryContext(
+        self._autosave_generation += 1
+        session = self.recovery_manager.create_session(RecoveryContext(
             proj_id,
             proj_path,
             getattr(source, "path", "") if source else "",
             getattr(source, "fingerprint", "") if source else "",
             getattr(source, "modified_at", 0.0) if source else 0.0,
         ))
+        self.autosave_coordinator.bind_session(session.session_id)
+        return session
 
     def action_new_project(self):
         dialog = NewProjectDialog(self)
@@ -2455,6 +2523,9 @@ class MainWindow(QMainWindow):
             self.recovery_manager.record_explicit_save()
             self.revision_tracker.record_explicit_save_success()
             self.global_undo_manager.mark_saved()
+            coordinator = getattr(self, "autosave_coordinator", None)
+            if coordinator:
+                coordinator.manual_save_succeeded()
             self._update_window_title_dirty_marker(False)
             Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True

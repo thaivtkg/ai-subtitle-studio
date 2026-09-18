@@ -11,14 +11,9 @@ class AtomicSnapshotStore:
             return json.load(handle)
 
     def write_json_atomic(self, path: Path, payload: dict) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(".tmp")
+        tmp_path = self.write_json_temp(path, payload)
         try:
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, path)
+            self.publish_temp(tmp_path, path)
         except Exception:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -26,6 +21,24 @@ class AtomicSnapshotStore:
                 pass
             raise
 
+    def write_json_temp(self, path: Path, payload: dict) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        return tmp_path
+
+    def publish_temp(self, tmp_path: Path, path: Path) -> None:
+        os.replace(tmp_path, path)
         try:
             if hasattr(os, "O_DIRECTORY"):
                 directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
