@@ -1,6 +1,6 @@
 # Feature 33 — Project Autosave Infrastructure
 
-**Status:** Approved design with safety locks  
+**Status:** Amended design for review
 **Date:** 2026-09-18  
 **Base:** `d6a891aaa4ac743efe29591c53cf386e2232db2a`  
 **Branch:** `feature/project-autosave`
@@ -39,16 +39,16 @@ RevisionTracker.revision_changed / dirty_changed
 AutosaveCoordinator
   - inactivity timer: 30 seconds
   - maximum dirty timer: 120 seconds
-  - generation + project/source identity guard
+  - generation + active session identity guard
         ↓
 MainWindow.capture_recovery_working_state()
         ↓
 RecoveryManager.write_snapshot()
         ↓
 AtomicSnapshotStore
-  snapshot.json
-  snapshot.previous.json
-  snapshot.older.json
+  manifest.json          + snapshot.json          current
+  manifest.previous.json + snapshot.previous.json previous
+  manifest.older.json    + snapshot.older.json    older
 ```
 
 `AutosaveCoordinator` owns only scheduling, ephemeral scheduling state,
@@ -66,57 +66,87 @@ When a dirty revision begins a cycle:
 2. start/restart the 30-second inactivity timer for every relevant revision;
 3. autosave when either timer fires, if the revision is still dirty and newer
    than the last successful snapshot;
-4. after success, wait for a newer revision before starting another cycle.
+4. after success, wait for a newer revision before starting another cycle;
+5. after a failed attempt, retry after 30 seconds only while the same
+   generation/session is current, the tracker remains dirty, and
+   `edit_revision > snapshot_revision`.
 
 The max-age timer is never restarted by later edits. A clean project never
 gets an autosave. Repeated callbacks for the same revision do not write again.
+Failure retry is bounded by the same 30-second delay, never a busy loop. A
+new edit may restart the normal inactivity timer, but does not reset the
+original max-age deadline.
 
 ## Identity and lifecycle safety
 
 Each scheduled callback captures a monotonically increasing generation and the
-existing project/source identity: project id, project path, source path and
-source fingerprint where available.
+currently active `RecoverySession.session_id`. This pair is the primary
+runtime token. Existing project id, project path, source path and source
+fingerprint remain validation metadata, not a competing identity authority.
 
-The callback must verify generation and identity before capture, capture a
-deep-copied working snapshot, then verify generation and identity again before
-calling persistence. A source switch, unload, clear, new project, or shutdown
-increments the generation and cancels both timers. A callback from Project A
-therefore cannot publish Project B data into A's recovery session.
+The callback must verify generation and session before capture, capture a
+deep-copied working snapshot, then verify generation and session again before
+persistence and target that exact active session. A source switch, unload,
+clear, new project, or shutdown increments the generation and cancels both
+timers. A callback from Project A therefore cannot publish Project B data into
+A's recovery session, including when the callback is invalidated during
+capture.
 
 Manual save success cancels the pending cycle but leaves existing recovery
 cleanup behavior unchanged. Autosave failure leaves editing, dirty state,
 saved-revision state, and the last valid recovery snapshot untouched; it is
-reported through the existing activity/diagnostic path and remains retryable.
+reported through the existing activity/diagnostic path and retries after 30
+seconds only when the generation/session and dirty/new-revision checks still
+pass.
 
-## Safe snapshot rotation
+## Safe paired-slot rotation and scanner fallback
 
-The existing `snapshot.json` remains the latest slot for scanner compatibility.
-Older slots are `snapshot.previous.json` and `snapshot.older.json`.
+Recovery slots are complete pairs:
 
-Publication order is intentionally constrained:
+```text
+manifest.json          + snapshot.json          current
+manifest.previous.json + snapshot.previous.json previous
+manifest.older.json    + snapshot.older.json    older
+```
 
-1. serialize the new payload to a same-directory temporary file;
-2. flush, close, fsync, and validate the temporary payload;
-3. publish the prior previous slot to older, if present;
-4. publish/copy the prior latest slot to previous, if present;
-5. atomically replace the temporary file into `snapshot.json` as the final
-   publication step.
+A slot is valid only when both files exist and `RecoveryValidator` accepts
+them together, including matching session and revision metadata. Two
+`os.replace` operations are not treated as one atomic transaction.
 
-The current valid `snapshot.json` is never moved or removed before step 5.
-Failure injection is required while writing temp, creating older, publishing
-previous, immediately before latest publication, and publishing latest. Each
-failure must leave the prior `snapshot.json` readable. Rotation is performed
-only after the new temporary snapshot is complete.
+The current valid pair must remain discoverable until the new snapshot is
+fully written, closed, fsynced, and validated. Rotation prepares/publishes
+the previous pair to the older pair, then preserves the current pair as the
+previous pair, and publishes the new current pair last. The implementation
+must never move or remove the current `snapshot.json` before the final latest
+snapshot publication. Equivalent temporary-file/copy steps are allowed only
+if they preserve at least one complete valid pair at every failure point.
+
+Failure injection is mandatory for temporary snapshot creation/write,
+temporary manifest creation/write, previous-to-older preparation,
+current-to-previous preservation, immediately before current snapshot
+publication, current snapshot publication, and current manifest publication.
+At every injected failure, the old complete recovery pair remains readable
+and discoverable. A failure must not leave only an unpaired current file as
+the sole recovery option.
 
 The current recovery implementation updates `manifest.json` with
-`edit_revision`, `snapshot_revision`, and `last_snapshot_at` on each write, and
-the scanner validates those values against `snapshot.json`. Feature 33 keeps
-that compatibility contract. The snapshot publish and manifest update are
-performed with rollback of the complete prior slot set if manifest publication
-fails; the prior `snapshot.json` must remain readable. Scanner behavior for a
-manually inconsistent manifest/snapshot pair remains deterministic and is
-covered by tests. Any per-snapshot metadata added to the snapshot is additive
-and does not create a second revision authority.
+`edit_revision`, `snapshot_revision`, and `last_snapshot_at` on each write,
+and the scanner validates those values against `snapshot.json`. Feature 33
+keeps that compatibility contract by rotating manifests and snapshots as
+pairs. If a crash leaves the current pair inconsistent, scanning tries the
+current pair, then the previous pair, then the older pair. Only when no pair
+is valid does the existing quarantine/reject policy apply.
+
+Crash-consistency tests must cover:
+
+- CRASH-C01: new snapshot published, old manifest remains → previous pair;
+- CRASH-C02: new manifest published, current snapshot mismatched → previous
+  pair;
+- CRASH-C03: current pair corrupt, previous pair valid → previous candidate;
+- CRASH-C04: all pairs invalid → existing quarantine policy.
+
+Any per-snapshot metadata added to a snapshot is additive and does not create
+a second revision authority.
 
 ## Dirty-state and manual-save contract
 
@@ -133,7 +163,7 @@ never autosave targets.
 Tests use isolated temporary directories and a fake clock/scheduler or direct
 timer callback seams; they never wait 30 or 120 real seconds.
 
-Required contracts are AS01–AS19 from the Feature 33 directive. The
+Required contracts are AS01–AS24 from the Feature 33 directive. The
 merge-blocking safety subset is:
 
 - AS05: successful autosave leaves the tracker dirty;
@@ -141,12 +171,27 @@ merge-blocking safety subset is:
 - AS11: Project A's callback cannot write Project B state;
 - AS13: successful manual save cancels pending autosave;
 - AS19: one revision is not snapshotted twice;
+- AS20: failed autosave retries after 30 seconds without advancing revision;
+- AS21: successful explicit save clears obsolete recovery history;
+- AS22: clean-point invalidation clears all rotated recovery slots;
+- AS23: discard removes all rotated slot files and the session directory;
+- AS24: clean shutdown leaves no orphan rotated recovery files;
 - max-120s: continuous edits cannot postpone the original max-age deadline.
 
-Additional tests cover clean projects, debounce, rotation, metadata,
-unload/dispose, separate identities, activity-log SSOT, and read-only UI
-actions. Existing recovery, persistence, revision, and Feature 31 tests must
-remain green.
+Additional tests cover clean projects, debounce, paired-slot crash fallback,
+metadata, unload/dispose, separate identities, activity-log SSOT, and
+read-only UI actions. Existing recovery, persistence, revision, and Feature 31
+tests must remain green.
+
+`RevisionTracker.snapshot_revision` remains the durable recovery progress
+source of truth. A coordinator cache may exist only as an ephemeral callback
+deduplication optimization; it must never replace or diverge from the tracker
+value.
+
+History cleanup is explicit: successful manual save, clean-point
+invalidation, discard, clean shutdown, and old-session switch remove or
+invalidate all current/previous/older manifest+snapshot pairs according to
+the existing recovery lifecycle. No rotated slot may prevent session cleanup.
 
 ## Explicit omissions
 
