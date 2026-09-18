@@ -70,13 +70,19 @@ class RevisionTracker(QObject):
     def record_snapshot_success(self, revision: int) -> None:
         self._snapshot_revision = revision
 
-    def record_explicit_save_success(self) -> None:
-        self._undo_manager.mark_saved()
-        self._last_saved_revision = self._edit_revision
-        self._last_clean_revision = self._edit_revision
+    def record_explicit_save_success(self, revision: int | None = None) -> bool:
+        target_revision = self._edit_revision if revision is None else revision
+        if target_revision > self._edit_revision:
+            return False
+        if target_revision == self._edit_revision:
+            self._undo_manager.mark_saved()
+        self._last_saved_revision = target_revision
+        self._last_clean_revision = target_revision
         self._recovered_dirty_baseline = False
-        self._external_dirty = False
+        if target_revision == self._edit_revision:
+            self._external_dirty = False
         self._emit_dirty_change()
+        return True
 
     def restore_from_snapshot(
         self,

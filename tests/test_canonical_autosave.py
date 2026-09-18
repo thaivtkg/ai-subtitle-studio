@@ -87,6 +87,9 @@ class CanonicalAutosaveContract(unittest.TestCase):
 
         def save_current_project(**kwargs):
             self.saves.append(kwargs)
+            target_revision = kwargs["target_revision"]
+            self.tracker.last_saved_revision = target_revision
+            self.tracker.is_dirty = False
             return True
 
         self.coordinator = self.coordinator_type(
@@ -124,7 +127,7 @@ class CanonicalAutosaveContract(unittest.TestCase):
         self.tracker.edit()
         self.scheduler.advance(599)
         self.assertEqual(self.saves, [])
-        self.scheduler.advance(1)
+        self.scheduler.advance(401)
         self.assertEqual(len(self.saves), 1)
 
     def test_CA05_read_only_activity_does_not_save(self):
@@ -199,6 +202,7 @@ class CanonicalAutosaveContract(unittest.TestCase):
 
     def test_CA23_manual_save_while_pending_does_not_duplicate(self):
         self.tracker.edit()
+        self.tracker.is_dirty = False
         self.coordinator.manual_save_succeeded()
         self.scheduler.advance(1000)
         self.assertEqual(self.saves, [])

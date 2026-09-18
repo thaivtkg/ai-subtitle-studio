@@ -52,6 +52,7 @@ from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.autosave_coordinator import AutosaveCoordinator
+from core.recovery.canonical_save_coordinator import CanonicalSaveCoordinator
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
@@ -190,6 +191,16 @@ class MainWindow(QMainWindow):
             activity_logger=self._log_autosave_event,
         )
         self.autosave_coordinator.start()
+        settings = load_settings()
+        self.canonical_save_coordinator = CanonicalSaveCoordinator(
+            revision_tracker=self.revision_tracker,
+            save_current_project=self._save_current_project,
+            scheduler=self._autosave_scheduler,
+            active_project_provider=lambda: self.project_service.current_project,
+            delay_ms=settings.get("canonical_auto_save_delay_ms", 1000),
+            enabled=settings.get("canonical_auto_save_enabled", True),
+        )
+        self.canonical_save_coordinator.start()
         self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
@@ -2276,7 +2287,11 @@ class MainWindow(QMainWindow):
         if getattr(self, "autosave_coordinator", None):
             self.autosave_coordinator.dispose()
 
-        save_settings({
+        if getattr(self, "canonical_save_coordinator", None):
+            self.canonical_save_coordinator.dispose()
+
+        settings = load_settings()
+        settings.update({
             "output_dir": self.out_input.text().strip(),
             "model_size": self.page_settings.model_combo.currentData(),
             "compute_type": self.page_settings.compute_combo.currentData(),
@@ -2284,8 +2299,11 @@ class MainWindow(QMainWindow):
             "min_silence_ms": self.page_settings.silence_spin.value(),
             "do_hardsub": self.page_settings.chk_hardsub_enable.isChecked(),
             "font_name": self.page_settings.font_combo.currentText(),
-            "font_size": self.page_settings.size_spin.value()
+            "font_size": self.page_settings.size_spin.value(),
+            "canonical_auto_save_enabled": self.canonical_save_coordinator.enabled,
+            "canonical_auto_save_delay_ms": self.canonical_save_coordinator.delay_ms,
         })
+        save_settings(settings)
         
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
@@ -2504,10 +2522,21 @@ class MainWindow(QMainWindow):
         self.video_player.load_video(result.local_path)
 
     def action_save_project(self):
+        return self._save_current_project(reason="manual", notify_user=True)
+
+    def _save_current_project(
+        self, *, reason="manual", notify_user=True, target_revision=None
+    ):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:
-            Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
+            if notify_user:
+                Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
             return False
-            
+
+        target_revision = (
+            self.revision_tracker.edit_revision
+            if target_revision is None
+            else target_revision
+        )
         try:
             # 1. Chụp lại trạng thái giao diện
             self.workspace_service.capture_workspace()
@@ -2557,14 +2586,17 @@ class MainWindow(QMainWindow):
             result = self.project_service.save_project()
             if result is False:
                 return False
-            self.recovery_manager.record_explicit_save()
-            self.revision_tracker.record_explicit_save_success()
-            self.global_undo_manager.mark_saved()
+            self.recovery_manager.record_explicit_save(target_revision)
+            self.revision_tracker.record_explicit_save_success(target_revision)
             coordinator = getattr(self, "autosave_coordinator", None)
             if coordinator:
                 coordinator.manual_save_succeeded()
-            self._update_window_title_dirty_marker(False)
-            Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            canonical_coordinator = getattr(self, "canonical_save_coordinator", None)
+            if canonical_coordinator:
+                canonical_coordinator.manual_save_succeeded()
+            self._update_window_title_dirty_marker(self.revision_tracker.is_dirty)
+            if notify_user:
+                Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True
             
         except (OSError, ValueError, RuntimeError) as e:

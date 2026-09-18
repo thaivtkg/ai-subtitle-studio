@@ -219,11 +219,11 @@ class TestRecoveryManager(unittest.TestCase):
         self.tracker.is_dirty = True
         self.tracker.edit_revision = 1
         self.assertTrue(self.manager.write_snapshot(self.make_state("save-session", 1)))
-        self.tracker.record_explicit_save_success.side_effect = self._mark_saved
         self.manager.record_explicit_save()
-        self.assertEqual(self.tracker.last_saved_revision, 1)
-        self.assertEqual(self.tracker.last_clean_revision, 1)
-        self.assertFalse(self.tracker.recovered_dirty_baseline)
+        self.assertEqual(self.tracker.last_saved_revision, 0)
+        self.assertEqual(self.tracker.last_clean_revision, 0)
+        self.assertTrue(self.tracker.recovered_dirty_baseline)
+        self.tracker.record_explicit_save_success.assert_not_called()
         self.assertFalse((session.directory / "snapshot.json").exists())
         self.assertTrue((session.directory / "active.lock").exists())
         self.assertEqual(self.manager.scan_candidates(), [])
