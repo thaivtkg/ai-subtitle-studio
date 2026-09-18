@@ -58,23 +58,21 @@ class CanonicalSaveCoordinator:
         else:
             self.presentation_state = "saved"
 
+    def cancel_pending(self):
+        self._cancel()
+
+    def flush_now(self):
+        if not self._eligible():
+            self._cancel()
+            return True
+        self._cancel()
+        return self._attempt()
+
     def _on_revision_changed(self, revision):
         self._schedule_if_eligible(revision)
 
     def _schedule_if_eligible(self, revision=None):
-        if not self.enabled or not self.active_project_provider():
-            return
-        if not self.revision_tracker.is_dirty:
-            return
-        current_revision = (
-            self.revision_tracker.edit_revision if revision is None else revision
-        )
-        if current_revision <= self.revision_tracker.snapshot_revision:
-            return
-        if (
-            self.revision_tracker.recovered_dirty_baseline
-            and current_revision <= self.revision_tracker.snapshot_revision
-        ):
+        if not self._eligible(revision):
             return
         self._cancel()
         self._handle = self.scheduler.call_later(self.delay_ms, self._attempt)
@@ -82,18 +80,9 @@ class CanonicalSaveCoordinator:
 
     def _attempt(self):
         self._handle = None
-        if not self.enabled or not self.active_project_provider():
-            return
-        if not self.revision_tracker.is_dirty:
-            return
+        if not self._eligible():
+            return True
         target_revision = self.revision_tracker.edit_revision
-        if target_revision <= self.revision_tracker.snapshot_revision:
-            return
-        if (
-            self.revision_tracker.recovered_dirty_baseline
-            and target_revision <= self.revision_tracker.snapshot_revision
-        ):
-            return
         self.presentation_state = "saving"
         try:
             result = self.save_current_project(
@@ -111,6 +100,17 @@ class CanonicalSaveCoordinator:
                 self.presentation_state = "saved"
         else:
             self.presentation_state = "save_failed"
+        return bool(result and not self.revision_tracker.is_dirty)
+
+    def _eligible(self, revision=None):
+        if not self.enabled or not self.active_project_provider():
+            return False
+        if not self.revision_tracker.is_dirty:
+            return False
+        current_revision = (
+            self.revision_tracker.edit_revision if revision is None else revision
+        )
+        return current_revision > self.revision_tracker.snapshot_revision
 
     def _cancel(self):
         if self._handle is not None:

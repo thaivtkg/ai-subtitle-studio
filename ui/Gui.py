@@ -1324,6 +1324,9 @@ class MainWindow(QMainWindow):
                 self.on_queue_item_clicked(vid)
 
     def clear_files(self):
+        flush = getattr(self, "_flush_canonical_save_before_clear_queue", None)
+        if flush:
+            flush()
         if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
             project = getattr(self.project_service, "current_project", None)
             project_name = getattr(project, "name", "hiện tại")
@@ -1374,23 +1377,23 @@ class MainWindow(QMainWindow):
                 self.quality_inspector_panel.set_segments([])
 
     def on_queue_item_clicked(self, vid_path, fresh_project=False):
-        self.queue_mgr.set_active(vid_path)
-
         # Queue items can arrive through Drag & Drop without going through
         # the New Project dialog. SubtitleGenerationService requires a
         # project because its checkpoint and canonical artifact live there.
         if fresh_project:
             self._queue_project_dirs.pop(vid_path, None)
 
-        if self.project_service.requires_project_switch(
+        requires_switch = self.project_service.requires_project_switch(
             vid_path, fresh_project=fresh_project
-        ):
+        )
+        if requires_switch:
+            if not self._prepare_recovery_session_switch():
+                return
             file_name = os.path.basename(vid_path)
             output_dir = self.out_input.text().strip() or os.path.dirname(vid_path)
             project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
-                self._prepare_recovery_session_switch()
                 if fresh_project:
                     self.project_service.create_auto_project(
                         output_dir,
@@ -1429,6 +1432,8 @@ class MainWindow(QMainWindow):
                 self.append_log(
                     f"❌ [LỖI] Không thể tự động tạo/nạp dự án: {exc}"
                 )
+
+        self.queue_mgr.set_active(vid_path)
 
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
@@ -2258,6 +2263,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(title + (" *" if is_dirty else ""))
 
     def closeEvent(self, event):
+        self._flush_canonical_save_before_close()
         if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
                 from PySide6.QtWidgets import QMessageBox
                 reply = QMessageBox.question(
@@ -2432,14 +2438,35 @@ class MainWindow(QMainWindow):
         return session
 
     def _prepare_recovery_session_switch(self):
-        """Invalidate the old autosave identity before replacing project state."""
+        """Flush canonical state before replacing the current project context."""
+        if not self._flush_canonical_save_before_project_switch():
+            return False
         coordinator = getattr(self, "autosave_coordinator", None)
         if coordinator:
             coordinator.clear_session()
+        return True
+
+    def _flush_canonical_save_before_close(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_clear_queue(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_project_switch(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_transition(self):
+        coordinator = getattr(self, "canonical_save_coordinator", None)
+        if coordinator is None or not coordinator.enabled:
+            return True
+        return coordinator.flush_now()
 
     def _complete_recovery_session_switch(self, *, reset_tracker=True):
         """Retire old recovery state before resetting the tracker for the new project."""
         self.recovery_manager.release_active_session_for_switch()
+        canonical = getattr(self, "canonical_save_coordinator", None)
+        if canonical:
+            canonical.cancel_pending()
         if reset_tracker:
             self.revision_tracker.reset_for_new_document()
         return self._switch_recovery_session()
@@ -2467,7 +2494,8 @@ class MainWindow(QMainWindow):
             full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
             
             try:
-                self._prepare_recovery_session_switch()
+                if not self._prepare_recovery_session_switch():
+                    return
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 self._complete_recovery_session_switch()
                 self._sync_subtitle_placement_from_project()
@@ -2492,7 +2520,8 @@ class MainWindow(QMainWindow):
             return
         self.first_run_controller.on_workflow_started()
         try:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
@@ -2612,7 +2641,8 @@ class MainWindow(QMainWindow):
             return
             
         try:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             # 1. CHUYỂN TRANG NGAY LẬP TỨC: Giấu đi thời gian chờ nạp dữ liệu
             self.switch_page(1)
             # Ép Qt vẽ xong màn hình Workspace trước khi CPU bị chặn bởi việc nạp file
@@ -2687,7 +2717,8 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             try:
                 self.project_service.open_project(request.path)
                 self._complete_recovery_session_switch()
