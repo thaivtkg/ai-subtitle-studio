@@ -10,6 +10,10 @@ from PySide6.QtWidgets import QApplication
 
 from core.recovery.recovery_models import RecoveryContext, RecoveryManifest, RecoverySession
 from core.recovery.autosave_coordinator import AutosaveCoordinator
+from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
+from core.recovery.recovery_manager import RecoveryManager
+from core.recovery.recovery_models import RecoveryWorkingState
+from core.recovery.recovery_validator import RecoveryValidator
 from ui.Gui import MainWindow
 
 
@@ -79,6 +83,9 @@ class _SessionStore:
 
     def finalize_clean_shutdown(self):
         return False
+
+    def release_active_session_for_switch(self):
+        self._active_session = None
 
 
 class TestAutosaveMainWindowIntegration(unittest.TestCase):
@@ -198,6 +205,121 @@ class TestAutosaveMainWindowIntegration(unittest.TestCase):
         self.assertEqual(len(self.session_store.snapshots), 1)
         self.assertEqual(self.session_store.snapshots[0].session_id, "session-project-b")
         self.assertEqual(self.session_store.snapshots[0].project_id, "project-b")
+
+    def test_AS28_dirty_a_recovery_survives_queue_project_switch(self):
+        recovery_root = Path(self.temp_dir.name) / "recovery"
+        manager = RecoveryManager(
+            recovery_root / "sessions",
+            recovery_root / "quarantine",
+            self.window.revision_tracker,
+            AtomicSnapshotStore(),
+            RecoveryValidator(),
+        )
+        project_a_dir = Path(self.temp_dir.name) / "project-a.ai-subtitle"
+        project_a = SimpleNamespace(
+            project_id="project-a",
+            name="Project A",
+            source=SimpleNamespace(path="video-a.mp4", fingerprint="fp-a", modified_at=0.0),
+        )
+        project_b = SimpleNamespace(
+            project_id="project-b",
+            source=SimpleNamespace(path="video-b.mp4", fingerprint="fp-b", modified_at=0.0),
+        )
+        manager.create_session(
+            RecoveryContext(
+                "project-a", str(project_a_dir), "video-a.mp4", "fp-a", 0.0,
+                session_id="session-a",
+            )
+        )
+        self.window.recovery_manager = manager
+        self.project_service.current_project = project_a
+        self.project_service.project_dir = str(project_a_dir)
+        self.project_service.current_project_id = None
+        self.project_service.current_project_path = None
+        self.project_service.requires_project_switch.return_value = True
+        self.window.revision_tracker.record_external_change()
+        self.assertTrue(
+            manager.write_snapshot(
+                RecoveryWorkingState(
+                    2.0, "session-a", "project-a", str(project_a_dir),
+                    "video-a.mp4", "fp-a", 1,
+                    [{"id": "a-segment", "stt": "1", "start": 0, "end": 1, "text": "Project A"}], {},
+                )
+            )
+        )
+
+        def create_project(_project_dir, _name, _video_path):
+            self.project_service.current_project = project_b
+            self.project_service.project_dir = str(Path(self.temp_dir.name) / "project-b.ai-subtitle")
+            return project_b
+
+        self.project_service.create_project.side_effect = create_project
+        self.window.autosave_coordinator = MagicMock()
+        self.window.queue_mgr = MagicMock()
+        video_b = str(Path(self.temp_dir.name) / "video-b.mp4")
+        self.window.queue_mgr.get_active_data.return_value = (video_b, None)
+        self.window.queue_mgr.get_items.return_value = {video_b: {"duration": 0}}
+        self.window.video_player = MagicMock()
+        self.window.out_input.setText(self.temp_dir.name)
+
+        with patch.object(self.window, "_sync_subtitle_placement_from_project"), \
+                patch.object(self.window.generation_panel, "check_resumable_state"), \
+                patch.object(self.window, "_refresh_transcription_context_views"), \
+                patch("ui.Gui.threading.Thread") as thread_cls:
+            thread_cls.return_value.start = MagicMock()
+            self.window.on_queue_item_clicked(video_b)
+
+        self.assertEqual(manager._active_session.manifest.project_id, "project-b")
+        self.assertTrue((recovery_root / "sessions" / "session-a").exists())
+        candidates = manager.scan_candidates()
+        self.assertEqual(
+            [candidate.manifest.project_id for candidate in candidates], ["project-a"]
+        )
+        self.assertEqual(candidates[0].snapshot.segments[0]["text"], "Project A")
+
+    def test_AS29_failed_project_switch_rebinds_old_autosave(self):
+        project_a = SimpleNamespace(
+            project_id="project-a",
+            name="Project A",
+            source=SimpleNamespace(path="video-a.mp4", fingerprint="fp-a", modified_at=0.0),
+        )
+        self.project_service.current_project = project_a
+        self.project_service.project_dir = str(Path(self.temp_dir.name) / "project-a.ai-subtitle")
+        self.project_service.current_project_path = None
+        self.project_service.open_project.side_effect = OSError("open failed")
+        self.window.recovery_manager._active_session = self.session_store._active_session
+        scheduler = _Scheduler()
+        writes = []
+
+        def persist(state):
+            writes.append(state)
+            self.window.revision_tracker.record_snapshot_success(state.edit_revision)
+            return True
+
+        coordinator = AutosaveCoordinator(
+            revision_tracker=self.window.revision_tracker,
+            session_provider=self.window._autosave_session_identity,
+            snapshot_provider=self.window.capture_recovery_working_state,
+            persist_snapshot=persist,
+            scheduler=scheduler,
+        )
+        self.window.autosave_coordinator = coordinator
+        self.addCleanup(coordinator.dispose)
+        coordinator.start()
+        self.window.sub_editor.all_segments = [{"id": "a-segment", "text": "Project A"}]
+        self.window.workspace_service.capture_workspace = MagicMock(return_value={})
+
+        with patch("ui.Gui.QFileDialog.getExistingDirectory", return_value="project-b"):
+            self.window.action_open_project()
+
+        self.assertIs(self.project_service.current_project, project_a)
+        self.assertEqual(
+            self.window._autosave_session_identity()["session_id"], "session-a"
+        )
+        self.window.revision_tracker.record_external_change()
+        scheduler.advance(30_000)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].project_id, "project-a")
 
 
 if __name__ == "__main__":

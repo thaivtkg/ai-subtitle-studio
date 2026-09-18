@@ -280,6 +280,15 @@ class RecoveryManager(QObject):
         self.revision_tracker.record_explicit_save_success()
         self._active_session = replace(self._active_session, manifest=manifest)
 
+    def release_active_session_for_switch(self) -> None:
+        """Retire the current session using the current document's dirty state."""
+        if self._active_session is None:
+            return
+        if self.revision_tracker.is_dirty:
+            self._active_session = None
+            return
+        self.finalize_clean_shutdown()
+
     def discard_session(self, session_id: str) -> None:
         directory = self.sessions_dir / session_id
         if not directory.exists():
