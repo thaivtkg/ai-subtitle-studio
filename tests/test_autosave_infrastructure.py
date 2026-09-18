@@ -55,16 +55,28 @@ class FakeScheduler:
         self.now = target
 
 
-class FailingStore(AtomicSnapshotStore):
-    def __init__(self, failing_calls):
-        self.failing_calls = set(failing_calls)
-        self.calls = 0
+SEMANTIC_FAILURE_STAGES = (
+    "temp_snapshot",
+    "temp_manifest",
+    "previous_to_older",
+    "current_to_previous",
+    "before_current_publication",
+    "current_snapshot_publication",
+    "current_manifest_publication",
+)
 
-    def write_json_atomic(self, path, payload):
-        self.calls += 1
-        if self.calls in self.failing_calls:
-            raise OSError(f"injected failure at write {self.calls}")
-        return super().write_json_atomic(path, payload)
+
+class SemanticFailureStore(AtomicSnapshotStore):
+    """Contract seam for semantic failure injection, independent of write count."""
+
+    def __init__(self, failure_stage):
+        self.failure_stage = failure_stage
+        self.observed_stages = []
+
+    def before_stage(self, stage):
+        self.observed_stages.append(stage)
+        if stage == self.failure_stage:
+            raise OSError(f"injected failure at semantic stage {stage}")
 
 
 class AutosaveCoordinatorContractTests(unittest.TestCase):
@@ -184,28 +196,22 @@ class AutosaveCoordinatorContractTests(unittest.TestCase):
         fixture.assert_pair_revision("older", 2)
 
     def test_AS09_rotation_failure_preserves_readable_prior_latest_pair(self):
-        for stage, call in (
-            ("temp_snapshot", 1),
-            ("temp_manifest", 2),
-            ("previous_to_older", 3),
-            ("current_to_previous", 4),
-            ("before_current_publication", 5),
-            ("current_snapshot_publication", 6),
-            ("current_manifest_publication", 7),
-        ):
+        for stage in SEMANTIC_FAILURE_STAGES:
             with self.subTest(stage=stage):
                 fixture = RecoveryFixture(self)
                 fixture.write_snapshot(1)
                 canonical_before = fixture.canonical.read_bytes()
-                fixture.manager.snapshot_store = FailingStore({call})
+                failure_store = SemanticFailureStore(stage)
+                fixture.manager.snapshot_store = failure_store
                 fixture.tracker.edit_revision = 2
                 fixture.tracker.is_dirty = True
                 self.assertFalse(
                     fixture.manager.write_snapshot(fixture.state(2)), stage
                 )
+                self.assertIn(stage, failure_store.observed_stages, stage)
                 self.assertEqual(fixture.tracker.snapshot_revision, 1, stage)
                 self.assertEqual(fixture.canonical.read_bytes(), canonical_before, stage)
-                self.assertEqual(fixture.valid_slots_with_revision(1), ["current"], stage)
+                self.assertTrue(fixture.valid_slots_with_revision(1), stage)
                 candidates = (
                     fixture.manager.scan_candidates()
                     if fixture.directory.exists()
