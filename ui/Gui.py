@@ -2616,6 +2616,22 @@ class MainWindow(QMainWindow):
     def action_save_project(self):
         return self._save_current_project(reason="manual", notify_user=True)
 
+    def _project_owned_artifact_path(self, path):
+        project_dir = getattr(self.project_service, "project_dir", None)
+        if not path or not project_dir:
+            return path
+
+        project_dir = os.path.abspath(project_dir)
+        path = os.path.abspath(path)
+        try:
+            if os.path.commonpath((path, project_dir)) == project_dir:
+                return path
+        except ValueError:
+            pass
+
+        subdir = "draft" if path.lower().endswith(".ai-subtitle-draft") else "timing"
+        return os.path.join(project_dir, "artifacts", subdir, os.path.basename(path))
+
     def _save_current_project(
         self, *, reason="manual", notify_user=True, target_revision=None
     ):
@@ -2670,6 +2686,8 @@ class MainWindow(QMainWindow):
                 if art_id:
                     artifact = self.project_service.artifact_store.get(art_id)
                     if artifact and artifact.path:
+                        artifact_path = self._project_owned_artifact_path(artifact.path)
+                        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
                         
                         # TRƯỜNG HỢP 1: File đang mở là SRT -> Phải xuất file SRT đè lên
                         if artifact.path.lower().endswith('.srt'):
@@ -2685,14 +2703,17 @@ class MainWindow(QMainWindow):
                                     if text == "[ Chưa có nội dung ]": text = ""
                                     subs_for_export.append((start_ms, end_ms, text))
                                     
-                                exporter.export_srt(subs_for_export, artifact.path)
-                                print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact.path}")
+                                exporter.export_srt(subs_for_export, artifact_path)
+                                artifact.path = artifact_path
+                                self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, artifact_path)
+                                print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact_path}")
                             except (OSError, ValueError, RuntimeError) as ex:
                                 print(f"[LỖI XUẤT SRT] {ex}")
                                 raise
                                 
                         # TRƯỜNG HỢP 2: File đang mở là Draft (.json) -> Dùng hàm lưu Draft
                         else:
+                            self.sub_editor.srt_path = artifact_path
                             draft_path = self.sub_editor.save_draft(silent=True)
                             if draft_path and draft_path != artifact.path:
                                 artifact.path = draft_path

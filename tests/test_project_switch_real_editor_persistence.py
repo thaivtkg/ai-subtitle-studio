@@ -141,7 +141,9 @@ class TestProjectSwitchRealEditorPersistence(unittest.TestCase):
                 events.index("save:Project A"),
                 events.index("open:project-b.ai-subtitle"),
             )
-            self.assertIn("E2_SWITCH_CONTENT", srt_a.read_text(encoding="utf-8"))
+            expected_path = project_a_dir / "artifacts" / "timing" / srt_a.name
+            self.assertNotIn("E2_SWITCH_CONTENT", srt_a.read_text(encoding="utf-8"))
+            self.assertIn("E2_SWITCH_CONTENT", expected_path.read_text(encoding="utf-8"))
             window.queue_ui.item_clicked.emit(str(video_a))
             self.assertEqual(
                 window.sub_editor.all_segments[0]["text"], "E2_SWITCH_CONTENT"
@@ -221,15 +223,20 @@ class TestProjectSwitchRealEditorPersistence(unittest.TestCase):
                 thread_cls.return_value.start = MagicMock()
                 window.queue_ui.item_clicked.emit(str(video_b))
 
-            self.assertIn(
-                "E3_NO_ARTIFACT_CONTENT",
-                srt_a.read_text(encoding="utf-8"),
-            )
             service.open_project(str(project_a_dir))
             persisted_artifact_id = service.current_project.state.active_artifact_id
             self.assertIsNotNone(persisted_artifact_id)
             persisted_artifact = service.artifact_store.get(persisted_artifact_id)
-            self.assertEqual(Path(persisted_artifact.path), srt_a)
+            expected_path = project_a_dir / "artifacts" / "timing" / srt_a.name
+            self.assertEqual(Path(persisted_artifact.path), expected_path)
+            self.assertNotIn(
+                "E3_NO_ARTIFACT_CONTENT",
+                srt_a.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "E3_NO_ARTIFACT_CONTENT",
+                expected_path.read_text(encoding="utf-8"),
+            )
             window.sub_editor.load_srt_file(persisted_artifact.path)
             self.assertEqual(
                 window.sub_editor.all_segments[0]["text"],
