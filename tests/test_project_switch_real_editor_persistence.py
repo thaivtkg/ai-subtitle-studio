@@ -147,6 +147,95 @@ class TestProjectSwitchRealEditorPersistence(unittest.TestCase):
                 window.sub_editor.all_segments[0]["text"], "E2_SWITCH_CONTENT"
             )
 
+    def test_queue_switch_persists_editor_file_when_project_has_no_artifact(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QApplication, QLineEdit
+        from core.services.project_service import ProjectService
+        from ui.Gui import MainWindow
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video_a = root / "video-a.mp4"
+            video_b = root / "video-b.mp4"
+            video_a.write_bytes(b"video-a")
+            video_b.write_bytes(b"video-b")
+            srt_a = root / "a.srt"
+            srt_b = root / "b.srt"
+            srt_a.write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\noriginal A\n",
+                encoding="utf-8",
+            )
+            srt_b.write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nproject B\n",
+                encoding="utf-8",
+            )
+
+            service = ProjectService()
+            project_a_dir = root / "project-a.ai-subtitle"
+            project_b_dir = root / "project-b.ai-subtitle"
+            service.create_project(str(project_a_dir), "Project A", str(video_a))
+            service.create_project(str(project_b_dir), "Project B", str(video_b))
+            service.open_project(str(project_a_dir))
+
+            window = MainWindow(
+                project_service=service,
+                media_import_service=MagicMock(),
+            )
+
+            def cleanup_window():
+                window.autosave_coordinator.dispose()
+                window.canonical_save_coordinator.dispose()
+                window._canonical_status_timer.stop()
+                window.close()
+                window.deleteLater()
+                QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+                QApplication.processEvents()
+
+            self.addCleanup(cleanup_window)
+            window.video_player.load_video = MagicMock()
+            window.generation_panel.check_resumable_state = MagicMock()
+            window._refresh_transcription_context_views = MagicMock()
+            window._sync_subtitle_placement_from_project = MagicMock()
+            window.queue_mgr._items = {
+                str(video_a): {"srt_path": str(srt_a), "duration": 0},
+                str(video_b): {"srt_path": str(srt_b), "duration": 0},
+            }
+            window.queue_mgr.active_vid = str(video_a)
+            window._queue_project_dirs = {
+                str(video_a): str(project_a_dir),
+                str(video_b): str(project_b_dir),
+            }
+            window.sub_editor.load_srt_file(str(srt_a))
+            window.sub_editor.select_segment(0)
+            window.revision_tracker.reset_for_new_document()
+            window.canonical_save_coordinator.cancel_pending()
+
+            table = window.sub_editor.table
+            table.editItem(table.item(0, 4))
+            QApplication.processEvents()
+            cell_editor = table.findChild(QLineEdit)
+            self.assertIsNotNone(cell_editor)
+            cell_editor.setText("E3_NO_ARTIFACT_CONTENT")
+
+            with patch("ui.Gui.threading.Thread") as thread_cls:
+                thread_cls.return_value.start = MagicMock()
+                window.queue_ui.item_clicked.emit(str(video_b))
+
+            self.assertIn(
+                "E3_NO_ARTIFACT_CONTENT",
+                srt_a.read_text(encoding="utf-8"),
+            )
+            service.open_project(str(project_a_dir))
+            persisted_artifact_id = service.current_project.state.active_artifact_id
+            self.assertIsNotNone(persisted_artifact_id)
+            persisted_artifact = service.artifact_store.get(persisted_artifact_id)
+            self.assertEqual(Path(persisted_artifact.path), srt_a)
+            window.sub_editor.load_srt_file(persisted_artifact.path)
+            self.assertEqual(
+                window.sub_editor.all_segments[0]["text"],
+                "E3_NO_ARTIFACT_CONTENT",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

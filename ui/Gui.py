@@ -2646,6 +2646,26 @@ class MainWindow(QMainWindow):
                 art_id = project.state.active_artifact_id
                 if hasattr(project.state, 'timing') and getattr(project.state.timing, 'timing_artifact_id', None):
                     art_id = project.state.timing.timing_artifact_id
+
+                if not art_id:
+                    editor_path = getattr(self.sub_editor, "srt_path", None)
+                    if not editor_path:
+                        _, editor_path = self.queue_mgr.get_active_data()
+                    if editor_path and os.path.exists(editor_path):
+                        from core.artifacts.artifact_types import ArtifactType
+
+                        artifact_type = (
+                            ArtifactType.DRAFT
+                            if editor_path.lower().endswith(".ai-subtitle-draft")
+                            else ArtifactType.TIMING
+                        )
+                        artifact = self._register_artifact(
+                            editor_path,
+                            artifact_type,
+                            {"source": "active_editor"},
+                            mark_dirty=False,
+                        )
+                        art_id = artifact.artifact_id if artifact else None
                     
                 if art_id:
                     artifact = self.project_service.artifact_store.get(art_id)
@@ -2810,24 +2830,31 @@ class MainWindow(QMainWindow):
         dialog = ModelManagerDialog(self)
         dialog.exec()
 
-    def _register_artifact(self, path: str, a_type, metadata: dict | None = None) -> None:
+    def _register_artifact(
+        self,
+        path: str,
+        a_type,
+        metadata: dict | None = None,
+        *,
+        mark_dirty: bool = True,
+    ):
         self.append_log(f"\n[DEBUG] Đang thử đăng ký Artifact: {path}")
         
         if not getattr(self, 'project_service', None):
             self.append_log("❌ [DEBUG] Lỗi: project_service chưa được khởi tạo.")
-            return
+            return None
             
         if not self.project_service.current_project:
             self.append_log("❌ [DEBUG] Lỗi: Không có Project nào đang mở trong RAM! (Vui lòng bấm Ctrl+O để mở Project trước khi thao tác).")
-            return
+            return None
             
         if not path:
             self.append_log("❌ [DEBUG] Lỗi: Đường dẫn file truyền vào bị rỗng.")
-            return
+            return None
             
         if not os.path.exists(path):
             self.append_log(f"❌ [DEBUG] Lỗi: Không tìm thấy file thực tế trên ổ cứng tại: {path}")
-            return
+            return None
 
         from core.artifacts.artifact import Artifact
         from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
@@ -2859,8 +2886,10 @@ class MainWindow(QMainWindow):
             self.project_service.current_project.state.timing_status = "READY"
             self.project_service.current_project.state.text_status = "READY"
 
-        self.project_service.mark_dirty()
+        if mark_dirty:
+            self.project_service.mark_dirty()
         self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
+        return artifact
 
 if __name__ == "__main__":
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
