@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractItemDelegate,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -127,6 +128,11 @@ class CurrentSubtitleEditor(QWidget):
 
     def _schedule_emit(self):
         self._debounce.start()
+
+    def commit_pending_edit(self):
+        if self._debounce.isActive():
+            self._debounce.stop()
+            self._emit_changed()
 
     def _emit_changed(self):
         self.changed.emit({"start": self.start_edit.text(), "end": self.end_edit.text(), "text": self.text_edit.toPlainText()})
@@ -432,6 +438,18 @@ class SubtitleEditorWidget(QWidget):
             except: stt = 0
             data.append((start_ms, end_ms, raw_text, stt))
         self.live_edit_applied.emit(data)
+
+    def commit_pending_edit(self):
+        self.current_editor.commit_pending_edit()
+        for editor in self.table.findChildren(QLineEdit):
+            position = editor.mapTo(
+                self.table.viewport(), editor.rect().center()
+            )
+            index = self.table.indexAt(position)
+            if not index.isValid():
+                continue
+            self.table.commitData(editor)
+            self.table.closeEditor(editor, QAbstractItemDelegate.NoHint)
 
     def on_table_edit(self, row, col):
         if self.is_rendering or self.undo_manager is None: return

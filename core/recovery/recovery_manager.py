@@ -260,10 +260,10 @@ class RecoveryManager(QObject):
         self.discard_session(old_candidate.manifest.session_id)
         return new_session
 
-    def record_explicit_save(self) -> None:
+    def record_explicit_save(self, revision: int | None = None) -> None:
         if self._active_session is None:
             return
-        revision = self.revision_tracker.edit_revision
+        revision = self.revision_tracker.edit_revision if revision is None else revision
         manifest = replace(
             self._active_session.manifest,
             edit_revision=revision,
@@ -277,7 +277,6 @@ class RecoveryManager(QObject):
             self._active_session.directory / "manifest.json", asdict(manifest)
         )
         self._remove_snapshot_history(self._active_session.directory)
-        self.revision_tracker.record_explicit_save_success()
         self._active_session = replace(self._active_session, manifest=manifest)
 
     def release_active_session_for_switch(self) -> None:

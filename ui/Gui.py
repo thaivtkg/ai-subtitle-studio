@@ -52,6 +52,7 @@ from core.project.transcription_context import TranscriptionContext
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.autosave_coordinator import AutosaveCoordinator
+from core.recovery.canonical_save_coordinator import CanonicalSaveCoordinator
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_models import RecoveryContext, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
@@ -190,6 +191,16 @@ class MainWindow(QMainWindow):
             activity_logger=self._log_autosave_event,
         )
         self.autosave_coordinator.start()
+        settings = load_settings()
+        self.canonical_save_coordinator = CanonicalSaveCoordinator(
+            revision_tracker=self.revision_tracker,
+            save_current_project=self._save_current_project,
+            scheduler=self._autosave_scheduler,
+            active_project_provider=lambda: self.project_service.current_project,
+            delay_ms=settings.get("canonical_auto_save_delay_ms", 1000),
+            enabled=settings.get("canonical_auto_save_enabled", True),
+        )
+        self.canonical_save_coordinator.start()
         self.selection_controller = SubtitleSelectionController(self)
 
         # --- [SPRINT 9] ROBUST SUBTITLE GENERATION ---
@@ -285,6 +296,11 @@ class MainWindow(QMainWindow):
         
         # Nút Lưu Dự Án
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
+        self.canonical_save_status_label = QLabel("Auto Save · Saved")
+        self.canonical_save_status_label.setStyleSheet(
+            f"color: {Theme.TEXT_MUTED}; padding: 4px; border: none;"
+        )
+        sidebar_layout.addWidget(self.canonical_save_status_label)
         
         # Nút Clear Queue
         sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
@@ -626,7 +642,16 @@ class MainWindow(QMainWindow):
         self.page_settings.appear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.disappear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.text_effect_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
+        self.page_settings.canonical_autosave_checkbox.stateChanged.connect(
+            self._on_canonical_autosave_enabled_changed
+        )
+        self.page_settings.canonical_autosave_delay_combo.currentIndexChanged.connect(
+            self._on_canonical_autosave_delay_changed
+        )
         self.stack.addWidget(self.page_settings)
+        self._canonical_status_timer = QTimer(self)
+        self._canonical_status_timer.timeout.connect(self._update_canonical_save_status)
+        self._canonical_status_timer.start(100)
 
         # Page 7 (Index 6): Help Center
         self.tour_catalog = TourCatalog(RuntimePaths.get_resources_dir() / "tutorials")
@@ -1161,6 +1186,20 @@ class MainWindow(QMainWindow):
     def apply_saved_settings(self):
         s = load_settings()
         if not s: return
+        enabled = s.get("canonical_auto_save_enabled", True)
+        delay = s.get("canonical_auto_save_delay_ms", 1000)
+        if delay not in (500, 1000, 2000, 5000):
+            delay = 1000
+        self.page_settings.canonical_autosave_checkbox.blockSignals(True)
+        self.page_settings.canonical_autosave_delay_combo.blockSignals(True)
+        self.page_settings.canonical_autosave_checkbox.setChecked(bool(enabled))
+        delay_index = self.page_settings.canonical_autosave_delay_combo.findData(delay)
+        if delay_index >= 0:
+            self.page_settings.canonical_autosave_delay_combo.setCurrentIndex(delay_index)
+        self.page_settings.canonical_autosave_checkbox.blockSignals(False)
+        self.page_settings.canonical_autosave_delay_combo.blockSignals(False)
+        self.canonical_save_coordinator.set_enabled(bool(enabled))
+        self.canonical_save_coordinator.set_delay_ms(delay)
         if "motion_preset" in s:
             idx = self.page_settings.motion_preset_combo.findData(s["motion_preset"])
             if idx >= 0: self.page_settings.motion_preset_combo.setCurrentIndex(idx)
@@ -1195,6 +1234,34 @@ class MainWindow(QMainWindow):
             self.page_settings.font_combo.setCurrentText(s["font_name"])
         if "font_size" in s:
             self.page_settings.size_spin.setValue(s["font_size"])
+
+    def _persist_canonical_setting(self, key, value):
+        settings = load_settings()
+        settings[key] = value
+        save_settings(settings)
+
+    def _on_canonical_autosave_enabled_changed(self, state):
+        enabled = bool(state)
+        self.canonical_save_coordinator.set_enabled(enabled)
+        self._persist_canonical_setting("canonical_auto_save_enabled", enabled)
+
+    def _on_canonical_autosave_delay_changed(self, index):
+        delay = self.page_settings.canonical_autosave_delay_combo.itemData(index)
+        if delay is None:
+            return
+        self.canonical_save_coordinator.set_delay_ms(int(delay))
+        self._persist_canonical_setting("canonical_auto_save_delay_ms", int(delay))
+
+    def _update_canonical_save_status(self):
+        coordinator = getattr(self, "canonical_save_coordinator", None)
+        label = getattr(self, "canonical_save_status_label", None)
+        if coordinator is None or label is None:
+            return
+        text = f"Auto Save · {coordinator.status_text()}"
+        countdown = coordinator.countdown_text()
+        if countdown:
+            text += f" · {countdown}"
+        label.setText(text)
     def on_motion_preset_changed(self):
         preset = self.page_settings.motion_preset_combo.currentData()
         
@@ -1313,6 +1380,9 @@ class MainWindow(QMainWindow):
                 self.on_queue_item_clicked(vid)
 
     def clear_files(self):
+        flush = getattr(self, "_flush_canonical_save_before_clear_queue", None)
+        if flush:
+            flush()
         if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
             project = getattr(self.project_service, "current_project", None)
             project_name = getattr(project, "name", "hiện tại")
@@ -1363,23 +1433,23 @@ class MainWindow(QMainWindow):
                 self.quality_inspector_panel.set_segments([])
 
     def on_queue_item_clicked(self, vid_path, fresh_project=False):
-        self.queue_mgr.set_active(vid_path)
-
         # Queue items can arrive through Drag & Drop without going through
         # the New Project dialog. SubtitleGenerationService requires a
         # project because its checkpoint and canonical artifact live there.
         if fresh_project:
             self._queue_project_dirs.pop(vid_path, None)
 
-        if self.project_service.requires_project_switch(
+        requires_switch = self.project_service.requires_project_switch(
             vid_path, fresh_project=fresh_project
-        ):
+        )
+        if requires_switch:
+            if not self._prepare_recovery_session_switch():
+                return
             file_name = os.path.basename(vid_path)
             output_dir = self.out_input.text().strip() or os.path.dirname(vid_path)
             project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
-                self._prepare_recovery_session_switch()
                 if fresh_project:
                     self.project_service.create_auto_project(
                         output_dir,
@@ -1418,6 +1488,8 @@ class MainWindow(QMainWindow):
                 self.append_log(
                     f"❌ [LỖI] Không thể tự động tạo/nạp dự án: {exc}"
                 )
+
+        self.queue_mgr.set_active(vid_path)
 
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
@@ -2247,6 +2319,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(title + (" *" if is_dirty else ""))
 
     def closeEvent(self, event):
+        self._flush_canonical_save_before_close()
         if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
                 from PySide6.QtWidgets import QMessageBox
                 reply = QMessageBox.question(
@@ -2276,7 +2349,14 @@ class MainWindow(QMainWindow):
         if getattr(self, "autosave_coordinator", None):
             self.autosave_coordinator.dispose()
 
-        save_settings({
+        if getattr(self, "_canonical_status_timer", None):
+            self._canonical_status_timer.stop()
+
+        if getattr(self, "canonical_save_coordinator", None):
+            self.canonical_save_coordinator.dispose()
+
+        settings = load_settings()
+        settings.update({
             "output_dir": self.out_input.text().strip(),
             "model_size": self.page_settings.model_combo.currentData(),
             "compute_type": self.page_settings.compute_combo.currentData(),
@@ -2284,8 +2364,11 @@ class MainWindow(QMainWindow):
             "min_silence_ms": self.page_settings.silence_spin.value(),
             "do_hardsub": self.page_settings.chk_hardsub_enable.isChecked(),
             "font_name": self.page_settings.font_combo.currentText(),
-            "font_size": self.page_settings.size_spin.value()
+            "font_size": self.page_settings.size_spin.value(),
+            "canonical_auto_save_enabled": self.canonical_save_coordinator.enabled,
+            "canonical_auto_save_delay_ms": self.canonical_save_coordinator.delay_ms,
         })
+        save_settings(settings)
         
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
@@ -2414,14 +2497,39 @@ class MainWindow(QMainWindow):
         return session
 
     def _prepare_recovery_session_switch(self):
-        """Invalidate the old autosave identity before replacing project state."""
+        """Flush canonical state before replacing the current project context."""
+        if not self._flush_canonical_save_before_project_switch():
+            return False
         coordinator = getattr(self, "autosave_coordinator", None)
         if coordinator:
             coordinator.clear_session()
+        return True
+
+    def _flush_canonical_save_before_close(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_clear_queue(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_project_switch(self):
+        return self._flush_canonical_save_before_transition()
+
+    def _flush_canonical_save_before_transition(self):
+        sub_editor = getattr(self, "sub_editor", None)
+        commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+        if commit_pending_edit:
+            commit_pending_edit()
+        coordinator = getattr(self, "canonical_save_coordinator", None)
+        if coordinator is None or not coordinator.enabled:
+            return True
+        return coordinator.flush_now()
 
     def _complete_recovery_session_switch(self, *, reset_tracker=True):
         """Retire old recovery state before resetting the tracker for the new project."""
         self.recovery_manager.release_active_session_for_switch()
+        canonical = getattr(self, "canonical_save_coordinator", None)
+        if canonical:
+            canonical.cancel_pending()
         if reset_tracker:
             self.revision_tracker.reset_for_new_document()
         return self._switch_recovery_session()
@@ -2449,7 +2557,8 @@ class MainWindow(QMainWindow):
             full_project_dir = os.path.join(data["project_dir"], f"{safe_name}.ai-subtitle")
             
             try:
-                self._prepare_recovery_session_switch()
+                if not self._prepare_recovery_session_switch():
+                    return
                 self.project_service.create_project(full_project_dir, data["name"], data["video_path"])
                 self._complete_recovery_session_switch()
                 self._sync_subtitle_placement_from_project()
@@ -2474,7 +2583,8 @@ class MainWindow(QMainWindow):
             return
         self.first_run_controller.on_workflow_started()
         try:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             self.project_service.create_project(
                 project_data["bundle_path"], project_data["name"], result.local_path
             )
@@ -2504,10 +2614,26 @@ class MainWindow(QMainWindow):
         self.video_player.load_video(result.local_path)
 
     def action_save_project(self):
+        return self._save_current_project(reason="manual", notify_user=True)
+
+    def _save_current_project(
+        self, *, reason="manual", notify_user=True, target_revision=None
+    ):
         if not getattr(self, 'project_service', None) or not self.project_service.current_project:
-            Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
+            if notify_user:
+                Toast.show_info(self, "Chưa có dự án nào được mở để lưu.")
             return False
-            
+
+        sub_editor = getattr(self, "sub_editor", None)
+        commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+        if commit_pending_edit:
+            commit_pending_edit()
+
+        target_revision = (
+            self.revision_tracker.edit_revision
+            if target_revision is None
+            else target_revision
+        )
         try:
             # 1. Chụp lại trạng thái giao diện
             self.workspace_service.capture_workspace()
@@ -2557,14 +2683,17 @@ class MainWindow(QMainWindow):
             result = self.project_service.save_project()
             if result is False:
                 return False
-            self.recovery_manager.record_explicit_save()
-            self.revision_tracker.record_explicit_save_success()
-            self.global_undo_manager.mark_saved()
+            self.recovery_manager.record_explicit_save(target_revision)
+            self.revision_tracker.record_explicit_save_success(target_revision)
             coordinator = getattr(self, "autosave_coordinator", None)
             if coordinator:
                 coordinator.manual_save_succeeded()
-            self._update_window_title_dirty_marker(False)
-            Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            canonical_coordinator = getattr(self, "canonical_save_coordinator", None)
+            if canonical_coordinator:
+                canonical_coordinator.manual_save_succeeded()
+            self._update_window_title_dirty_marker(self.revision_tracker.is_dirty)
+            if notify_user:
+                Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
             return True
             
         except (OSError, ValueError, RuntimeError) as e:
@@ -2580,7 +2709,8 @@ class MainWindow(QMainWindow):
             return
             
         try:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             # 1. CHUYỂN TRANG NGAY LẬP TỨC: Giấu đi thời gian chờ nạp dữ liệu
             self.switch_page(1)
             # Ép Qt vẽ xong màn hình Workspace trước khi CPU bị chặn bởi việc nạp file
@@ -2655,7 +2785,8 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
         elif request.action is IpcAction.OPEN_PROJECT and request.path:
-            self._prepare_recovery_session_switch()
+            if not self._prepare_recovery_session_switch():
+                return
             try:
                 self.project_service.open_project(request.path)
                 self._complete_recovery_session_switch()

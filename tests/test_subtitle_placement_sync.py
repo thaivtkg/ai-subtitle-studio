@@ -310,6 +310,7 @@ class TestSubtitlePlacementSyncContracts(unittest.TestCase):
                 str(video_a): str(project_a_dir),
                 str(video_b): str(project_b_dir),
             }
+            window.revision_tracker.reset_for_new_document()
             before_revision = window.revision_tracker.edit_revision
             before_dirty = window.revision_tracker.is_dirty
 
@@ -378,6 +379,7 @@ class TestSubtitlePlacementSyncContracts(unittest.TestCase):
                 str(fresh_video): {"srt_path": None, "duration": 0},
             }
             window.queue_mgr.active_vid = str(fresh_video)
+            window.revision_tracker.reset_for_new_document()
             before_revision = window.revision_tracker.edit_revision
             before_dirty = window.revision_tracker.is_dirty
 
