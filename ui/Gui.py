@@ -2650,6 +2650,24 @@ class MainWindow(QMainWindow):
             if target_revision is None
             else target_revision
         )
+
+        def trace(stage, **fields):
+            if reason != "autosave":
+                return
+            details = " ".join(
+                f"{key}={str(value).replace(chr(10), ' ')}"
+                for key, value in fields.items()
+            )
+            self.append_log(f"[E4-AUTOSAVE-TRACE] stage={stage} {details}".rstrip())
+
+        project = self.project_service.current_project
+        trace(
+            "save-start",
+            project_id=getattr(project, "project_id", ""),
+            project_root=self.project_service.project_dir or "",
+            edit_revision=self.revision_tracker.edit_revision,
+            target_revision=target_revision,
+        )
         try:
             # 1. Chụp lại trạng thái giao diện
             self.workspace_service.capture_workspace()
@@ -2682,11 +2700,24 @@ class MainWindow(QMainWindow):
                             mark_dirty=False,
                         )
                         art_id = artifact.artifact_id if artifact else None
+                        trace(
+                            "artifact-registered",
+                            artifact_id=art_id or "",
+                            artifact_type=artifact_type.name,
+                            source_path=editor_path,
+                        )
                     
                 if art_id:
                     artifact = self.project_service.artifact_store.get(art_id)
                     if artifact and artifact.path:
                         artifact_path = self._project_owned_artifact_path(artifact.path)
+                        trace(
+                            "artifact-destination",
+                            artifact_id=artifact.artifact_id,
+                            source_path=artifact.path,
+                            destination=artifact_path,
+                            project_root=self.project_service.project_dir or "",
+                        )
                         os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
                         
                         # TRƯỜNG HỢP 1: File đang mở là SRT -> Phải xuất file SRT đè lên
@@ -2706,6 +2737,12 @@ class MainWindow(QMainWindow):
                                 exporter.export_srt(subs_for_export, artifact_path)
                                 artifact.path = artifact_path
                                 self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, artifact_path)
+                                trace(
+                                    "artifact-written",
+                                    path=artifact_path,
+                                    exists=os.path.exists(artifact_path),
+                                    size=os.path.getsize(artifact_path),
+                                )
                                 print(f"[DEBUG-SAVE] Đã ghi đè thành công Timing mới vào file SRT: {artifact_path}")
                             except (OSError, ValueError, RuntimeError) as ex:
                                 print(f"[LỖI XUẤT SRT] {ex}")
@@ -2719,11 +2756,34 @@ class MainWindow(QMainWindow):
                                 artifact.path = draft_path
                                 self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_path)
                                 print(f"[DEBUG-SAVE] Đã cập nhật đường dẫn Artifact sang Draft mới: {draft_path}")
+                            trace(
+                                "artifact-written",
+                                path=artifact.path,
+                                exists=os.path.exists(artifact.path),
+                                size=os.path.getsize(artifact.path) if os.path.exists(artifact.path) else 0,
+                            )
             
             # 3. Lưu toàn bộ nhật ký Project xuống đĩa
             result = self.project_service.save_project()
             if result is False:
+                trace("project-save-failed", project_root=self.project_service.project_dir or "")
                 return False
+            manifest_path = os.path.join(
+                self.project_service.project_dir or "",
+                "artifacts",
+                "manifest.json",
+            )
+            trace(
+                "project-save-complete",
+                manifest=manifest_path,
+                manifest_exists=os.path.exists(manifest_path),
+                active_artifact_id=self.project_service.current_project.state.active_artifact_id,
+                timing_artifact_id=getattr(
+                    getattr(self.project_service.current_project.state, "timing", None),
+                    "timing_artifact_id",
+                    "",
+                ),
+            )
             self.recovery_manager.record_explicit_save(target_revision)
             self.revision_tracker.record_explicit_save_success(target_revision)
             coordinator = getattr(self, "autosave_coordinator", None)
@@ -2738,6 +2798,7 @@ class MainWindow(QMainWindow):
             return True
             
         except (OSError, ValueError, RuntimeError) as e:
+            trace("save-failed", error=e)
             Toast.show_error(self, f"Không thể lưu dự án:\n{e!s}")
             import traceback
             print(traceback.format_exc())
