@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractItemDelegate,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -440,6 +441,15 @@ class SubtitleEditorWidget(QWidget):
 
     def commit_pending_edit(self):
         self.current_editor.commit_pending_edit()
+        for editor in self.table.findChildren(QLineEdit):
+            position = editor.mapTo(
+                self.table.viewport(), editor.rect().center()
+            )
+            index = self.table.indexAt(position)
+            if not index.isValid():
+                continue
+            self.table.commitData(editor)
+            self.table.closeEditor(editor, QAbstractItemDelegate.NoHint)
 
     def on_table_edit(self, row, col):
         if self.is_rendering or self.undo_manager is None: return
