@@ -25,8 +25,14 @@ class ArtifactStore:
         """Xuất danh sách Artifacts, ép đường dẫn thành Relative Path"""
         manifest = {"artifacts": []}
         for art in self.get_all():
-            # Cắt đường dẫn tuyệt đối thành tương đối so với project_dir
-            rel_path = os.path.relpath(art.path, project_dir) if os.path.isabs(art.path) else art.path
+            # Giữ absolute path khi artifact nằm trên mount khác project.
+            if os.path.isabs(art.path):
+                try:
+                    rel_path = os.path.relpath(art.path, project_dir)
+                except ValueError:
+                    rel_path = os.path.abspath(art.path)
+            else:
+                rel_path = art.path
             art_dict = {
                 "artifact_id": art.artifact_id,
                 "artifact_type": art.artifact_type.name,
