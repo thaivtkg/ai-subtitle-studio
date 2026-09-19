@@ -16,6 +16,7 @@ class TestProjectSwitchRealEditorPersistence(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication(sys.argv)
 
     def test_queue_signal_switch_persists_live_table_editor_content(self):
+        from PySide6.QtCore import QEvent
         from PySide6.QtWidgets import QApplication, QLineEdit
         from core.artifacts.artifact import Artifact
         from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
@@ -79,7 +80,17 @@ class TestProjectSwitchRealEditorPersistence(unittest.TestCase):
                 project_service=service,
                 media_import_service=MagicMock(),
             )
-            self.addCleanup(window.close)
+
+            def cleanup_window():
+                window.autosave_coordinator.dispose()
+                window.canonical_save_coordinator.dispose()
+                window._canonical_status_timer.stop()
+                window.close()
+                window.deleteLater()
+                QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+                QApplication.processEvents()
+
+            self.addCleanup(cleanup_window)
             window.video_player.load_video = MagicMock()
             window.generation_panel.check_resumable_state = MagicMock()
             window._refresh_transcription_context_views = MagicMock()
