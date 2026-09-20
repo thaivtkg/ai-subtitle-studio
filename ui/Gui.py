@@ -82,6 +82,7 @@ from ui.components.animated_stack import AnimatedStack
 from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.dialogs.new_project_dialog import NewProjectDialog
+from ui.dialogs.recovery_center_dialog import RecoveryCenterDialog
 from ui.pages.dashboard_page import DashboardPage
 from ui.activity_log import ActivityLogView
 from ui.pages.draft_center_page import DraftCenterPage
@@ -291,6 +292,11 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_new_project)
         sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
         sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
+        self.btn_recovery_center = self.create_side_action_button(
+            "🛟  Recovery Center", self.open_recovery_center
+        )
+        self.btn_recovery_center.setObjectName("btn_recovery_center")
+        sidebar_layout.addWidget(self.btn_recovery_center)
         
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
@@ -1095,6 +1101,52 @@ class MainWindow(QMainWindow):
         btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 6px; color: {Theme.TEXT_PRIMARY}; text-align: left; padding-left: 10px; font-weight: 600; font-size: 11px; }} QPushButton:hover {{ border: 1px solid {Theme.CYAN}; color: {Theme.CYAN}; background-color: {Theme.SURFACE_SOFT}; }}")
         btn.clicked.connect(slot)
         return btn
+
+    def _active_recovery_session_id(self):
+        autosave = getattr(self, "autosave_coordinator", None)
+        bound_session_id = getattr(autosave, "bound_session_id", None)
+        active_session = getattr(self.recovery_manager, "_active_session", None)
+        active_session_id = getattr(active_session, "session_id", None)
+        if bound_session_id and bound_session_id == active_session_id:
+            return bound_session_id
+        return None
+
+    def _recovery_source_info_by_project(self):
+        source_info_by_project = {}
+        for candidate in self.recovery_manager.scan_candidates():
+            video_path = candidate.manifest.video_path
+            if not video_path or not os.path.exists(video_path):
+                continue
+            try:
+                source_info_by_project[candidate.manifest.project_id] = (
+                    generate_source_info(video_path)
+                )
+            except (OSError, ValueError):
+                continue
+        return source_info_by_project
+
+    def _list_recovery_entries_for_center(self):
+        return self.recovery_manager.list_recovery_entries(
+            active_session_id=self._active_recovery_session_id(),
+            source_info_by_project=self._recovery_source_info_by_project(),
+        )
+
+    def _delete_recovery_entry_for_center(
+        self, session_id, *, active_session_id=None
+    ):
+        return self.recovery_manager.delete_entry(
+            session_id, active_session_id=active_session_id
+        )
+
+    def open_recovery_center(self):
+        dialog = RecoveryCenterDialog(
+            entries_provider=self._list_recovery_entries_for_center,
+            live_session_id_provider=self._active_recovery_session_id,
+            restore_callback=self._restore_recovery_entry,
+            delete_callback=self._delete_recovery_entry_for_center,
+            parent=self,
+        )
+        dialog.exec()
 
     def switch_page(self, original_index):
         self._active_nav_index = original_index
