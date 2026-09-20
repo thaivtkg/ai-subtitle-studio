@@ -90,6 +90,24 @@ class TestRecoveryManager(unittest.TestCase):
         self.assertTrue((session.directory / "snapshot.json").exists())
         self.tracker.record_snapshot_success.assert_called_once_with(1)
 
+    def test_recovery_snapshot_trace_records_creation_and_write(self):
+        session = self.manager.create_session(self.context("trace-session"))
+        self.tracker.is_dirty = True
+        self.tracker.edit_revision = 1
+
+        self.assertTrue(
+            self.manager.write_snapshot(self.make_state("trace-session", 1))
+        )
+
+        trace = (self.sessions_dir.parent / "recovery_snapshot.log").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("stage=session-created", trace)
+        self.assertIn("stage=snapshot-attempt", trace)
+        self.assertIn("stage=snapshot-written", trace)
+        self.assertIn("session_id=trace-session", trace)
+        self.assertIn("revision=1", trace)
+
     def test_tc92_candidate_formula_filters_nonrecoverable_sessions(self):
         unlocked = self.manager.create_session(self.context("unlocked"))
         (unlocked.directory / "active.lock").unlink()

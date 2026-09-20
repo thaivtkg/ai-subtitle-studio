@@ -98,6 +98,13 @@ class AutosaveCoordinator:
                 self.MAX_CYCLE_MS,
                 lambda captured=token: self._attempt(captured),
             )
+            self._log(
+                "recovery snapshot cycle armed",
+                revision=revision,
+                inactivity_ms=self.INACTIVITY_MS,
+                max_cycle_ms=self.MAX_CYCLE_MS,
+                session_id=token[-1],
+            )
         self._cancel_handle("_inactivity_handle")
         self._inactivity_handle = self.scheduler.call_later(
             self.INACTIVITY_MS,
@@ -115,6 +122,12 @@ class AutosaveCoordinator:
             self._cancel_cycle()
             return
 
+        self._log(
+            "recovery snapshot attempt",
+            revision=revision,
+            snapshot_revision=self.revision_tracker.snapshot_revision,
+            session_id=captured_token[-1],
+        )
         try:
             state = deepcopy(self.snapshot_provider())
         except (OSError, TypeError, ValueError, RuntimeError) as error:
@@ -150,6 +163,12 @@ class AutosaveCoordinator:
         self._retry_handle = self.scheduler.call_later(
             self.INACTIVITY_MS,
             lambda captured=captured_token: self._attempt(captured),
+        )
+        self._log(
+            "recovery snapshot retry scheduled",
+            delay_ms=self.INACTIVITY_MS,
+            session_id=captured_token[-1],
+            error=error,
         )
 
     def _current_token(self):

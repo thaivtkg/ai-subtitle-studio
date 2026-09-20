@@ -2346,7 +2346,15 @@ class MainWindow(QMainWindow):
             error = event.get("error")
             if error:
                 message = f"{message}: {error}"
-            self.append_log(f"[AUTOSAVE] {message}")
+            details = {
+                key: value for key, value in event.items() if key != "event"
+            }
+            recovery_manager = getattr(self, "recovery_manager", None)
+            trace_event = getattr(recovery_manager, "log_runtime_event", None)
+            if callable(trace_event):
+                trace_event(message, **details)
+            if hasattr(self, "page_dashboard"):
+                self.append_log(f"[RECOVERY-SNAPSHOT] {message}")
             return
         self.append_log(str(event))
 

@@ -81,6 +81,10 @@ def main():
     guard.start_listening()
     undo_manager, revision_tracker, recovery_manager = build_recovery_manager()
     recovery_candidates = recovery_manager.scan_candidates()
+    recovery_manager.log_runtime_event(
+        "startup-recovery-scan-complete",
+        candidate_count=len(recovery_candidates),
+    )
     startup_context = build_startup_context(
         sys_args=sys.argv,
         has_pending_recovery=bool(recovery_candidates),
@@ -90,6 +94,13 @@ def main():
     recovered_linked = True
     if selected_candidate is not None:
         candidate = selected_candidate
+        recovery_manager.log_runtime_event(
+            "startup-candidate-selected",
+            session_id=candidate.manifest.session_id,
+            project_id=candidate.manifest.project_id,
+            project_file_path=candidate.manifest.project_file_path,
+            revision=candidate.snapshot.edit_revision,
+        )
         source_info = None
         if candidate.manifest.video_path and os.path.exists(candidate.manifest.video_path):
             try:
@@ -98,6 +109,11 @@ def main():
                 source_info = None
         validation = recovery_manager.validate_candidate(candidate, source_info)
         if not validation.is_valid:
+            recovery_manager.log_runtime_event(
+                "startup-candidate-discarded",
+                session_id=candidate.manifest.session_id,
+                reason=validation.reason,
+            )
             recovery_manager.discard_session(candidate.manifest.session_id)
             selected_candidate = None
         else:
@@ -115,9 +131,19 @@ def main():
                 candidate.manifest.created_at,
             )
             if dialog.exec() == 0:
+                recovery_manager.log_runtime_event(
+                    "restore-choice",
+                    session_id=candidate.manifest.session_id,
+                    choice="discard",
+                )
                 recovery_manager.discard_session(candidate.manifest.session_id)
                 selected_candidate = None
             else:
+                recovery_manager.log_runtime_event(
+                    "restore-choice",
+                    session_id=candidate.manifest.session_id,
+                    choice="restore",
+                )
                 revision_tracker.restore_from_snapshot(
                     candidate.snapshot.edit_revision,
                     candidate.manifest.last_saved_revision,
@@ -139,6 +165,13 @@ def main():
                 if not recovered_linked:
                     recovered_state = replace(recovered_state, video_path="")
                 selected_candidate = None
+                recovery_manager.log_runtime_event(
+                    "restore-state-selected",
+                    session_id=candidate.manifest.session_id,
+                    project_id=candidate.manifest.project_id,
+                    revision=candidate.snapshot.edit_revision,
+                    linked=recovered_linked,
+                )
     from ui import Gui as gui_module
 
     # --- CHỈNH SỬA TẠI ĐÂY: Sử dụng RuntimePaths load icon ---
