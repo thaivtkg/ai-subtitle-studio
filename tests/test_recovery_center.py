@@ -27,6 +27,9 @@ class RecoveryCenterContract(unittest.TestCase):
         self.tracker.snapshot_revision = 0
         self.tracker.last_saved_revision = 0
         self.tracker.last_clean_revision = 0
+        self.tracker.record_snapshot_success.side_effect = lambda revision: setattr(
+            self.tracker, "snapshot_revision", revision
+        )
         self.manager = RecoveryManager(
             self.sessions,
             self.quarantine,
@@ -194,6 +197,30 @@ class RecoveryCenterContract(unittest.TestCase):
         self.assertTrue(entries[0].unlinked_restore_allowed)
         self.assertFalse(entries[0].linked_restore_allowed)
 
+    def test_RC19_source_match_is_available_and_linked(self):
+        self.write("available-source", 2)
+        catalog = self.new_manager()
+
+        entries = catalog.list_recovery_entries(
+            source_info_by_project={
+                "project-a": SimpleNamespace(fingerprint="fingerprint-project-a")
+            }
+        )
+
+        self.assertEqual(entries[0].source_status, "AVAILABLE")
+        self.assertFalse(entries[0].unlinked_restore_allowed)
+        self.assertTrue(entries[0].linked_restore_allowed)
+
+    def test_RC20_lookup_uses_session_identity(self):
+        self.write("stable-session", 2)
+        catalog = self.new_manager()
+
+        entry = catalog.resolve_recovery_entry("stable-session")
+
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.session_id, "stable-session")
+        self.assertIsNone(catalog.resolve_recovery_entry("not-the-session"))
+
     def test_RC12_current_process_session_is_not_recoverable(self):
         self.write("live", 2)
 
@@ -232,7 +259,10 @@ class RecoveryCenterContract(unittest.TestCase):
         coordinator = CanonicalSaveCoordinator(
             revision_tracker=tracker,
             save_current_project=MagicMock(return_value=True),
-            scheduler=SimpleNamespace(),
+            scheduler=SimpleNamespace(
+                call_later=MagicMock(),
+                cancel=MagicMock(),
+            ),
             active_project_provider=lambda: object(),
         )
 

@@ -12,6 +12,7 @@ from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_models import (
     RecoveryCandidate,
     RecoveryContext,
+    RecoveryEntry,
     RecoveryManifest,
     RecoverySession,
     RecoveryValidationResult,
@@ -323,6 +324,85 @@ class RecoveryManager(QObject):
         self._trace("scan-complete", candidate_count=len(candidates))
         return candidates
 
+    def list_recovery_entries(
+        self,
+        *,
+        active_session_id: str | None = None,
+        source_info_by_project: dict[str | None, SourceInfo | None] | None = None,
+    ) -> list[RecoveryEntry]:
+        """Return one validated, effective recovery entry per session."""
+        excluded_session_id = (
+            self._active_session.session_id
+            if active_session_id is None and self._active_session is not None
+            else active_session_id
+        )
+        source_info_by_project = source_info_by_project or {}
+        entries = []
+        for candidate in self.scan_candidates():
+            manifest = candidate.manifest
+            if manifest.session_id == excluded_session_id:
+                continue
+            source_info = source_info_by_project.get(manifest.project_id)
+            validation = self.validate_candidate(candidate, source_info)
+            if not validation.is_valid:
+                continue
+            source_status = (
+                "AVAILABLE" if validation.source_matches else validation.source_reason
+            )
+            entries.append(
+                RecoveryEntry(
+                    session_id=manifest.session_id,
+                    project_id=manifest.project_id,
+                    project_root=manifest.project_file_path,
+                    video_path=manifest.video_path,
+                    effective_snapshot_timestamp=self._effective_timestamp(manifest),
+                    created_at=manifest.created_at,
+                    snapshot_revision=manifest.snapshot_revision,
+                    last_saved_revision=manifest.last_saved_revision,
+                    last_clean_revision=manifest.last_clean_revision,
+                    source_status=source_status,
+                    unlinked_restore_allowed=source_status != "AVAILABLE",
+                    linked_restore_allowed=source_status == "AVAILABLE",
+                )
+            )
+        return sorted(entries, key=self._entry_sort_key)
+
+    def resolve_recovery_entry(
+        self,
+        session_id: str,
+        *,
+        active_session_id: str | None = None,
+        source_info_by_project: dict[str | None, SourceInfo | None] | None = None,
+    ) -> RecoveryEntry | None:
+        """Resolve a current filesystem entry by stable session identity."""
+        return next(
+            (
+                entry
+                for entry in self.list_recovery_entries(
+                    active_session_id=active_session_id,
+                    source_info_by_project=source_info_by_project,
+                )
+                if entry.session_id == session_id
+            ),
+            None,
+        )
+
+    def delete_entry(
+        self, session_id: str, *, active_session_id: str | None = None
+    ) -> bool:
+        """Discard one non-live recovery session; refuse the active session."""
+        excluded_session_id = (
+            self._active_session.session_id
+            if active_session_id is None and self._active_session is not None
+            else active_session_id
+        )
+        if session_id == excluded_session_id:
+            return False
+        if not (self.sessions_dir / session_id).is_dir():
+            return False
+        self.discard_session(session_id)
+        return True
+
     def invalidate_snapshot_at_clean_point(self, clean_revision: int) -> None:
         if self._active_session is None:
             return
@@ -471,6 +551,39 @@ class RecoveryManager(QObject):
             return source
         self.session_quarantined.emit(session_id, reason)
         return target
+
+    @staticmethod
+    def _entry_sort_key(entry: RecoveryEntry) -> tuple[float, int, float, str]:
+        return (
+            -RecoveryManager._timestamp_sort_value(entry.effective_snapshot_timestamp),
+            -entry.snapshot_revision,
+            -RecoveryManager._timestamp_sort_value(entry.created_at),
+            entry.session_id,
+        )
+
+    @staticmethod
+    def _effective_timestamp(manifest: RecoveryManifest) -> str:
+        if RecoveryManager._timestamp_sort_value(manifest.last_snapshot_at) != float(
+            "-inf"
+        ):
+            return manifest.last_snapshot_at or ""
+        if RecoveryManager._timestamp_sort_value(manifest.created_at) != float(
+            "-inf"
+        ):
+            return manifest.created_at
+        return ""
+
+    @staticmethod
+    def _timestamp_sort_value(value: str | None) -> float:
+        if not value:
+            return float("-inf")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            return float("-inf")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
 
     def _before_stage(self, stage: str) -> None:
         callback = getattr(self.snapshot_store, "before_stage", None)
