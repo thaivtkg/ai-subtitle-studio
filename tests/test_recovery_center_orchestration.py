@@ -3,7 +3,12 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from core.recovery.recovery_models import RecoveryEntry, RecoveryWorkingState
+from core.recovery.recovery_models import (
+    RecoveryCandidate,
+    RecoveryEntry,
+    RecoveryManifest,
+    RecoveryWorkingState,
+)
 
 
 class _CanonicalSave:
@@ -38,6 +43,11 @@ class _ProjectService:
         self.project_dir = "D:/project-b.ai-subtitle"
         return self.target
 
+    def close_project(self):
+        self.events.append("close")
+        self.current_project = None
+        self.project_dir = None
+
 
 class _RecoveryManager:
     def __init__(self, events, entry, state, *, live_session_id=None):
@@ -54,9 +64,36 @@ class _RecoveryManager:
             return None
         return self.entry
 
-    def load_recovery_state(self, session_id):
-        self.events.append(f"load:{session_id}")
-        return self.state if session_id == self.entry.session_id else None
+    def resolve_recovery_candidate(self, session_id, **_kwargs):
+        self.events.append(f"candidate:{session_id}")
+        if not self.session_exists or session_id != self.entry.session_id:
+            return None
+        manifest = RecoveryManifest(
+            schema_version=1,
+            session_id=self.entry.session_id,
+            app_version="test",
+            project_id=self.entry.project_id,
+            project_file_path=self.entry.project_root,
+            video_path=self.entry.video_path,
+            source_fingerprint=self.state.source_fingerprint,
+            source_modified_at=0.0,
+            created_at=self.entry.created_at,
+            last_snapshot_at=self.entry.effective_snapshot_timestamp,
+            edit_revision=self.entry.snapshot_revision,
+            snapshot_revision=self.entry.snapshot_revision,
+            last_saved_revision=self.entry.last_saved_revision,
+            last_clean_revision=self.entry.last_clean_revision,
+        )
+        return RecoveryCandidate(manifest, self.state)
+
+    def validate_candidate(self, _candidate, actual_source_info=None):
+        if self.entry.source_status == "AVAILABLE":
+            return SimpleNamespace(is_valid=True, source_matches=True, source_reason="")
+        return SimpleNamespace(
+            is_valid=True,
+            source_matches=False,
+            source_reason=self.entry.source_status,
+        )
 
     def handoff_recovered_state(self, *_args, **_kwargs):
         self.events.append("handoff")
@@ -117,6 +154,15 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
             recovered_dirty_baseline=False,
             is_dirty=False,
         )
+        def restore_from_snapshot(snapshot_revision, last_saved_revision, last_clean_revision):
+            window.revision_tracker.edit_revision = snapshot_revision
+            window.revision_tracker.snapshot_revision = snapshot_revision
+            window.revision_tracker.recovered_dirty_baseline = True
+            window.revision_tracker.is_dirty = True
+
+        window.revision_tracker.restore_from_snapshot = MagicMock(
+            side_effect=restore_from_snapshot
+        )
         window.apply_recovery_working_state = MagicMock(
             side_effect=lambda state, linked: self.events.append(
                 f"apply:{state.project_id}:{linked}"
@@ -129,8 +175,8 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
 
         self.assertTrue(window._restore_recovery_entry("recovery-b", linked=True))
 
-        self.assertIn("resolve:recovery-b", self.events)
-        self.assertNotIn("resolve:D:/shared.mp4", self.events)
+        self.assertIn("candidate:recovery-b", self.events)
+        self.assertNotIn("candidate:D:/shared.mp4", self.events)
 
     def test_C2_02_flushes_active_project_before_opening_target(self):
         window = self.window()
@@ -185,6 +231,10 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
 
         self.assertFalse(window._restore_recovery_entry("recovery-b", linked=True))
         self.assertTrue(window._restore_recovery_entry("recovery-b", linked=False))
+        self.assertNotIn("open:D:/project-b.ai-subtitle", self.events)
+        self.assertIn("close", self.events)
+        self.assertIn("apply:project-b:False", self.events)
+        self.assertIsNone(window.project_service.current_project)
 
     def test_C2_08_source_mismatch_requires_unlinked_mode(self):
         window = self.window()
@@ -197,6 +247,10 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
 
         self.assertFalse(window._restore_recovery_entry("recovery-b", linked=True))
         self.assertTrue(window._restore_recovery_entry("recovery-b", linked=False))
+        self.assertNotIn("open:D:/project-b.ai-subtitle", self.events)
+        self.assertIn("close", self.events)
+        self.assertIn("apply:project-b:False", self.events)
+        self.assertIsNone(window.project_service.current_project)
 
     def test_C2_09_target_open_failure_does_not_apply_or_handoff(self):
         window = self.window(open_result=False)
@@ -204,6 +258,16 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
         self.assertFalse(window._restore_recovery_entry("recovery-b", linked=True))
 
         self.assertEqual(window.project_service.current_project.project_id, "project-a")
+        self.assertNotIn("apply:project-b:True", self.events)
+        self.assertFalse(window.recovery_manager.handoff_called)
+        self.assertTrue(window.recovery_manager.session_exists)
+
+    def test_C2_09_target_open_failure_with_no_project_stays_no_project(self):
+        window = self.window(open_result=False, clear_on_failure=True)
+
+        self.assertFalse(window._restore_recovery_entry("recovery-b", linked=True))
+
+        self.assertIsNone(window.project_service.current_project)
         self.assertNotIn("apply:project-b:True", self.events)
         self.assertFalse(window.recovery_manager.handoff_called)
         self.assertTrue(window.recovery_manager.session_exists)
@@ -223,6 +287,8 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
 
         self.assertFalse(window.recovery_manager.handoff_called)
         self.assertTrue(window.recovery_manager.session_exists)
+        self.assertIsNone(window.project_service.current_project)
+        self.assertIn("close", self.events)
 
     def test_C2_12_same_video_restores_project_identity_b(self):
         window = self.window()
@@ -239,7 +305,7 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
         self.assertFalse(window._restore_recovery_entry("recovery-b", linked=True))
 
         self.assertEqual(window.project_service.current_project.project_id, "project-a")
-        self.assertEqual(self.events, ["resolve:recovery-b"])
+        self.assertEqual(self.events, ["candidate:recovery-b"])
 
     def test_C2_14_active_live_entry_is_refused(self):
         window = self.window()
