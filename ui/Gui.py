@@ -49,6 +49,7 @@ from core.artifacts.artifact_store import ArtifactStore
 from core.app_context import StartupContext
 from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
+from core.project.source_fingerprint import generate_source_info
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.autosave_coordinator import AutosaveCoordinator
@@ -2302,6 +2303,113 @@ class MainWindow(QMainWindow):
         self.generation_panel.set_context_status(
             compiled, configured=bool(context.context.strip() or context.glossary)
         )
+
+    def _restore_recovery_entry(
+        self,
+        session_id: str,
+        *,
+        linked: bool,
+        active_session_id: str | None = None,
+    ) -> bool:
+        """Restore one recovery candidate through the project lifecycle."""
+        if active_session_id is not None and session_id == active_session_id:
+            return False
+
+        recovery_manager = getattr(self, "recovery_manager", None)
+        resolve_candidate = getattr(
+            recovery_manager, "resolve_recovery_candidate", None
+        )
+        if not callable(resolve_candidate):
+            return False
+        candidate = resolve_candidate(
+            session_id, active_session_id=active_session_id
+        )
+        if candidate is None:
+            return False
+
+        manifest = candidate.manifest
+        source_info = None
+        if manifest.video_path and os.path.exists(manifest.video_path):
+            try:
+                source_info = generate_source_info(manifest.video_path)
+            except (OSError, ValueError):
+                source_info = None
+        validation = recovery_manager.validate_candidate(candidate, source_info)
+        if not validation.is_valid or (linked and not validation.source_matches):
+            return False
+
+        if not self._prepare_recovery_session_switch():
+            return False
+
+        target_open = False
+        try:
+            if linked:
+                current = getattr(self.project_service, "current_project", None)
+                current_id = getattr(current, "project_id", None)
+                if current is None or (
+                    manifest.project_id is not None
+                    and current_id != manifest.project_id
+                ):
+                    self.project_service.open_project(manifest.project_file_path)
+                    target_open = True
+                current = getattr(self.project_service, "current_project", None)
+                current_root = getattr(self.project_service, "project_dir", None)
+                if current is None:
+                    raise ValueError("target project did not become active")
+                if (
+                    manifest.project_id is not None
+                    and getattr(current, "project_id", None) != manifest.project_id
+                ):
+                    raise ValueError("target project identity mismatch")
+                if current_root and os.path.abspath(current_root) != os.path.abspath(
+                    manifest.project_file_path
+                ):
+                    raise ValueError("target project root mismatch")
+                target_open = True
+            elif getattr(self.project_service, "current_project", None) is not None:
+                self.project_service.close_project()
+                if getattr(self.project_service, "current_project", None) is not None:
+                    raise ValueError("current project did not close")
+
+            recovery_manager.release_active_session_for_switch()
+            self.apply_recovery_working_state(candidate.snapshot, linked=linked)
+            self.revision_tracker.restore_from_snapshot(
+                candidate.snapshot.edit_revision,
+                manifest.last_saved_revision,
+                manifest.last_clean_revision,
+            )
+            project = getattr(self.project_service, "current_project", None)
+            if project is not None and hasattr(project, "state"):
+                project.state.dirty = True
+
+            new_session = recovery_manager.handoff_recovered_state(
+                candidate,
+                candidate.snapshot,
+                RecoveryContext(
+                    manifest.project_id,
+                    manifest.project_file_path,
+                    manifest.video_path,
+                    manifest.source_fingerprint,
+                    manifest.source_modified_at,
+                    manifest.app_version,
+                ),
+            )
+            autosave = getattr(self, "autosave_coordinator", None)
+            if autosave is not None:
+                autosave.bind_session(new_session.session_id)
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical is not None:
+                canonical.cancel_pending()
+            return True
+        except (OSError, RuntimeError, TypeError, ValueError):
+            current = getattr(self.project_service, "current_project", None)
+            if target_open and current is not None:
+                try:
+                    self.project_service.close_project()
+                except (OSError, RuntimeError):
+                    pass
+            self._rollback_recovery_session_switch()
+            return False
 
     def _show_context_inspector(self) -> None:
         self.generation_dock.show()

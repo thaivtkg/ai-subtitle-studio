@@ -362,6 +362,21 @@ class RecoveryManager(QObject):
             )
         return sorted(entries, key=self._entry_sort_key)
 
+    def resolve_recovery_candidate(
+        self, session_id: str, *, active_session_id: str | None = None
+    ) -> RecoveryCandidate | None:
+        """Resolve the current effective candidate by stable session identity."""
+        if active_session_id is not None and session_id == active_session_id:
+            return None
+        return next(
+            (
+                candidate
+                for candidate in self.scan_candidates()
+                if candidate.manifest.session_id == session_id
+            ),
+            None,
+        )
+
     def resolve_recovery_entry(
         self,
         session_id: str,
