@@ -197,7 +197,7 @@ class RecoveryCenterContract(unittest.TestCase):
     def test_RC12_current_process_session_is_not_recoverable(self):
         self.write("live", 2)
 
-        self.assertEqual(self.new_manager().list_recovery_entries(), [])
+        self.assertEqual(self.manager.list_recovery_entries(), [])
 
     def test_RC13_handoff_restores_payload_and_replaces_old_session(self):
         old = self.write("old", 4)
