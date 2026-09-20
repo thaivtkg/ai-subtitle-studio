@@ -224,7 +224,13 @@ class RecoveryCenterContract(unittest.TestCase):
     def test_RC12_current_process_session_is_not_recoverable(self):
         self.write("live", 2)
 
-        self.assertEqual(self.manager.list_recovery_entries(), [])
+        self.assertEqual(
+            self.manager.list_recovery_entries(active_session_id="live"), []
+        )
+        self.assertEqual(
+            [entry.session_id for entry in self.manager.list_recovery_entries()],
+            ["live"],
+        )
 
     def test_RC13_handoff_restores_payload_and_replaces_old_session(self):
         old = self.write("old", 4)
@@ -282,8 +288,14 @@ class RecoveryCenterContract(unittest.TestCase):
     def test_RC17_active_session_delete_is_refused(self):
         session = self.write("live", 2)
 
-        self.assertFalse(self.manager.delete_entry(session.session_id))
+        self.assertFalse(
+            self.manager.delete_entry(session.session_id, active_session_id="live")
+        )
         self.assertTrue(session.directory.exists())
+
+        stale = self.write("stale", 3, manager=self.new_manager())
+        self.assertTrue(self.manager.delete_entry(stale.session_id))
+        self.assertFalse(stale.directory.exists())
 
     def test_RC18_cold_reload_discovers_from_filesystem_not_live_state(self):
         session = self.write("cold", 3)

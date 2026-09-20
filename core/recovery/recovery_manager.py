@@ -331,16 +331,11 @@ class RecoveryManager(QObject):
         source_info_by_project: dict[str | None, SourceInfo | None] | None = None,
     ) -> list[RecoveryEntry]:
         """Return one validated, effective recovery entry per session."""
-        excluded_session_id = (
-            self._active_session.session_id
-            if active_session_id is None and self._active_session is not None
-            else active_session_id
-        )
         source_info_by_project = source_info_by_project or {}
         entries = []
         for candidate in self.scan_candidates():
             manifest = candidate.manifest
-            if manifest.session_id == excluded_session_id:
+            if active_session_id is not None and manifest.session_id == active_session_id:
                 continue
             source_info = source_info_by_project.get(manifest.project_id)
             validation = self.validate_candidate(candidate, source_info)
@@ -391,12 +386,7 @@ class RecoveryManager(QObject):
         self, session_id: str, *, active_session_id: str | None = None
     ) -> bool:
         """Discard one non-live recovery session; refuse the active session."""
-        excluded_session_id = (
-            self._active_session.session_id
-            if active_session_id is None and self._active_session is not None
-            else active_session_id
-        )
-        if session_id == excluded_session_id:
+        if active_session_id is not None and session_id == active_session_id:
             return False
         if not (self.sessions_dir / session_id).is_dir():
             return False
