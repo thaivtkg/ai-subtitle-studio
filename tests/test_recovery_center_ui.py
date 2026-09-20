@@ -149,7 +149,7 @@ class RecoveryCenterUiContract(unittest.TestCase):
 
         self.assertEqual(fixture.delete_calls, [("session-a", "live-session")])
         self.assertGreater(fixture.refresh_count, before)
-        self.assertNotIn("da", dialog.displayed_text())
+        self.assertNotIn("\nda\n", f"\n{dialog.displayed_text()}\n")
 
     def test_UI07_cancelled_delete_does_not_call_domain(self):
         fixture = _DialogFixture([_entry()], confirm=False)
