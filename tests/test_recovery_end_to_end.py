@@ -340,7 +340,8 @@ class TestRecoveryEndToEnd(unittest.TestCase):
         state = RecoveryWorkingState(2.0, "e2e", "p", "project", "video", "fp", 1)
         self.assertTrue(manager.write_snapshot(state))
         manager.record_explicit_save()
-        manager.finalize_clean_shutdown()
+        tracker.record_explicit_save_success()
+        self.assertTrue(manager.finalize_clean_shutdown())
         self.assertFalse(session.directory.exists())
 
     @staticmethod

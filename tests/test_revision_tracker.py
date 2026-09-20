@@ -55,6 +55,16 @@ class TestRevisionTracker(unittest.TestCase):
         self.assertTrue(self.tracker.is_dirty)
         self.assertEqual(self.tracker.last_clean_revision, 4)
 
+    def test_tc90_save_completion_for_older_revision_does_not_clean_newer_edit(self):
+        self.undo.push(EditTextCommand(0, "A", "B", self.data))
+        saved_revision = self.tracker.edit_revision
+        self.undo.push(EditTextCommand(0, "B", "C", self.data))
+
+        self.assertTrue(self.tracker.record_explicit_save_success(saved_revision))
+        self.assertEqual(self.tracker.last_saved_revision, saved_revision)
+        self.assertEqual(self.tracker.edit_revision, saved_revision + 1)
+        self.assertTrue(self.tracker.is_dirty)
+
 
 if __name__ == "__main__":
     unittest.main()

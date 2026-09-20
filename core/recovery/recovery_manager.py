@@ -1,6 +1,7 @@
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
 import shutil
 import uuid
 
@@ -18,6 +19,9 @@ from core.recovery.recovery_models import (
 )
 from core.recovery.recovery_validator import RecoveryValidator
 from core.recovery.revision_tracker import RevisionTracker
+
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryManager(QObject):
@@ -62,6 +66,32 @@ class RecoveryManager(QObject):
         self.validator = validator
         self._active_session: RecoverySession | None = None
 
+    @property
+    def trace_path(self) -> Path:
+        return self.sessions_dir.parent / "recovery_snapshot.log"
+
+    def log_runtime_event(self, event: str, **details) -> None:
+        """Persist recovery diagnostics without changing recovery behavior."""
+        self._trace(event, **details)
+
+    def _trace(self, event: str, **details) -> None:
+        values = []
+        for key, value in details.items():
+            text = str(value).replace("\r", "\\r").replace("\n", "\\n")
+            values.append(f"{key}={text}")
+        line = (
+            f"{self._timestamp()} [RECOVERY-SNAPSHOT] "
+            f"stage={event} {' '.join(values)}\n"
+        )
+        logger.info(line.rstrip())
+        try:
+            self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.trace_path.open("a", encoding="utf-8") as stream:
+                stream.write(line)
+        except OSError:
+            # Diagnostics must never change recovery success/failure semantics.
+            return
+
     def create_session(self, context: RecoveryContext) -> RecoverySession:
         session_id = context.session_id or uuid.uuid4().hex
         directory = self.sessions_dir / session_id
@@ -85,23 +115,60 @@ class RecoveryManager(QObject):
         )
         self.snapshot_store.write_json_atomic(directory / "manifest.json", asdict(manifest))
         self._active_session = RecoverySession(session_id, directory, manifest)
+        self._trace(
+            "session-created",
+            session_id=session_id,
+            project_id=context.project_id,
+            project_file_path=context.project_file_path,
+            session_dir=directory,
+            edit_revision=manifest.edit_revision,
+            snapshot_revision=manifest.snapshot_revision,
+        )
         return self._active_session
 
     def write_snapshot(
         self, state: RecoveryWorkingState, *, force: bool = False
     ) -> bool:
+        self._trace(
+            "snapshot-attempt",
+            session_id=getattr(state, "session_id", None),
+            edit_revision=getattr(state, "edit_revision", None),
+            force=force,
+            active_session_id=(
+                self._active_session.session_id if self._active_session else None
+            ),
+            tracker_edit_revision=self.revision_tracker.edit_revision,
+            tracker_snapshot_revision=self.revision_tracker.snapshot_revision,
+            dirty=self.revision_tracker.is_dirty,
+        )
         if self._active_session is None:
+            self._trace("snapshot-skipped", reason="no-active-session")
             return False
         if (
             state.session_id != self._active_session.session_id
             or state.edit_revision != self.revision_tracker.edit_revision
         ):
+            self._trace(
+                "snapshot-skipped",
+                reason="stale-or-wrong-session-state",
+                state_session_id=state.session_id,
+                active_session_id=self._active_session.session_id,
+                state_revision=state.edit_revision,
+                tracker_revision=self.revision_tracker.edit_revision,
+            )
             return False
         if not force and (
             not self.revision_tracker.is_dirty
             or self.revision_tracker.edit_revision
             <= self.revision_tracker.snapshot_revision
         ):
+            self._trace(
+                "snapshot-skipped",
+                reason="clean-or-no-new-revision",
+                edit_revision=self.revision_tracker.edit_revision,
+                snapshot_revision=self.revision_tracker.snapshot_revision,
+                dirty=self.revision_tracker.is_dirty,
+            )
             return False
 
         revision = state.edit_revision
@@ -116,49 +183,67 @@ class RecoveryManager(QObject):
         )
         validation = self.validator.validate_data(updated_manifest, state)
         if not validation.is_valid:
+            self._trace(
+                "snapshot-skipped",
+                reason="validation-failed",
+                validation_reason=validation.reason,
+            )
             return False
 
         try:
             current_pair = self._read_pair(directory, "current")
-        except OSError:
+        except OSError as error:
+            self._trace("snapshot-failed", stage="read-current", error=error)
             return False
         except (TypeError, ValueError):
             current_pair = None
+            self._trace("snapshot-history-reset", slot="current")
         try:
             previous_pair = self._read_pair(directory, "previous")
-        except OSError:
+        except OSError as error:
+            self._trace("snapshot-failed", stage="read-previous", error=error)
             return False
         except (TypeError, ValueError):
             previous_pair = None
+            self._trace("snapshot-history-reset", slot="previous")
         snapshot_tmp = None
         manifest_tmp = None
+        stage = "prepare"
         try:
+            stage = "temp_snapshot"
             self._before_stage("temp_snapshot")
             snapshot_tmp = self.snapshot_store.write_json_temp(
                 snapshot_path, asdict(state)
             )
+            stage = "temp_manifest"
             self._before_stage("temp_manifest")
             manifest_tmp = self.snapshot_store.write_json_temp(
                 manifest_path, asdict(updated_manifest)
             )
 
+            stage = "previous_to_older"
             self._before_stage("previous_to_older")
             if previous_pair is not None:
                 self._write_pair(directory, "older", *previous_pair)
 
+            stage = "current_to_previous"
             self._before_stage("current_to_previous")
             if current_pair is not None:
                 self._write_pair(directory, "previous", *current_pair)
 
+            stage = "before_current_publication"
             self._before_stage("before_current_publication")
+            stage = "current_snapshot_publication"
             self._before_stage("current_snapshot_publication")
             self.snapshot_store.publish_temp(snapshot_tmp, snapshot_path)
             snapshot_tmp = None
 
+            stage = "current_manifest_publication"
             self._before_stage("current_manifest_publication")
             self.snapshot_store.publish_temp(manifest_tmp, manifest_path)
             manifest_tmp = None
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError) as error:
+            self._trace("snapshot-failed", stage=stage, error=error)
             return False
         finally:
             for temporary in (snapshot_tmp, manifest_tmp):
@@ -171,10 +256,22 @@ class RecoveryManager(QObject):
         self._active_session = replace(self._active_session, manifest=updated_manifest)
         self.revision_tracker.record_snapshot_success(revision)
         self.snapshot_written.emit(self._active_session.session_id, revision)
+        self._trace(
+            "snapshot-written",
+            session_id=self._active_session.session_id,
+            project_id=updated_manifest.project_id,
+            revision=revision,
+            snapshot_path=snapshot_path,
+            manifest_path=manifest_path,
+            snapshot_exists=snapshot_path.exists(),
+            manifest_exists=manifest_path.exists(),
+        )
         return True
 
     def scan_candidates(self) -> list[RecoveryCandidate]:
+        self._trace("scan-start", sessions_dir=self.sessions_dir)
         if not self.sessions_dir.exists():
+            self._trace("scan-complete", candidate_count=0, reason="sessions-dir-missing")
             return []
         candidates = []
         for directory in self.sessions_dir.iterdir():
@@ -206,9 +303,24 @@ class RecoveryManager(QObject):
                     manifest.last_saved_revision, manifest.last_clean_revision
                 ):
                     candidates.append(RecoveryCandidate(manifest, snapshot, directory))
+                    self._trace(
+                        "candidate-found",
+                        session_id=manifest.session_id,
+                        project_id=manifest.project_id,
+                        project_file_path=manifest.project_file_path,
+                        revision=manifest.snapshot_revision,
+                        directory=directory,
+                    )
                     break
             if slot_present and not valid_pair_found:
+                self._trace(
+                    "candidate-invalid",
+                    session_id=directory.name,
+                    reason=last_error,
+                    directory=directory,
+                )
                 self.quarantine_session(directory.name, last_error)
+        self._trace("scan-complete", candidate_count=len(candidates))
         return candidates
 
     def invalidate_snapshot_at_clean_point(self, clean_revision: int) -> None:
@@ -231,8 +343,23 @@ class RecoveryManager(QObject):
     ) -> RecoveryValidationResult:
         result = self.validator.validate_data(candidate.manifest, candidate.snapshot)
         if not result.is_valid:
+            self._trace(
+                "candidate-validation-failed",
+                session_id=candidate.manifest.session_id,
+                project_id=candidate.manifest.project_id,
+                reason=result.reason,
+            )
             return result
-        return self.validator.validate_source(candidate.manifest, actual_source_info)
+        result = self.validator.validate_source(candidate.manifest, actual_source_info)
+        self._trace(
+            "candidate-validated",
+            session_id=candidate.manifest.session_id,
+            project_id=candidate.manifest.project_id,
+            valid=result.is_valid,
+            source_matches=result.source_matches,
+            source_reason=result.source_reason,
+        )
+        return result
 
     def handoff_recovered_state(
         self,
@@ -240,6 +367,12 @@ class RecoveryManager(QObject):
         recovered_state: RecoveryWorkingState,
         new_context: RecoveryContext,
     ) -> RecoverySession:
+        self._trace(
+            "restore-handoff-start",
+            old_session_id=old_candidate.manifest.session_id,
+            project_id=old_candidate.manifest.project_id,
+            revision=recovered_state.edit_revision,
+        )
         result = self.validate_candidate(old_candidate)
         if not result.is_valid:
             raise ValueError(result.reason)
@@ -255,15 +388,27 @@ class RecoveryManager(QObject):
             if isinstance(committed, int) and committed != state.edit_revision:
                 raise OSError("recovered snapshot revision was not committed")
         except (OSError, TypeError, ValueError):
+            self._trace(
+                "restore-handoff-failed",
+                old_session_id=old_candidate.manifest.session_id,
+                new_session_id=new_session.session_id,
+            )
             self.discard_session(new_session.session_id)
             raise
         self.discard_session(old_candidate.manifest.session_id)
+        self._trace(
+            "restore-handoff-complete",
+            old_session_id=old_candidate.manifest.session_id,
+            new_session_id=new_session.session_id,
+            project_id=new_context.project_id,
+            revision=recovered_state.edit_revision,
+        )
         return new_session
 
-    def record_explicit_save(self) -> None:
+    def record_explicit_save(self, revision: int | None = None) -> None:
         if self._active_session is None:
             return
-        revision = self.revision_tracker.edit_revision
+        revision = self.revision_tracker.edit_revision if revision is None else revision
         manifest = replace(
             self._active_session.manifest,
             edit_revision=revision,
@@ -277,7 +422,6 @@ class RecoveryManager(QObject):
             self._active_session.directory / "manifest.json", asdict(manifest)
         )
         self._remove_snapshot_history(self._active_session.directory)
-        self.revision_tracker.record_explicit_save_success()
         self._active_session = replace(self._active_session, manifest=manifest)
 
     def release_active_session_for_switch(self) -> None:

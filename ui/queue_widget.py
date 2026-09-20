@@ -48,28 +48,30 @@ class QueueWidget(QWidget):
             self.list_layout.removeWidget(widget)
             widget.deleteLater()
 
-        for vid_path, data in queue_items.items():
+        for item_key, data in queue_items.items():
+            vid_path = data.get("video_path", item_key)
             status = data.get("status", "Waiting")
             has_srt = bool(data.get("srt_path"))
             meta = data.get("metadata")
             duration = meta.get("duration", "--:--:--") if meta else "--:--:--"
 
-            if vid_path not in self._items:
-                item_widget = QueueItemWidget(vid_path, status, has_srt, duration)
+            if item_key not in self._items:
+                item_widget = QueueItemWidget(item_key, vid_path, status, has_srt, duration)
                 item_widget.clicked_signal.connect(self.item_clicked.emit)
                 item_widget.remove_signal.connect(self.item_removed.emit)
                 self.list_layout.addWidget(item_widget)
-                self._items[vid_path] = item_widget
+                self._items[item_key] = item_widget
             else:
-                self._items[vid_path].update_details_text(status, has_srt, duration)
+                self._items[item_key].update_details_text(status, has_srt, duration)
 
-            self._items[vid_path].set_active(vid_path == active_vid)
+            self._items[item_key].set_active(item_key == active_vid)
 
         if active_vid and active_vid in queue_items:
+            active_data = queue_items[active_vid]
             self.info_panel.update_info(
-                active_vid, 
-                queue_items[active_vid].get("metadata"), 
-                queue_items[active_vid].get("srt_path")
+                active_data.get("video_path", active_vid),
+                active_data.get("metadata"),
+                active_data.get("srt_path")
             )
         else:
             self.info_panel.clear_info()

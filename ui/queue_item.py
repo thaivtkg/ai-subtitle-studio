@@ -10,8 +10,17 @@ class QueueItemWidget(QFrame):
     clicked_signal = Signal(str)
     remove_signal = Signal(str)
 
-    def __init__(self, vid_path, status, has_srt, duration, parent=None):
+    def __init__(self, item_key, *args, parent=None):
         super().__init__(parent)
+        if len(args) == 3:
+            # Preserve the public four-argument constructor used by older UI tests/callers.
+            vid_path = item_key
+            status, has_srt, duration = args
+        elif len(args) == 4:
+            vid_path, status, has_srt, duration = args
+        else:
+            raise TypeError("QueueItemWidget expects legacy or bound-item arguments")
+        self.item_key = item_key
         self.vid_path = vid_path
         self.is_active = False
 
@@ -47,7 +56,7 @@ class QueueItemWidget(QFrame):
             QPushButton {{ background: transparent; color: {Theme.TEXT_MUTED}; font-weight: bold; border: none; font-size: 14px; border-radius: 4px; }}
             QPushButton:hover {{ color: #FFFFFF; background: {Theme.DANGER}; }}
         """)
-        self.btn_remove.clicked.connect(lambda: self.remove_signal.emit(self.vid_path))
+        self.btn_remove.clicked.connect(lambda: self.remove_signal.emit(self.item_key))
         
         top_layout.addWidget(self.lbl_name, stretch=1)
         top_layout.addWidget(self.btn_remove)
@@ -109,5 +118,5 @@ class QueueItemWidget(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked_signal.emit(self.vid_path)
+            self.clicked_signal.emit(self.item_key)
         super().mousePressEvent(event)
