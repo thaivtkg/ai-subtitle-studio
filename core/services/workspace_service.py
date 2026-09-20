@@ -96,10 +96,23 @@ class WorkspaceService:
         try:
             import os
             video_path = os.path.normpath(project.source.path)
-            
+
             if os.path.exists(video_path):
-                if video_path not in self.ui.queue_mgr.get_items():
-                    self.ui.queue_mgr.add_video(video_path)
+                ensure_binding = getattr(
+                    self.ui.queue_mgr, "ensure_project_binding", None
+                )
+                if ensure_binding:
+                    item_key = ensure_binding(
+                        video_path,
+                        project_id=project.project_id,
+                        project_root=self.project_service.project_dir,
+                    )
+                else:
+                    item_key = video_path
+                    if video_path not in self.ui.queue_mgr.get_items():
+                        self.ui.queue_mgr.add_video(video_path)
+                if item_key is None:
+                    raise RuntimeError("Không thể bind video vào project đang mở.")
                 
                 # --- [S7-FIX-03] TRUY VẤN ARTIFACT TỪ KHO BẰNG ID, KHÔNG QUÉT ĐĨA ---
                 active_art_id = project.state.active_artifact_id
@@ -109,14 +122,18 @@ class WorkspaceService:
                     artifact = self.project_service.artifact_store.get(active_art_id)
                     if artifact and os.path.exists(artifact.path):
                         target_artifact_path = os.path.normpath(artifact.path)
-                        self.ui.queue_mgr.set_srt_for_video(video_path, target_artifact_path)
+                        self.ui.queue_mgr.set_srt_for_video(item_key, target_artifact_path)
                         print(f"[DEBUG] Đã resolve Artifact ID {active_art_id} -> {target_artifact_path}")
                     else:
                         print(f"[WARN] Artifact ID '{active_art_id}' không tìm thấy trên ổ đĩa!")
                 # ------------------------------------------------------------------
 
                 # Kích hoạt UI qua Queue Manager
-                self.ui.on_queue_item_clicked(video_path)
+                self.ui.on_queue_item_clicked(
+                    item_key,
+                    project_id=project.project_id,
+                    project_root=self.project_service.project_dir,
+                )
                 
                 # Ép nạp thẳng vào Editor
                 if target_artifact_path:

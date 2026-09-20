@@ -253,6 +253,20 @@ class ProjectService:
             os.path.abspath(video_path)
         )
 
+    def is_current_project_identity(self, project_id=None, project_root=None) -> bool:
+        """Return whether the open project matches an explicit Queue identity."""
+        if not self.current_project:
+            return False
+        if project_id is not None and self.current_project.project_id != project_id:
+            return False
+        if project_root is not None and not self.project_dir:
+            return False
+        if project_root is not None and os.path.normcase(os.path.abspath(self.project_dir)) != os.path.normcase(
+            os.path.abspath(project_root)
+        ):
+            return False
+        return project_id is not None or project_root is not None
+
     def requires_project_switch(
         self, video_path: str, fresh_project: bool = False
     ) -> bool:

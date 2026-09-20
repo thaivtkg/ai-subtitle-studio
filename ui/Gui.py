@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
         self._queue_project_dirs = {}
         self.queue_mgr.queue_updated.connect(self.on_queue_updated)
         self.queue_mgr.active_changed.connect(
-            lambda vid: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), vid) if hasattr(self, 'queue_ui') else None
+            lambda item_key: self.queue_ui.sync_with_manager(self.queue_mgr.get_items(), item_key) if hasattr(self, 'queue_ui') else None
         )
         self.queue_mgr.item_removed.connect(self.on_queue_item_removed_handler)
         self.setAcceptDrops(True)
@@ -1379,6 +1379,29 @@ class MainWindow(QMainWindow):
                 self.queue_mgr.set_srt_for_video(vid, srt)
                 self.on_queue_item_clicked(vid)
 
+    def _queue_project_identity_matches(self, project_id=None, project_root=None):
+        identity_method = getattr(type(self.project_service), "is_current_project_identity", None)
+        if identity_method is not None:
+            return bool(
+                self.project_service.is_current_project_identity(
+                    project_id, project_root
+                )
+            )
+
+        current = getattr(self.project_service, "current_project", None)
+        if current is None:
+            return False
+        if project_id is not None and getattr(current, "project_id", None) != project_id:
+            return False
+        if project_root is not None:
+            current_root = getattr(self.project_service, "project_dir", None)
+            if not current_root:
+                return False
+            return os.path.normcase(os.path.abspath(current_root)) == os.path.normcase(
+                os.path.abspath(project_root)
+            )
+        return project_id is not None
+
     def clear_files(self):
         flush = getattr(self, "_flush_canonical_save_before_clear_queue", None)
         if flush:
@@ -1416,7 +1439,7 @@ class MainWindow(QMainWindow):
 
     def on_queue_updated(self):
         items = self.queue_mgr.get_items()
-        self.queue_ui.sync_with_manager(items, self.queue_mgr.active_vid)
+        self.queue_ui.sync_with_manager(items, self.queue_mgr.active_item_key)
         count = len(items)
         self.page_dashboard.lbl_queue_overview.setText(f"Queue: {count} videos loaded | Output: {self.out_input.text() or 'Default'}")
         
@@ -1432,22 +1455,75 @@ class MainWindow(QMainWindow):
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
 
-    def on_queue_item_clicked(self, vid_path, fresh_project=False):
+    def on_queue_item_clicked(
+        self, item_ref, fresh_project=False, project_id=None, project_root=None
+    ):
         # Queue items can arrive through Drag & Drop without going through
         # the New Project dialog. SubtitleGenerationService requires a
         # project because its checkpoint and canonical artifact live there.
-        if fresh_project:
-            self._queue_project_dirs.pop(vid_path, None)
+        queue_data = {}
+        if hasattr(self.queue_mgr, "get_item"):
+            candidate = self.queue_mgr.get_item(item_ref)
+            if isinstance(candidate, dict):
+                queue_data = candidate
+        if not queue_data:
+            items = self.queue_mgr.get_items()
+            if isinstance(items, dict):
+                queue_data = items.get(item_ref, {})
+        vid_path = queue_data.get("video_path", item_ref)
 
-        requires_switch = self.project_service.requires_project_switch(
-            vid_path, fresh_project=fresh_project
+        bound_project_id = (
+            project_id if project_id is not None else queue_data.get("project_id")
         )
+        bound_project_root = (
+            project_root if project_root is not None else queue_data.get("project_root")
+        )
+
+        if fresh_project:
+            self._queue_project_dirs.pop(item_ref, None)
+            self._queue_project_dirs.pop(vid_path, None)
+            bound_project_id = None
+            bound_project_root = None
+
+        project_dir = self._queue_project_dirs.get(item_ref)
+        if project_dir is None:
+            project_dir = self._queue_project_dirs.get(vid_path)
+
+        # If a legacy item was reconstructed while its explicit project is
+        # already active, bind it now instead of rediscovering by video name.
+        if (
+            not fresh_project
+            and bound_project_id is None
+            and bound_project_root is None
+            and project_dir is None
+            and getattr(type(self.project_service), "is_current_project_for_video", None)
+            is not None
+            and self.project_service.is_current_project_for_video(vid_path)
+        ):
+            bound_project_id = self.project_service.current_project.project_id
+            bound_project_root = self.project_service.project_dir
+
+        if bound_project_root is not None:
+            project_dir = bound_project_root
+            requires_switch = not self._queue_project_identity_matches(
+                bound_project_id, bound_project_root
+            )
+        elif bound_project_id is not None:
+            requires_switch = not self._queue_project_identity_matches(
+                bound_project_id, None
+            )
+        elif project_dir:
+            requires_switch = not self._queue_project_identity_matches(
+                None, project_dir
+            )
+        else:
+            requires_switch = True
+
         if requires_switch:
             if not self._prepare_recovery_session_switch():
                 return
             file_name = os.path.basename(vid_path)
             output_dir = self.out_input.text().strip() or os.path.dirname(vid_path)
-            project_dir = self._queue_project_dirs.get(vid_path)
 
             try:
                 if fresh_project:
@@ -1458,6 +1534,10 @@ class MainWindow(QMainWindow):
                         uuid.uuid4().hex[:8],
                     )
                     project_dir = self.project_service.project_dir
+                elif bound_project_id is not None and not project_dir:
+                    raise FileNotFoundError(
+                        "Queue item có project_id nhưng thiếu project_root để mở dự án chính xác."
+                    )
                 elif project_dir and os.path.exists(project_dir):
                     self.project_service.open_project(project_dir)
                 else:
@@ -1475,7 +1555,16 @@ class MainWindow(QMainWindow):
                         self.project_service.open_project(project_dir)
                 self._complete_recovery_session_switch(reset_tracker=False)
                 self._sync_subtitle_placement_from_project()
-                self._queue_project_dirs[vid_path] = project_dir
+                if hasattr(self.queue_mgr, "bind_project"):
+                    bound_key = self.queue_mgr.bind_project(
+                        item_ref,
+                        self.project_service.current_project.project_id,
+                        self.project_service.project_dir,
+                    )
+                    if bound_key is not None:
+                        item_ref = bound_key
+                self._queue_project_dirs[item_ref] = self.project_service.project_dir
+                self._queue_project_dirs[vid_path] = self.project_service.project_dir
                 self.generation_panel.check_resumable_state()
                 self._refresh_transcription_context_views()
                 self.append_log(
@@ -1489,7 +1578,7 @@ class MainWindow(QMainWindow):
                     f"❌ [LỖI] Không thể tự động tạo/nạp dự án: {exc}"
                 )
 
-        self.queue_mgr.set_active(vid_path)
+        self.queue_mgr.set_active(item_ref)
 
         _, srt_path = self.queue_mgr.get_active_data()
         self.video_player.load_video(vid_path)
@@ -1512,7 +1601,11 @@ class MainWindow(QMainWindow):
             # [FIX REVIEW 1] Luồng này giờ chỉ thuần túy xử lý audio, tuyệt đối không chạm vào UI State
             print(f"[DEBUG-WAVEFORM] Bắt đầu nạp sóng âm cho: {vid_path}")
             try:
-                video_data = self.queue_mgr.get_items().get(vid_path, {})
+                video_data = {}
+                if hasattr(self.queue_mgr, "get_item"):
+                    video_data = self.queue_mgr.get_item(item_ref) or {}
+                if not video_data:
+                    video_data = self.queue_mgr.get_items().get(item_ref, {})
                 duration_sec = video_data.get('duration', 0)
                 duration_ms = int(duration_sec * 1000)
 
@@ -1566,7 +1659,8 @@ class MainWindow(QMainWindow):
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
         elif self.queue_mgr.active_vid:
-            self.on_queue_item_clicked(self.queue_mgr.active_vid)
+            active_ref = getattr(self.queue_mgr, "active_item_key", None)
+            self.on_queue_item_clicked(active_ref or self.queue_mgr.active_vid)
 
     def _load_draft_from_center(self, draft_path, silent=False):
         if not draft_path or not os.path.exists(draft_path):
@@ -1577,10 +1671,11 @@ class MainWindow(QMainWindow):
         base_key = draft_filename.replace(".ai-subtitle-draft", "").replace("_timing", "")
         
         target_vid = None
-        for vid in self.queue_mgr.get_items():
+        for item_key, data in self.queue_mgr.get_items().items():
+            vid = data.get("video_path", item_key)
             vid_name = os.path.splitext(os.path.basename(vid))[0]
             if vid_name == base_key or vid_name.startswith(base_key) or base_key.startswith(vid_name):
-                target_vid = vid
+                target_vid = item_key
                 break
 
         if not target_vid:
@@ -1590,7 +1685,7 @@ class MainWindow(QMainWindow):
         self.queue_mgr.set_active(target_vid)
         self.queue_mgr.set_srt_for_video(target_vid, draft_path)
 
-        self.video_player.load_video(target_vid)
+        self.video_player.load_video(self.queue_mgr.get_active_data()[0])
         self.sub_editor.load_draft_file(draft_path)
         self.video_player.sub_controller.load_srt(draft_path)
         if getattr(self, "quality_inspector_panel", None):
