@@ -1,7 +1,9 @@
 import unittest
 from dataclasses import replace
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from pathlib import Path
 
 from core.recovery.recovery_models import (
     RecoveryCandidate,
@@ -95,9 +97,13 @@ class _RecoveryManager:
             source_reason=self.entry.source_status,
         )
 
+    def release_active_session_for_switch(self):
+        self.events.append("release-a")
+
     def handoff_recovered_state(self, *_args, **_kwargs):
         self.events.append("handoff")
         self.handoff_called = True
+        return SimpleNamespace(session_id="session-b")
 
 
 class RecoveryCenterOrchestrationContract(unittest.TestCase):
@@ -106,12 +112,16 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
 
         self.MainWindow = MainWindow
         self.events = []
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.video_path = Path(self.temp_dir.name) / "shared.mp4"
+        self.video_path.write_bytes(b"shared-video")
         self.target_project = SimpleNamespace(project_id="project-b")
         self.entry = RecoveryEntry(
             session_id="recovery-b",
             project_id="project-b",
             project_root="D:/project-b.ai-subtitle",
-            video_path="D:/shared.mp4",
+            video_path=str(self.video_path),
             effective_snapshot_timestamp="2026-09-21T00:00:02+00:00",
             created_at="2026-09-21T00:00:01+00:00",
             snapshot_revision=7,
@@ -126,7 +136,7 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
             session_id="recovery-b",
             project_id="project-b",
             project_file_path="D:/project-b.ai-subtitle",
-            video_path="D:/shared.mp4",
+            video_path=str(self.video_path),
             source_fingerprint="fp-b",
             edit_revision=7,
             segments=[{"id": "b-1", "stt": "1", "text": "Recovered B"}],
@@ -147,7 +157,13 @@ class RecoveryCenterOrchestrationContract(unittest.TestCase):
         window.recovery_manager = _RecoveryManager(
             self.events, self.entry, self.state
         )
-        window.autosave_coordinator = SimpleNamespace()
+        window.autosave_coordinator = SimpleNamespace(
+            clear_session=MagicMock(side_effect=lambda: self.events.append("clear-a")),
+            bind_session=MagicMock(side_effect=lambda session_id: self.events.append(f"bind:{session_id}")),
+        )
+        window.canonical_save_coordinator.cancel_pending = MagicMock(
+            side_effect=lambda: self.events.append("cancel-canonical")
+        )
         window.revision_tracker = SimpleNamespace(
             edit_revision=7,
             snapshot_revision=7,
