@@ -1737,8 +1737,31 @@ class MainWindow(QMainWindow):
         if item_key is None:
             return False
         was_active = item_key == getattr(self.queue_mgr, "active_item_key", None)
-        if was_active and not MainWindow._flush_canonical_save_before_transition(self):
-            return False
+        if was_active:
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical is not None and canonical.enabled:
+                if not self._flush_canonical_save_before_transition():
+                    return False
+            else:
+                sub_editor = getattr(self, "sub_editor", None)
+                commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+                if commit_pending_edit:
+                    commit_pending_edit()
+                tracker = getattr(self, "revision_tracker", None)
+                if tracker is not None and tracker.is_dirty:
+                    project = getattr(self.project_service, "current_project", None)
+                    project_name = getattr(project, "name", "hiện tại")
+                    reply = QMessageBox.question(
+                        self,
+                        "Lưu thay đổi?",
+                        f"Dự án '{project_name}' có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi xóa khỏi hàng đợi không?",
+                        QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                        QMessageBox.Save,
+                    )
+                    if reply == QMessageBox.Cancel:
+                        return False
+                    if reply == QMessageBox.Save and not self.action_save_project():
+                        return False
 
         self._queue_removal_was_active = was_active
         try:
