@@ -31,6 +31,23 @@ foreach ($file in $RequiredFiles) {
     }
 }
 
+# These exact root-level files were verified as Poppler ICU binaries and
+# conflict with the bundled PySide6/Qt runtime.  Do not blanket-ban ICU DLLs:
+# only reject the unsafe output paths known to cause the loader collision.
+$UnsafePopplerIcuFiles = @(
+    "$DistDir\icuuc.dll",
+    "$DistDir\icudt78.dll"
+)
+
+foreach ($file in $UnsafePopplerIcuFiles) {
+    if (Test-Path $file) {
+        Write-Host "[UNSAFE] Poppler ICU collision binary in bundle root: $file" -ForegroundColor Red
+        $HasError = $true
+    } else {
+        Write-Host "[OK] Khong co Poppler ICU collision binary tai: $file" -ForegroundColor Green
+    }
+}
+
 if ($HasError) {
     Write-Host "`nBan build CHUA DAT chuan dong goi. Vui long kiem tra lai file spec!" -ForegroundColor Red
     exit 1
