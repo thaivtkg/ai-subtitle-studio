@@ -97,6 +97,7 @@ from ui.tutorial.interaction_observer import InteractionObserverAdapter
 from ui.tutorial.navigation_adapter import MainWindowRouter, NavigationAdapter
 from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
 from ui.pages.settings_page import SettingsCenterPage
+from ui.project_status import format_project_status
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
@@ -360,6 +361,15 @@ class MainWindow(QMainWindow):
         self.lbl_page_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; border: none;")
         topbar_layout.addWidget(self.lbl_page_title)
         topbar_layout.addStretch()
+
+        self.lbl_project_status = QLabel("No Project")
+        self.lbl_project_status.setObjectName("lbl_project_status")
+        self.lbl_project_status.setMaximumWidth(280)
+        self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_project_status.setStyleSheet(
+            f"font-size: 11px; color: {Theme.TEXT_SECONDARY}; border: none;"
+        )
+        topbar_layout.addWidget(self.lbl_project_status)
 
         self.btn_minimize = QPushButton("—")
         self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
@@ -1308,13 +1318,35 @@ class MainWindow(QMainWindow):
     def _update_canonical_save_status(self):
         coordinator = getattr(self, "canonical_save_coordinator", None)
         label = getattr(self, "canonical_save_status_label", None)
-        if coordinator is None or label is None:
+        if coordinator is None:
             return
-        text = f"Auto Save · {coordinator.status_text()}"
         countdown = coordinator.countdown_text()
+        status = coordinator.status_text()
+        text = f"Auto Save · {status}"
         if countdown:
             text += f" · {countdown}"
-        label.setText(text)
+        if label is not None:
+            label.setText(text)
+
+        project_service = getattr(self, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        project_root = getattr(project_service, "project_dir", None)
+        project_status = format_project_status(
+            project,
+            countdown or status,
+            project_root=project_root,
+        )
+        project_label = getattr(self, "lbl_project_status", None)
+        if project_label is not None:
+            project_label.setToolTip(project_status)
+            available_width = project_label.width() or project_label.maximumWidth()
+            project_label.setText(
+                project_label.fontMetrics().elidedText(
+                    project_status,
+                    Qt.TextElideMode.ElideMiddle,
+                    available_width,
+                )
+            )
     def on_motion_preset_changed(self):
         preset = self.page_settings.motion_preset_combo.currentData()
         
