@@ -105,6 +105,69 @@ class ProjectStatusTitlebarIntegration(unittest.TestCase):
         self.assertEqual(label.toolTip(), full_text)
         self.assertLessEqual(label.maximumWidth(), 280)
 
+    def test_PSI06_short_name_never_progressively_elides(self):
+        project = SimpleNamespace(name="da", project_id="project-da")
+        label = self.window.lbl_project_status
+        label.resize(24, label.height())
+
+        for _ in range(30):
+            self.refresh(project, r"D:\Temp\da.ai-subtitle")
+            self.assertEqual(label.text(), "da · Saved")
+
+    def test_PSI07_repeated_project_switch_presentation_is_stable(self):
+        projects = (
+            SimpleNamespace(name="Project A", project_id="project-a"),
+            SimpleNamespace(name="Project B", project_id="project-b"),
+        )
+        label = self.window.lbl_project_status
+        label.resize(32, label.height())
+
+        for index in range(40):
+            project = projects[index % 2]
+            for _ in range(3):
+                self.refresh(
+                    project,
+                    rf"D:\Temp\{project.name}.ai-subtitle",
+                )
+                self.assertEqual(
+                    self.window.lbl_project_status.text(),
+                    f"{project.name} · Saved",
+                )
+
+    def test_PSI08_long_name_elision_is_stable(self):
+        project = SimpleNamespace(
+            name="Very_Long_Project_Name_For_Layout_Validation",
+            project_id="project-long",
+        )
+        full_text = f"{project.name} · Saved"
+        self.refresh(project, r"D:\Temp\long.ai-subtitle")
+        visible = self.window.lbl_project_status.text()
+        self.window.lbl_project_status.resize(40, self.window.lbl_project_status.height())
+
+        for _ in range(30):
+            self.refresh(project, r"D:\Temp\long.ai-subtitle")
+            current = self.window.lbl_project_status.text()
+            self.assertIn("…", current)
+            self.assertEqual(self.window.lbl_project_status.toolTip(), full_text)
+            self.assertEqual(current, visible)
+
+    def test_PSI09_clear_queue_immediately_presents_no_project(self):
+        project = SimpleNamespace(name="Project A", project_id="project-a")
+        self.project_service.current_project = project
+        self.project_service.project_dir = r"D:\Temp\Project A.ai-subtitle"
+
+        def close_project():
+            self.project_service.current_project = None
+            self.project_service.project_dir = None
+
+        self.project_service.close_project.side_effect = close_project
+        self.window.recovery_manager.finalize_clean_shutdown = MagicMock()
+        self.window.clear_files()
+
+        self.assertIsNone(self.project_service.current_project)
+        self.assertIsNone(self.project_service.project_dir)
+        self.assertEqual(self.window.lbl_project_status.text(), "No Project")
+
 
 if __name__ == "__main__":
     unittest.main()
