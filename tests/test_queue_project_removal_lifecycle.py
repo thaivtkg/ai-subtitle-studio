@@ -1,11 +1,12 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QMessageBox
 
 from core.queue_manager import QueueManager
 from ui.Gui import MainWindow
@@ -33,6 +34,7 @@ class QueueProjectRemovalLifecycle(unittest.TestCase):
             _queue_project_dirs={},
             project_service=project_service,
             revision_tracker=MagicMock(),
+            action_save_project=MagicMock(return_value=True),
             autosave_coordinator=MagicMock(),
             canonical_save_coordinator=SimpleNamespace(
                 enabled=True,
@@ -54,6 +56,7 @@ class QueueProjectRemovalLifecycle(unittest.TestCase):
             on_queue_item_clicked=MagicMock(),
             _update_canonical_save_status=MagicMock(),
         )
+        window._flush_canonical_save_before_transition = lambda: MainWindow._flush_canonical_save_before_transition(window)
         queue.item_removed.connect(
             lambda item_key: MainWindow.on_queue_item_removed_handler(window, item_key)
         )
@@ -133,6 +136,99 @@ class QueueProjectRemovalLifecycle(unittest.TestCase):
         self.assertEqual(window.project_service.current_project.project_id, "A")
         window.sub_editor.commit_pending_edit.assert_called_once_with()
         window.on_queue_item_clicked.assert_not_called()
+
+    def test_QR05_autosave_off_dirty_cancel_aborts_remove(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = True
+        window.canonical_save_coordinator.enabled = False
+
+        with patch("ui.Gui.QMessageBox.question", return_value=QMessageBox.Cancel):
+            self.assertFalse(MainWindow._on_queue_remove_requested(window, "A"))
+
+        self.assertIn("A", window.queue_mgr.get_items())
+        self.assertEqual(window.project_service.current_project.project_id, "A")
+        window.project_service.close_project.assert_not_called()
+        window.action_save_project.assert_not_called()
+
+    def test_QR06_autosave_off_dirty_save_success_allows_remove(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = True
+        window.canonical_save_coordinator.enabled = False
+
+        with patch("ui.Gui.QMessageBox.question", return_value=QMessageBox.Save):
+            self.assertTrue(MainWindow._on_queue_remove_requested(window, "A"))
+
+        window.action_save_project.assert_called_once_with()
+        self.assertNotIn("A", window.queue_mgr.get_items())
+        self.assertIsNone(window.project_service.current_project)
+
+    def test_QR07_autosave_off_dirty_save_failure_aborts_remove(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = True
+        window.canonical_save_coordinator.enabled = False
+        window.action_save_project.return_value = False
+
+        with patch("ui.Gui.QMessageBox.question", return_value=QMessageBox.Save):
+            self.assertFalse(MainWindow._on_queue_remove_requested(window, "A"))
+
+        window.action_save_project.assert_called_once_with()
+        self.assertIn("A", window.queue_mgr.get_items())
+        self.assertEqual(window.project_service.current_project.project_id, "A")
+        window.project_service.close_project.assert_not_called()
+
+    def test_QR08_autosave_off_dirty_discard_allows_remove(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = True
+        window.canonical_save_coordinator.enabled = False
+
+        with patch("ui.Gui.QMessageBox.question", return_value=QMessageBox.Discard):
+            self.assertTrue(MainWindow._on_queue_remove_requested(window, "A"))
+
+        window.action_save_project.assert_not_called()
+        self.assertNotIn("A", window.queue_mgr.get_items())
+
+    def test_QR09_autosave_off_clean_does_not_prompt(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = False
+        window.canonical_save_coordinator.enabled = False
+
+        with patch("ui.Gui.QMessageBox.question") as question:
+            self.assertTrue(MainWindow._on_queue_remove_requested(window, "A"))
+
+        question.assert_not_called()
+        self.assertNotIn("A", window.queue_mgr.get_items())
+
+    def test_QR10_non_active_remove_does_not_prompt_or_save_dirty_active(self):
+        window = self.make_window()
+        self.add_item(window, "A", "A")
+        self.add_item(window, "B", "B")
+        window.queue_mgr.active_item_key = "A"
+        window.queue_mgr.active_vid = r"D:\Temp\A.mp4"
+        window.revision_tracker.is_dirty = True
+        window.canonical_save_coordinator.enabled = False
+
+        with patch("ui.Gui.QMessageBox.question") as question:
+            self.assertTrue(MainWindow._on_queue_remove_requested(window, "B"))
+
+        question.assert_not_called()
+        window.action_save_project.assert_not_called()
+        self.assertNotIn("B", window.queue_mgr.get_items())
+        self.assertEqual(window.project_service.current_project.project_id, "A")
 
 
 if __name__ == "__main__":
