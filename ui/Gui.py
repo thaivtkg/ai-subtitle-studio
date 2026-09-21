@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_project_status = QLabel("No Project")
         self.lbl_project_status.setObjectName("lbl_project_status")
-        self.lbl_project_status.setMaximumWidth(280)
+        self.lbl_project_status.setFixedWidth(280)
         self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_project_status.setStyleSheet(
             f"font-size: 11px; color: {Theme.TEXT_SECONDARY}; border: none;"
@@ -635,7 +635,7 @@ class MainWindow(QMainWindow):
         queue_layout.setContentsMargins(8, 8, 8, 8)
         self.queue_ui = QueueWidget()
         self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
-        self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
+        self.queue_ui.item_removed.connect(self._on_queue_remove_requested)
         queue_layout.addWidget(self.queue_ui)
         self.stack.addWidget(self.page_queue)
 
@@ -1339,7 +1339,7 @@ class MainWindow(QMainWindow):
         project_label = getattr(self, "lbl_project_status", None)
         if project_label is not None:
             project_label.setToolTip(project_status)
-            available_width = project_label.width() or project_label.maximumWidth()
+            available_width = project_label.contentsRect().width()
             project_label.setText(
                 project_label.fontMetrics().elidedText(
                     project_status,
@@ -1515,6 +1515,9 @@ class MainWindow(QMainWindow):
             coordinator.clear_session()
         if getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
+        refresh_status = getattr(self, "_update_canonical_save_status", None)
+        if callable(refresh_status):
+            refresh_status()
 
     def select_output_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu kết quả")
@@ -1729,6 +1732,21 @@ class MainWindow(QMainWindow):
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
+    def _on_queue_remove_requested(self, item_ref):
+        item_key = self.queue_mgr.get_item_key(item_ref)
+        if item_key is None:
+            return False
+        was_active = item_key == getattr(self.queue_mgr, "active_item_key", None)
+        if was_active and not MainWindow._flush_canonical_save_before_transition(self):
+            return False
+
+        self._queue_removal_was_active = was_active
+        try:
+            self.queue_mgr.remove_video(item_key)
+        finally:
+            self._queue_removal_was_active = False
+        return True
+
     def on_queue_item_removed_handler(self, vid_path):
         self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
@@ -1736,6 +1754,14 @@ class MainWindow(QMainWindow):
             coordinator = getattr(self, "autosave_coordinator", None)
             if coordinator:
                 coordinator.clear_session()
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical:
+                canonical.cancel_pending()
+            self.project_service.close_project()
+            self.revision_tracker.reset_for_new_document()
+            recovery_manager = getattr(self, "recovery_manager", None)
+            if recovery_manager:
+                recovery_manager.finalize_clean_shutdown()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -1743,9 +1769,15 @@ class MainWindow(QMainWindow):
             self.video_player.sub_controller.load_srt(None)
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
-        elif self.queue_mgr.active_vid:
+        elif (
+            getattr(self, "_queue_removal_was_active", False)
+            and self.queue_mgr.active_vid
+        ):
             active_ref = getattr(self.queue_mgr, "active_item_key", None)
             self.on_queue_item_clicked(active_ref or self.queue_mgr.active_vid)
+        refresh_status = getattr(self, "_update_canonical_save_status", None)
+        if callable(refresh_status):
+            refresh_status()
 
     def _load_draft_from_center(self, draft_path, silent=False):
         if not draft_path or not os.path.exists(draft_path):
