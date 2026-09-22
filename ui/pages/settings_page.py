@@ -179,6 +179,28 @@ class SettingsCenterPage(QWidget):
         l_g.addWidget(self.canonical_autosave_checkbox)
         l_g.addWidget(QLabel("Save delay:"))
         l_g.addWidget(self.canonical_autosave_delay_combo)
+
+        l_g.addWidget(QLabel("Debug Logging"))
+        l_g.addWidget(
+            QLabel("Debug logs are session-only and reset when the app restarts.")
+        )
+        self.chk_debug_logging_master = QCheckBox("Master Debug Logging")
+        l_g.addWidget(self.chk_debug_logging_master)
+        self.chk_debug_recovery = QCheckBox("Recovery")
+        self.chk_debug_canonical_save = QCheckBox("Canonical Save")
+        self.chk_debug_project_switch = QCheckBox("Project Switch")
+        self.chk_debug_project_status = QCheckBox("Project Status")
+        self.chk_debug_waveform = QCheckBox("Waveform")
+        self.chk_debug_artifact_sync = QCheckBox("Artifact Sync")
+        for checkbox in (
+            self.chk_debug_recovery,
+            self.chk_debug_canonical_save,
+            self.chk_debug_project_switch,
+            self.chk_debug_project_status,
+            self.chk_debug_waveform,
+            self.chk_debug_artifact_sync,
+        ):
+            l_g.addWidget(checkbox)
         l_gen.addWidget(card_gen)
         l_gen.addStretch()
         self.stack.addWidget(page_gen)

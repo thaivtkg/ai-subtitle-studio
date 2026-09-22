@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QSignalBlocker,
     QSize,
     Qt,
     QTimer,
@@ -151,6 +152,14 @@ class _QtScheduler:
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
+    _DEBUG_CATEGORY_CONTROLS = (
+        ("recovery", "chk_debug_recovery"),
+        ("canonical_save", "chk_debug_canonical_save"),
+        ("project_switch", "chk_debug_project_switch"),
+        ("project_status", "chk_debug_project_status"),
+        ("waveform", "chk_debug_waveform"),
+        ("artifact_sync", "chk_debug_artifact_sync"),
+    )
 
     def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None,
                  parent=None, project_service=None, media_import_service=None,
@@ -668,7 +677,17 @@ class MainWindow(QMainWindow):
         self.page_settings.canonical_autosave_delay_combo.currentIndexChanged.connect(
             self._on_canonical_autosave_delay_changed
         )
+        self.page_settings.chk_debug_logging_master.stateChanged.connect(
+            self._on_debug_master_changed
+        )
+        for category, control_name in self._DEBUG_CATEGORY_CONTROLS:
+            getattr(self.page_settings, control_name).stateChanged.connect(
+                lambda state, category=category: self._on_debug_category_changed(
+                    category, state
+                )
+            )
         self.stack.addWidget(self.page_settings)
+        self._sync_debug_logging_controls()
         self._canonical_status_timer = QTimer(self)
         self._canonical_status_timer.timeout.connect(self._update_canonical_save_status)
         self._canonical_status_timer.start(100)
@@ -1178,6 +1197,8 @@ class MainWindow(QMainWindow):
         # Hướng trang 1 & 2 vào chung Workspace (Index 1)
         target_stack_idx = 1 if is_editor_workspace else (original_index - 1 if original_index > 2 else original_index)
         self.stack.setCurrentIndex(target_stack_idx)
+        if original_index == 6:
+            self._sync_debug_logging_controls()
 
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
@@ -1325,6 +1346,35 @@ class MainWindow(QMainWindow):
             return
         self.canonical_save_coordinator.set_delay_ms(int(delay))
         self._persist_canonical_setting("canonical_auto_save_delay_ms", int(delay))
+
+    def _debug_category_controls(self):
+        return {
+            category: getattr(self.page_settings, control_name)
+            for category, control_name in self._DEBUG_CATEGORY_CONTROLS
+        }
+
+    def _sync_debug_logging_controls(self):
+        controls = self._debug_category_controls()
+        all_controls = [self.page_settings.chk_debug_logging_master, *controls.values()]
+        blockers = [QSignalBlocker(control) for control in all_controls]
+
+        self.page_settings.chk_debug_logging_master.setChecked(
+            self._debug_config.master_enabled
+        )
+        for category, control in controls.items():
+            control.setChecked(category in self._debug_config.enabled_categories)
+            control.setEnabled(self._debug_config.master_enabled)
+        del blockers
+
+    def _on_debug_master_changed(self, state):
+        self._debug_config.master_enabled = bool(state)
+        self._sync_debug_logging_controls()
+
+    def _on_debug_category_changed(self, category, state):
+        if state:
+            self._debug_config.enabled_categories.add(category)
+        else:
+            self._debug_config.enabled_categories.discard(category)
 
     def _update_canonical_save_status(self):
         coordinator = getattr(self, "canonical_save_coordinator", None)
