@@ -4,6 +4,15 @@ from core.debug_logging import DebugConfig, debug_enabled, debug_log, error_log,
 
 
 class DebugLoggingContracts(unittest.TestCase):
+    CATEGORIES = (
+        "recovery",
+        "canonical_save",
+        "project_switch",
+        "project_status",
+        "waveform",
+        "artifact_sync",
+    )
+
     def test_DBG01_fresh_config_is_all_off(self):
         config = DebugConfig()
 
@@ -83,6 +92,122 @@ class DebugLoggingContracts(unittest.TestCase):
         debug_log("recovery", "on path", on, lambda _: None)
 
         self.assertEqual(operation_result, {"save": True, "recovery": True, "switch": True})
+
+    def test_DBG11_all_locked_categories_are_recognized(self):
+        for category in self.CATEGORIES:
+            with self.subTest(category=category):
+                config = DebugConfig(master_enabled=True, enabled_categories={category})
+                records = []
+
+                self.assertTrue(debug_enabled(category, config))
+                self.assertTrue(debug_log(category, "message", config, records.append))
+                self.assertEqual(records, [("DEBUG", category, "message")])
+
+    def test_DBG12_locked_categories_are_isolated(self):
+        for enabled_category in self.CATEGORIES:
+            with self.subTest(enabled_category=enabled_category):
+                config = DebugConfig(
+                    master_enabled=True,
+                    enabled_categories={enabled_category},
+                )
+                records = []
+
+                for category in self.CATEGORIES:
+                    self.assertEqual(
+                        debug_enabled(category, config),
+                        category == enabled_category,
+                    )
+                    debug_log(category, category, config, records.append)
+
+                self.assertEqual(records, [("DEBUG", enabled_category, enabled_category)])
+
+    def test_DBG13_unknown_categories_fail_safe_off(self):
+        config = DebugConfig(master_enabled=True, enabled_categories=set(self.CATEGORIES))
+
+        for category in ("unknown", "debug", "all", "*", "project", "save", ""):
+            with self.subTest(category=category):
+                records = []
+
+                self.assertFalse(debug_enabled(category, config))
+                self.assertFalse(debug_log(category, "ignored", config, records.append))
+                self.assertEqual(records, [])
+
+    def test_DBG14_master_off_dominates_all_locked_categories(self):
+        config = DebugConfig(master_enabled=False, enabled_categories=set(self.CATEGORIES))
+
+        for category in self.CATEGORIES:
+            with self.subTest(category=category):
+                records = []
+
+                self.assertFalse(debug_enabled(category, config))
+                self.assertFalse(debug_log(category, "ignored", config, records.append))
+                self.assertEqual(records, [])
+
+    def test_DBG15_disabled_debug_does_not_invoke_emitter(self):
+        cases = (
+            DebugConfig(master_enabled=False, enabled_categories={"recovery"}),
+            DebugConfig(master_enabled=True, enabled_categories={"recovery"}),
+        )
+        categories = ("recovery", "canonical_save")
+
+        for config, category in zip(cases, categories):
+            with self.subTest(master=config.master_enabled, category=category):
+                emitter_calls = []
+
+                debug_log(category, "ignored", config, emitter_calls.append)
+
+                self.assertEqual(emitter_calls, [])
+
+    def test_DBG16_enabled_debug_emits_exactly_once(self):
+        config = DebugConfig(master_enabled=True, enabled_categories={"recovery"})
+        emitter_calls = []
+
+        self.assertTrue(debug_log("recovery", "message", config, emitter_calls.append))
+
+        self.assertEqual(emitter_calls, [("DEBUG", "recovery", "message")])
+
+    def test_DBG17_warning_bypasses_master_and_category_gate(self):
+        configs = (
+            DebugConfig(),
+            DebugConfig(master_enabled=True, enabled_categories={"canonical_save"}),
+        )
+
+        for config in configs:
+            with self.subTest(master=config.master_enabled):
+                emitter_calls = []
+
+                warning_log("recovery", "warning", config, emitter_calls.append)
+
+                self.assertEqual(emitter_calls, [("WARNING", "recovery", "warning")])
+
+    def test_DBG18_error_bypasses_master_and_category_gate(self):
+        configs = (
+            DebugConfig(),
+            DebugConfig(master_enabled=True, enabled_categories={"canonical_save"}),
+        )
+
+        for config in configs:
+            with self.subTest(master=config.master_enabled):
+                emitter_calls = []
+
+                error_log("recovery", "error", config, emitter_calls.append)
+
+                self.assertEqual(emitter_calls, [("ERROR", "recovery", "error")])
+
+    def test_DBG19_config_instances_do_not_share_runtime_state(self):
+        config_a = DebugConfig(master_enabled=True, enabled_categories={"recovery"})
+        config_b = DebugConfig()
+
+        self.assertTrue(debug_enabled("recovery", config_a))
+        self.assertFalse(debug_enabled("recovery", config_b))
+
+        config_b.master_enabled = True
+        config_b.enabled_categories.add("canonical_save")
+
+        self.assertTrue(debug_enabled("recovery", config_a))
+        self.assertFalse(debug_enabled("canonical_save", config_a))
+        self.assertFalse(debug_enabled("recovery", config_b))
+        self.assertTrue(debug_enabled("canonical_save", config_b))
 
 
 if __name__ == "__main__":
