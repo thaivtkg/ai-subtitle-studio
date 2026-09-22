@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSpinBox,
+    QScrollArea,
     QStackedWidget,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -57,13 +59,17 @@ class SettingsCenterPage(QWidget):
 
         # Right Column: Stack of Setting Categories
         self.stack = QStackedWidget()
+        self.stack.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
 
         # Category 0: AI Engine
         page_ai = QWidget()
         l_ai = QVBoxLayout(page_ai)
         card_ai = QFrame()
-        card_ai.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
+        card_ai.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         grid_ai = QGridLayout(card_ai)
+        grid_ai.setContentsMargins(12, 12, 12, 12)
         grid_ai.setSpacing(10)
 
         grid_ai.addWidget(QLabel("Whisper Model Size:"), 0, 0)
@@ -96,8 +102,9 @@ class SettingsCenterPage(QWidget):
         page_sub = QWidget()
         l_sub = QVBoxLayout(page_sub)
         card_sub = QFrame()
-        card_sub.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
+        card_sub.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         grid_sub = QGridLayout(card_sub)
+        grid_sub.setContentsMargins(12, 12, 12, 12)
         grid_sub.setSpacing(10)
 
         # Basic Style
@@ -151,8 +158,9 @@ class SettingsCenterPage(QWidget):
         page_hs = QWidget()
         l_hs = QVBoxLayout(page_hs)
         card_hs = QFrame()
-        card_hs.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
+        card_hs.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         grid_hs = QGridLayout(card_hs)
+        grid_hs.setContentsMargins(12, 12, 12, 12)
         grid_hs.setSpacing(10)
 
         self.chk_hardsub_enable = QCheckBox("Bật tạo Hardsub tự động")
@@ -167,10 +175,21 @@ class SettingsCenterPage(QWidget):
         page_gen = QWidget()
         l_gen = QVBoxLayout(page_gen)
         card_gen = QFrame()
-        card_gen.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px; padding: 12px;")
+        card_gen.setStyleSheet(f"background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 8px;")
         l_g = QVBoxLayout(card_gen)
-        l_g.addWidget(QLabel("AI Subtitle Studio — Sprint 6.1 Architecture", styleSheet=f"color: {Theme.CYAN}; font-weight: bold;"))
-        l_g.addWidget(QLabel("Theme: Deep Navy Dark Mode (Standard SaaS Desktop)", styleSheet=f"color: {Theme.TEXT_MUTED};"))
+        l_g.setContentsMargins(12, 12, 12, 12)
+        page_heading = QLabel(
+            "AI Subtitle Studio — Sprint 6.1 Architecture",
+            styleSheet=f"color: {Theme.CYAN}; font-weight: bold;",
+        )
+        page_heading.setWordWrap(True)
+        l_g.addWidget(page_heading)
+        theme_label = QLabel(
+            "Theme: Deep Navy Dark Mode (Standard SaaS Desktop)",
+            styleSheet=f"color: {Theme.TEXT_MUTED};",
+        )
+        theme_label.setWordWrap(True)
+        l_g.addWidget(theme_label)
         self.canonical_autosave_checkbox = QCheckBox("Auto Save canonical project")
         self.canonical_autosave_checkbox.setChecked(True)
         self.canonical_autosave_delay_combo = QComboBox()
@@ -181,9 +200,11 @@ class SettingsCenterPage(QWidget):
         l_g.addWidget(self.canonical_autosave_delay_combo)
 
         l_g.addWidget(QLabel("Debug Logging"))
-        l_g.addWidget(
-            QLabel("Debug logs are session-only and reset when the app restarts.")
+        debug_helper = QLabel(
+            "Debug logs are session-only and reset when the app restarts."
         )
+        debug_helper.setWordWrap(True)
+        l_g.addWidget(debug_helper)
         self.chk_debug_logging_master = QCheckBox("Master Debug Logging")
         l_g.addWidget(self.chk_debug_logging_master)
         self.chk_debug_recovery = QCheckBox("Recovery")
@@ -205,7 +226,11 @@ class SettingsCenterPage(QWidget):
         l_gen.addStretch()
         self.stack.addWidget(page_gen)
 
-        layout.addWidget(self.stack, stretch=1)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setWidget(self.stack)
+        layout.addWidget(self.scroll_area, stretch=1)
 
         self.nav_list.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.nav_list.setCurrentRow(0)
