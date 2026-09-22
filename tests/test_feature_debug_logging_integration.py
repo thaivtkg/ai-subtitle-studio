@@ -226,7 +226,13 @@ class DebugLoggingProductionIntegrationContracts(unittest.TestCase):
             with patch("ui.Gui.threading.Thread") as thread_cls:
                 thread_cls.return_value.start = MagicMock()
                 window.on_queue_item_clicked(item)
-            return service.current_project.project_id
+            current_project = service.current_project
+            return {
+                "target_name": current_project.name,
+                "target_root": Path(service.project_dir).name,
+                "target_selected": current_project.project_id == project_a.project_id,
+                "source_replaced": current_project.project_id != project_b.project_id,
+            }
 
         self._run_category_operation_pair(
             "project_switch",
@@ -311,14 +317,17 @@ class DebugLoggingProductionIntegrationContracts(unittest.TestCase):
             service.mark_dirty = MagicMock()
             window.project_service = service
             window.artifact_store = ArtifactStore()
+            count_before = len(window.artifact_store.get_all())
             artifact = window._register_artifact(
                 str(artifact_path), ArtifactType.TIMING, mark_dirty=True
             )
-            return (
-                artifact.artifact_id,
-                project.state.active_artifact_id,
-                project.state.timing_status,
-            )
+            return {
+                "registered": artifact is not None,
+                "count_delta": len(window.artifact_store.get_all()) - count_before,
+                "kind": artifact.artifact_type.name if artifact else None,
+                "path_name": Path(artifact.path).name if artifact else None,
+                "timing_status": project.state.timing_status,
+            }
 
         self._run_category_operation_pair(
             "artifact_sync",
@@ -353,17 +362,32 @@ class DebugLoggingProductionIntegrationContracts(unittest.TestCase):
             window._on_waveform_ready_slot("video.mp4", 1000, [])
 
         if not callable(emitter):
-            run_operations()
             self.assertTrue(callable(emitter))
             return
-        boundary = MagicMock(wraps=emitter)
 
-        with patch.object(window, "_emit_debug_event", boundary):
+        downstream = MagicMock()
+        with patch.object(window, "append_log", downstream):
             run_operations()
 
-        categories = [call.args[0] for call in boundary.call_args_list if call.args]
-        self.assertIn("waveform", categories)
-        self.assertNotIn("canonical_save", categories)
+        debug_messages = [
+            call.args[0]
+            for call in downstream.call_args_list
+            if call.args
+            and isinstance(call.args[0], str)
+            and call.args[0].startswith("[DEBUG][")
+        ]
+        canonical_save_messages = [
+            message
+            for message in debug_messages
+            if message.startswith("[DEBUG][canonical_save]")
+        ]
+        waveform_messages = [
+            message
+            for message in debug_messages
+            if message.startswith("[DEBUG][waveform]")
+        ]
+        self.assertEqual(canonical_save_messages, [])
+        self.assertEqual(len(waveform_messages), 1)
 
 
 if __name__ == "__main__":
