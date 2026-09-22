@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from core.artifacts.artifact_store import ArtifactStore
 from core.app_context import StartupContext
+from core.debug_logging import DebugConfig, debug_log
 from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
 from core.project.source_fingerprint import generate_source_info
@@ -156,6 +157,8 @@ class MainWindow(QMainWindow):
                  startup_context=None):
         super().__init__(parent)
         self.startup_context = startup_context
+        self._debug_config = DebugConfig()
+        self._last_debug_project_status_state = False
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
@@ -944,9 +947,17 @@ class MainWindow(QMainWindow):
                 self.timeline_data_provider.get_all_segments(),
                 peaks
             )
+            self._emit_debug_event("waveform", "waveform accepted")
             print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
         except RuntimeError as e:
             print(f"[DEBUG-WAVEFORM] ❌ LỖI KHI VẼ UI: {e}")
+
+    def _emit_debug_event(self, category, message):
+        def emit(record):
+            level, event_category, diagnostic = record
+            self.append_log(f"[{level}][{event_category}] {diagnostic}")
+
+        return debug_log(category, message, self._debug_config, emit)
 
     def center_on_screen(self):
         screen_geo = QApplication.primaryScreen().availableGeometry()
@@ -1657,6 +1668,9 @@ class MainWindow(QMainWindow):
                 self._refresh_transcription_context_views()
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
+                )
+                self._emit_debug_event(
+                    "project_switch", "project transition completed"
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 # Never leave another video's project active after a failed
@@ -2667,6 +2681,12 @@ class MainWindow(QMainWindow):
     def _update_window_title_dirty_marker(self, is_dirty: bool):
         title = self.windowTitle().replace(" *", "")
         self.setWindowTitle(title + (" *" if is_dirty else ""))
+        status_state = bool(is_dirty)
+        if status_state != self._last_debug_project_status_state:
+            self._last_debug_project_status_state = status_state
+            self._emit_debug_event(
+                "project_status", f"dirty state changed to {status_state}"
+            )
 
     def closeEvent(self, event):
         self._flush_canonical_save_before_close()
@@ -2844,6 +2864,7 @@ class MainWindow(QMainWindow):
             getattr(source, "modified_at", 0.0) if source else 0.0,
         ))
         self.autosave_coordinator.bind_session(session.session_id)
+        self._emit_debug_event("recovery", "session transition completed")
         return session
 
     def _prepare_recovery_session_switch(self):
@@ -3145,6 +3166,7 @@ class MainWindow(QMainWindow):
             self._update_window_title_dirty_marker(self.revision_tracker.is_dirty)
             if notify_user:
                 Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            self._emit_debug_event("canonical_save", "save completed")
             return True
             
         except (OSError, ValueError, RuntimeError) as e:
@@ -3321,6 +3343,7 @@ class MainWindow(QMainWindow):
         if mark_dirty:
             self.project_service.mark_dirty()
         self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
+        self._emit_debug_event("artifact_sync", "artifact registration completed")
         return artifact
 
 if __name__ == "__main__":
