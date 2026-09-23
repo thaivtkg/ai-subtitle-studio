@@ -152,6 +152,7 @@ class _QtScheduler:
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
+    waveform_debug_signal = Signal(str)
     _DEBUG_CATEGORY_CONTROLS = (
         ("recovery", "chk_debug_recovery"),
         ("canonical_save", "chk_debug_canonical_save"),
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
+        self.waveform_debug_signal.connect(self._on_waveform_debug_message)
 
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
@@ -953,7 +955,10 @@ class MainWindow(QMainWindow):
 
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         if req_vid_path != self.queue_mgr.active_vid:
-            print(f"[DEBUG-WAVEFORM] Bỏ qua kết quả cũ của worker do người dùng đã chuyển video: {req_vid_path}")
+            self._emit_debug_event(
+                "waveform",
+                f"stale waveform result ignored after video switch: {req_vid_path}",
+            )
             return
 
         try:
@@ -967,9 +972,12 @@ class MainWindow(QMainWindow):
                 peaks
             )
             self._emit_debug_event("waveform", "waveform accepted")
-            print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
         except RuntimeError as e:
-            print(f"[DEBUG-WAVEFORM] ❌ LỖI KHI VẼ UI: {e}")
+            print(f"[ERROR-WAVEFORM] Timeline rendering failed: {e}", file=sys.stderr)
+
+    @Slot(str)
+    def _on_waveform_debug_message(self, message):
+        self._emit_debug_event("waveform", message)
 
     def _emit_debug_event(self, category, message):
         def emit(record):
@@ -1751,7 +1759,9 @@ class MainWindow(QMainWindow):
         from core.waveform.waveform_service import WaveformService
         def _load_waveform():
             # [FIX REVIEW 1] Luồng này giờ chỉ thuần túy xử lý audio, tuyệt đối không chạm vào UI State
-            print(f"[DEBUG-WAVEFORM] Bắt đầu nạp sóng âm cho: {vid_path}")
+            self.waveform_debug_signal.emit(
+                f"waveform load started: {vid_path}"
+            )
             try:
                 video_data = {}
                 if hasattr(self.queue_mgr, "get_item"):
@@ -1765,7 +1775,7 @@ class MainWindow(QMainWindow):
                 try:
                     peaks = WaveformService.generate_waveform_peaks(vid_path)
                 except (OSError, RuntimeError, ValueError) as e:
-                    print(f"[DEBUG-WAVEFORM] ❌ LỖI Trích xuất sóng âm: {e}")
+                    print(f"[ERROR-WAVEFORM] Waveform extraction failed: {e}", file=sys.stderr)
 
                 if duration_ms <= 0 and peaks is not None and len(peaks) > 0:
                     duration_ms = int((len(peaks) / 100.0) * 1000)
@@ -1777,7 +1787,7 @@ class MainWindow(QMainWindow):
                 self.waveform_ready_signal.emit(vid_path, duration_ms, peaks)
                 
             except (OSError, RuntimeError, ValueError) as e:
-                print(f"[DEBUG-WAVEFORM] ❌ LỖI TỔNG QUÁT LUỒNG SÓNG ÂM: {e}")
+                print(f"[ERROR-WAVEFORM] Waveform worker failed: {e}", file=sys.stderr)
 
         threading.Thread(target=_load_waveform, daemon=True).start()
         # ---------------------------------------------------

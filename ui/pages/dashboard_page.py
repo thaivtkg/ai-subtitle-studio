@@ -108,6 +108,7 @@ class DashboardPage(QWidget):
         self.activity_log = ActivityLogView(self.activity_log_model)
         self.activity_level_filter = self.activity_log.level_filter
         self.activity_source_filter = self.activity_log.source_filter
+        self.activity_technical_reports = self.activity_log.technical_reports_control
         self.activity_auto_scroll = self.activity_log.auto_scroll_control
         self.activity_clear_button = self.activity_log.clear_button
         log_layout.addWidget(self.activity_log)

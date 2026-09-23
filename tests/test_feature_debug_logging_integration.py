@@ -389,6 +389,76 @@ class DebugLoggingProductionIntegrationContracts(unittest.TestCase):
         self.assertEqual(canonical_save_messages, [])
         self.assertEqual(len(waveform_messages), 1)
 
+    def test_INT10_waveform_diagnostics_follow_debug_gate(self):
+        window = self._window()
+        window.queue_mgr.active_vid = "video.mp4"
+        window.generation_panel.set_video_duration = MagicMock()
+        window.timeline_data_provider.load_runtime_data = MagicMock()
+        window.timeline_data_provider.get_all_segments = MagicMock(return_value=[])
+        window.timeline_widget.load_project_data = MagicMock()
+        window.sub_editor.all_segments = []
+
+        signal = getattr(window, "waveform_debug_signal", None)
+        self.assertIsNotNone(signal, "worker diagnostics must return through a Qt signal")
+
+        window._debug_config = DebugConfig()
+        start_index = len(window.page_dashboard.activity_log_model.entries)
+        signal.emit("waveform load started: video.mp4")
+        window._on_waveform_ready_slot("video.mp4", 1000, [])
+        self.app.processEvents()
+        disabled_entries = window.page_dashboard.activity_log_model.entries[start_index:]
+        self.assertEqual(
+            [entry for entry in disabled_entries if entry.level == "DEBUG"],
+            [],
+        )
+
+        window._debug_config = DebugConfig(
+            master_enabled=True,
+            enabled_categories={"waveform"},
+        )
+        start_index = len(window.page_dashboard.activity_log_model.entries)
+        signal.emit("waveform load started: video.mp4")
+        window._on_waveform_ready_slot("video.mp4", 1000, [])
+        self.app.processEvents()
+        enabled_debug_messages = [
+            entry.message
+            for entry in window.page_dashboard.activity_log_model.entries[start_index:]
+            if entry.level == "DEBUG" and entry.message.startswith("[waveform]")
+        ]
+        self.assertEqual(
+            enabled_debug_messages,
+            [
+                "[waveform] waveform load started: video.mp4",
+                "[waveform] waveform accepted",
+            ],
+        )
+
+    def test_INT11_waveform_errors_remain_visible_when_debug_is_off(self):
+        window = self._window()
+        window._debug_config = DebugConfig()
+        window.queue_mgr.active_vid = "video.mp4"
+        window.generation_panel.set_video_duration = MagicMock()
+        window.timeline_data_provider.load_runtime_data = MagicMock()
+        window.timeline_data_provider.get_all_segments = MagicMock(return_value=[])
+        window.timeline_widget.load_project_data = MagicMock(
+            side_effect=RuntimeError("timeline failed")
+        )
+        window.sub_editor.all_segments = []
+
+        start_index = len(window.page_dashboard.activity_log_model.entries)
+        window._on_waveform_ready_slot("video.mp4", 1000, [])
+        self.app.processEvents()
+        new_entries = window.page_dashboard.activity_log_model.entries[start_index:]
+
+        self.assertEqual(
+            [entry.raw_text for entry in new_entries if entry.level == "ERROR"],
+            ["[ERROR-WAVEFORM] Timeline rendering failed: timeline failed"],
+        )
+        self.assertEqual(
+            [entry for entry in new_entries if entry.level == "DEBUG"],
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -122,6 +122,7 @@ class ActivityLogModel:
         self._entries = deque(maxlen=max_entries)
         self._level_filter = "ALL"
         self._source_filter = "ALL"
+        self._show_technical_reports = False
         self.auto_scroll = True
         self._listeners = []
 
@@ -140,6 +141,10 @@ class ActivityLogModel:
     @property
     def source_filter(self) -> str:
         return self._source_filter
+
+    @property
+    def show_technical_reports(self) -> bool:
+        return self._show_technical_reports
 
     def append(self, value) -> ActivityLogEntry:
         if isinstance(value, str):
@@ -168,6 +173,13 @@ class ActivityLogModel:
         self._source_filter = normalized or "ALL"
         self._notify("filter", None, False)
 
+    def set_show_technical_reports(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._show_technical_reports:
+            return
+        self._show_technical_reports = enabled
+        self._notify("filter", None, False)
+
     def set_auto_scroll(self, enabled: bool) -> None:
         self.auto_scroll = bool(enabled)
         self._notify("auto_scroll", None, False)
@@ -176,10 +188,19 @@ class ActivityLogModel:
         return self.auto_scroll and self._matches(entry)
 
     def _matches(self, entry: ActivityLogEntry) -> bool:
+        if not self._show_technical_reports and self._is_technical_report(entry):
+            return False
         return (
             (self._level_filter == "ALL" or entry.level == self._level_filter)
             and (self._source_filter == "ALL" or entry.source == self._source_filter)
         )
+
+    @staticmethod
+    def _is_technical_report(entry: ActivityLogEntry) -> bool:
+        raw_text = (entry.raw_text or entry.message).lstrip().upper()
+        if raw_text.startswith(("[RECOVERY-SNAPSHOT]", "[E4-AUTOSAVE-TRACE]")):
+            return True
+        return raw_text.startswith("[DEBUG") and not raw_text.startswith("[DEBUG][")
 
     def subscribe(self, callback) -> None:
         if callback not in self._listeners:
@@ -219,6 +240,12 @@ class ActivityLogView(QFrame):
         self.source_filter.addItem("All")
         self.source_filter.currentTextChanged.connect(self._on_source_filter_changed)
         header.addWidget(self.source_filter)
+
+        self.technical_reports_control = QCheckBox("Hiện log kỹ thuật")
+        self.technical_reports_control.setObjectName("activity_technical_reports")
+        self.technical_reports_control.setChecked(model.show_technical_reports)
+        self.technical_reports_control.toggled.connect(model.set_show_technical_reports)
+        header.addWidget(self.technical_reports_control)
 
         self.auto_scroll_control = QCheckBox("Auto-scroll")
         self.auto_scroll_control.setChecked(True)
@@ -279,6 +306,9 @@ class ActivityLogView(QFrame):
         selected = self.model.source_filter if self.model.source_filter in options else "ALL"
         self.source_filter.setCurrentText("All" if selected == "ALL" else selected)
         self.source_filter.blockSignals(False)
+        self.technical_reports_control.blockSignals(True)
+        self.technical_reports_control.setChecked(self.model.show_technical_reports)
+        self.technical_reports_control.blockSignals(False)
 
     def _sync_auto_scroll_control(self):
         self.auto_scroll_control.blockSignals(True)
