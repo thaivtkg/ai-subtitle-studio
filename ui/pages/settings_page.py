@@ -420,7 +420,7 @@ class SettingsCenterPage(QWidget):
             }}
             QCheckBox[settingsCheckbox="true"]::indicator:unchecked:disabled {{
                 background-color: {Theme.SURFACE};
-                border: 1px solid {Theme.TEXT_DISABLED};
+                border: 1px solid #475569;
             }}
         """)
 
