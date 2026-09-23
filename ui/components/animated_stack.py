@@ -39,13 +39,18 @@ class AnimatedStack(QWidget):
         return len(self.widgets) - 1
 
     def setCurrentIndex(self, index: int, duration: int = 180):
-        if index == self.current_index or index < 0 or index >= len(self.widgets):
+        if index < 0 or index >= len(self.widgets):
             return
 
         # 1. Xử lý Interruption: Hủy ngay transition đang chạy
         if self.anim_group.state() == QParallelAnimationGroup.Running:
+            if index == self.target_index_cache:
+                return
             self.anim_group.stop()
             self._force_finish_transition()
+
+        if index == self.current_index:
+            return
 
         self._is_transitioning = True
         
