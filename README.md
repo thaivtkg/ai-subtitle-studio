@@ -11,8 +11,8 @@
 3. [Bảng Phím tắt Toàn cục (Shortcuts)](#-bảng-phím-tắt-toàn-cục-shortcuts)
 4. [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
 5. [Hướng dẫn cài đặt & Chạy mã nguồn](#-hướng-dẫn-cài-đặt--chạy-mã-nguồn)
-6. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#-đóng-gói--tạo-bộ-cài-đặt-windows-installer)
-7. [Xử lý sự cố thường gặp (Troubleshooting)](#-xử-lý-sự-cố-thường-gặp-troubleshooting)
+6. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#dong-goi-installer)
+7. [Xử lý sự cố thường gặp (Troubleshooting)](#troubleshooting)
 
 ---
 
@@ -154,6 +154,8 @@ python main.py
 
 ```
 
+<a id="dong-goi-installer"></a>
+
 ## 🛠️ Đóng gói & Tạo bộ cài đặt Windows (Installer)
 
 ### 1. Đóng gói mã nguồn thành File thực thi (`PyInstaller`)
@@ -169,6 +171,59 @@ python main.py
 1. Cài đặt công cụ [Inno Setup 6+](https://jrsoftware.org/).
 2. Chạy `scripts/build_windows.ps1`; script sẽ gọi `installer/setup.iss` nếu Inno Setup đã được cài.
 3. File cài đặt được xuất vào thư mục `release/`.
+
+<a id="troubleshooting"></a>
+
+## 🧰 Xử lý sự cố thường gặp (Troubleshooting)
+
+### Ứng dụng không khởi động từ mã nguồn
+
+Đảm bảo môi trường ảo đã được kích hoạt và các dependency đã được cài đúng profile:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
+python main.py
+```
+
+Nếu dùng profile runtime đã ghim, thay `requirements.txt` bằng `requirements-runtime.txt`.
+
+### Không tìm thấy FFmpeg / FFprobe
+
+Đặt `ffmpeg.exe` và `ffprobe.exe` trong thư mục `ffmpeg/` của dự án hoặc thêm thư mục chứa chúng vào `PATH`.
+
+Kiểm tra nhanh:
+
+```powershell
+ffmpeg -version
+ffprobe -version
+```
+
+### CUDA / GPU không hoạt động
+
+Nếu nhận dạng giọng nói hoặc tác vụ AI không dùng được GPU, kiểm tra driver NVIDIA và môi trường PyTorch/CUDA đang cài. Có thể xác minh nhanh bằng:
+
+```powershell
+python -c "import torch; print(torch.cuda.is_available()); print(torch.version.cuda)"
+```
+
+Nếu `torch.cuda.is_available()` trả về `False`, ứng dụng vẫn có thể chạy bằng CPU nếu tác vụ tương ứng hỗ trợ.
+
+### Lỗi quyền truy cập thư mục dữ liệu người dùng
+
+Ứng dụng lưu dữ liệu runtime trong hồ sơ người dùng Windows. Hãy chạy ứng dụng bằng tài khoản Windows đang sở hữu hồ sơ đó và tránh tự gán `LOCALAPPDATA` sang hồ sơ của tài khoản khác.
+
+Nếu lỗi quyền vẫn xuất hiện, kiểm tra quyền truy cập của thư mục dữ liệu ứng dụng trong `%LOCALAPPDATA%`.
+
+### Build Windows thất bại vì không tìm thấy PyInstaller
+
+Kích hoạt `.venv` trước khi chạy script build, hoặc bảo đảm `.venv\Scripts` có trong `PATH` của phiên terminal hiện tại:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+.\scripts\build_windows.ps1
+```
 
 ## 📄 Giấy phép
 
