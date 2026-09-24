@@ -67,13 +67,13 @@ class TestMediaImportContracts(unittest.TestCase):
                 self.assertEqual(import_dir, RuntimePaths.get_user_data_dir() / "media_imports")
                 self.assertTrue(str(import_dir).startswith(str(temp_root)))
 
-    def test_ensure_user_data_dirs_creates_media_imports_dir(self):
+    def test_ensure_user_data_dirs_does_not_create_media_imports_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.dict(os.environ, {"LOCALAPPDATA": str(Path(temp_dir))}):
                 import_dir = RuntimePaths.get_media_imports_dir()
                 self.assertFalse(import_dir.exists())
                 RuntimePaths.ensure_user_data_dirs()
-                self.assertTrue(import_dir.is_dir())
+                self.assertFalse(import_dir.exists())
 
 
 if __name__ == "__main__":

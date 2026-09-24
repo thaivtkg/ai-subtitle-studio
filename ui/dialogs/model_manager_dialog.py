@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog, QMessageBox, QInputDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from core.services.model_manager import ModelManager
+from core.services.model_manager import ModelManager, ModelStorageError
 from ui.theme import Theme
 
 # Worker chạy ẩn để không làm đơ giao diện khi tải
@@ -79,7 +79,11 @@ class ModelManagerDialog(QDialog):
 
     def load_data(self):
         self.table.setRowCount(0)
-        models = ModelManager.get_discovery_list()
+        try:
+            models = ModelManager.get_discovery_list()
+        except ModelStorageError as exc:
+            QMessageBox.critical(self, "Lỗi kho mô hình", str(exc))
+            return
         
         for row, m in enumerate(models):
             self.table.insertRow(row)
@@ -133,8 +137,11 @@ class ModelManagerDialog(QDialog):
     def import_model(self):
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục chứa config.json")
         if folder:
-            sizes = [m["size"] for m in ModelManager.get_discovery_list()]
-            size, ok = QInputDialog.getItem(self, "Định danh", "Model thuộc size nào?", sizes, 0, False)
-            if ok and size:
-                ModelManager.import_offline_model(size, folder)
-                self.load_data()
+            try:
+                sizes = [m["size"] for m in ModelManager.get_discovery_list()]
+                size, ok = QInputDialog.getItem(self, "Định danh", "Model thuộc size nào?", sizes, 0, False)
+                if ok and size:
+                    ModelManager.import_offline_model(size, folder)
+                    self.load_data()
+            except ModelStorageError as exc:
+                QMessageBox.critical(self, "Lỗi kho mô hình", str(exc))

@@ -55,12 +55,15 @@ def get_whisper_model(model_size, compute_type):
         
         # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
         safe_model_path = ModelManager.get_model_path_for_inference(model_size)
+        models_dir = RuntimePaths.get_models_dir()
+        if safe_model_path == model_size:
+            models_dir = ModelManager.prepare_models_storage("load model")
         
         _cached_model = WhisperModel(
             safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
             device=device, 
             compute_type=compute_type,
-            download_root=str(RuntimePaths.get_models_dir())
+            download_root=str(models_dir)
         )
         _cached_model_size = model_size
     return _cached_model

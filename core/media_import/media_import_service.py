@@ -31,7 +31,6 @@ class MediaImportService:
         self.ytdlp_adapter = ytdlp_adapter
         self.media_probe = media_probe or MediaProbe()
         self.storage_root = Path(storage_root) if storage_root is not None else RuntimePaths.get_media_imports_dir()
-        self.storage_root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _check_cancel(cancel_flag):
@@ -54,13 +53,27 @@ class MediaImportService:
         else:
             import_dir = (self.storage_root / uuid.uuid4().hex[:12]).resolve()
             staging_dir = import_dir / ".staging"
-        staging_dir.mkdir(parents=True, exist_ok=True)
         plan = (
             [("direct", self.direct_adapter), ("ytdlp", self.ytdlp_adapter)]
             if url_type == MediaURLType.DIRECT_MEDIA
             else [("ytdlp", self.ytdlp_adapter), ("direct", self.direct_adapter)]
         )
         finalized_path = None
+        try:
+            staging_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            raise MediaImportError(
+                MediaImportErrorCode.PERMISSION_DENIED,
+                "Permission denied while preparing media-import storage",
+                details={"path": str(exc.filename or self.storage_root)},
+            ) from exc
+        except OSError as exc:
+            raise MediaImportError(
+                MediaImportErrorCode.UNKNOWN,
+                "Unable to prepare media-import storage",
+                details={"path": str(exc.filename or self.storage_root)},
+            ) from exc
+
         try:
             for index, (adapter_name, adapter) in enumerate(plan):
                 staging_target = staging_dir / f"{adapter_name}_download"

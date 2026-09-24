@@ -14,7 +14,8 @@ from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.recovery_manager import RecoveryManager
 from core.recovery.recovery_validator import RecoveryValidator
 from core.runtime.runtime_paths import RuntimePaths
-from core.services.model_manager import ModelManager
+from core.services.model_manager import ModelManager, ModelStorageError
+from core.subtitle_generation.faster_whisper_service import FasterWhisperService
 
 
 class LazyUserStorageContracts(unittest.TestCase):
@@ -33,11 +34,18 @@ class LazyUserStorageContracts(unittest.TestCase):
     def test_early_storage_preparation_does_not_touch_models(self):
         self.user_data.mkdir()
         self.models_dir.write_text("not a directory", encoding="utf-8")
+        original_stat = Path.stat
 
-        try:
-            RuntimePaths.ensure_user_data_dirs()
-        except OSError as error:
-            self.fail(f"startup preparation touched optional models storage: {error!r}")
+        def reject_models_stat(path, *args, **kwargs):
+            if path == self.models_dir:
+                raise PermissionError(5, "Access is denied", str(path))
+            return original_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", autospec=True, side_effect=reject_models_stat):
+            try:
+                RuntimePaths.ensure_user_data_dirs()
+            except OSError as error:
+                self.fail(f"startup preparation touched optional models storage: {error!r}")
 
         self.assertTrue(self.models_dir.is_file())
 
@@ -60,6 +68,23 @@ class LazyUserStorageContracts(unittest.TestCase):
         self.assertTrue(all(model["installed"] is False for model in discovered))
         self.assertFalse(self.models_dir.exists())
 
+    def test_model_discovery_does_not_hide_storage_permission_error(self):
+        permission_error = PermissionError(5, "Access is denied", str(self.models_dir))
+        original_stat = Path.stat
+
+        def deny_models_stat(path, *args, **kwargs):
+            if path == self.models_dir:
+                raise permission_error
+            return original_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", autospec=True, side_effect=deny_models_stat):
+            with self.assertRaises(ModelStorageError) as raised:
+                ModelManager.get_discovery_list()
+
+        self.assertIsNotNone(raised.exception.__cause__)
+        self.assertIsInstance(raised.exception.__cause__, PermissionError)
+        self.assertEqual(Path(raised.exception.path), self.models_dir)
+
     def test_model_download_prepares_storage_before_calling_downloader(self):
         observed = []
 
@@ -73,6 +98,25 @@ class LazyUserStorageContracts(unittest.TestCase):
                 ModelManager.download_model_sync("tiny")
 
         self.assertEqual(observed, [True])
+
+    def test_model_use_prepares_storage_before_downloading_model(self):
+        observed = []
+
+        def fake_whisper_model(model_path, **_kwargs):
+            observed.append((model_path, self.models_dir.is_dir()))
+            return object()
+
+        fake_module = types.ModuleType("faster_whisper")
+        fake_module.WhisperModel = fake_whisper_model
+        service = FasterWhisperService(device="cpu")
+        with patch.dict(sys.modules, {"faster_whisper": fake_module}):
+            with patch.object(
+                ModelManager, "get_model_path_for_inference", return_value="tiny"
+            ):
+                with patch.object(RuntimePaths, "get_models_dir", return_value=self.models_dir):
+                    service.load_model("tiny", "int8")
+
+        self.assertEqual(observed, [("tiny", True)])
 
     def test_offline_model_import_creates_models_storage_when_needed(self):
         source_dir = self.local_app_data / "offline-model"
@@ -115,6 +159,29 @@ class LazyUserStorageContracts(unittest.TestCase):
         self.assertIs(cause, permission_error)
         self.assertEqual(Path(permission_error.filename), self.models_dir)
         downloader.assert_not_called()
+
+    def test_existing_inaccessible_models_path_preserves_stat_permission_error(self):
+        self.models_dir.mkdir(parents=True)
+        permission_error = PermissionError(5, "Access is denied", str(self.models_dir))
+        original_stat = Path.stat
+        original_mkdir = Path.mkdir
+
+        def report_existing_path(path, *args, **kwargs):
+            if path == self.models_dir:
+                raise FileExistsError(17, "Already exists", str(path))
+            return original_mkdir(path, *args, **kwargs)
+
+        def deny_models_stat(path, *args, **kwargs):
+            if path == self.models_dir:
+                raise permission_error
+            return original_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", autospec=True, side_effect=report_existing_path):
+            with patch.object(Path, "stat", autospec=True, side_effect=deny_models_stat):
+                with self.assertRaises(ModelStorageError) as raised:
+                    ModelManager.prepare_models_storage("download model")
+
+        self.assertIs(raised.exception.__cause__, permission_error)
 
     def test_model_path_file_fails_before_downloader_runs(self):
         self.models_dir.parent.mkdir(parents=True)
