@@ -5,6 +5,7 @@ import unittest
 
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout, QWidget
 
 from core.tutorial.models import AnchorStatus, SurfaceSpec
@@ -345,11 +346,25 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         )
         self.widgets.append(window)
         window.show()
+        self.assertTrue(QTest.qWaitForWindowExposed(window, 2000))
         window.generation_dock.hide()
+        self.app.processEvents()
+        self.assertFalse(window.generation_dock.isVisible())
         router = MainWindowRouter(window)
         nav = NavigationAdapter(router)
-        emitted = []
-        nav.surface_ready.connect(lambda *args: emitted.append(args))
+        outcomes = []
+        loop = QEventLoop()
+
+        def on_ready(*args):
+            outcomes.append(("ready", *args))
+            loop.quit()
+
+        def on_failed(*args):
+            outcomes.append(("failed", *args))
+            loop.quit()
+
+        nav.surface_ready.connect(on_ready)
+        nav.surface_failed.connect(on_failed)
 
         nav.navigate(
             SurfaceSpec("workspace", "context"),
@@ -357,11 +372,15 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
             generation=1,
             request_id="d-1",
         )
-        loop = QEventLoop()
-        QTimer.singleShot(1000, loop.quit)
-        loop.exec()
+        if not outcomes:
+            timeout = QTimer()
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(loop.quit)
+            timeout.start(2000)
+            loop.exec()
+            timeout.stop()
 
-        self.assertEqual(emitted, [("d", 1, "d-1")])
+        self.assertEqual(outcomes, [("ready", "d", 1, "d-1")])
         self.assertTrue(window.generation_dock.isVisible())
         self.assertEqual(window.dock_tabs.currentIndex(), 1)
 

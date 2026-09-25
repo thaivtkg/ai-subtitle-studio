@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QSignalBlocker,
     QSize,
     Qt,
     QTimer,
@@ -47,8 +48,10 @@ from PySide6.QtWidgets import (
 
 from core.artifacts.artifact_store import ArtifactStore
 from core.app_context import StartupContext
+from core.debug_logging import DebugConfig, debug_log
 from core.media_import.media_import_service import MediaImportService
 from core.project.transcription_context import TranscriptionContext
+from core.project.source_fingerprint import generate_source_info
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
 from core.recovery.autosave_coordinator import AutosaveCoordinator
@@ -81,6 +84,7 @@ from ui.components.animated_stack import AnimatedStack
 from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.dialogs.new_project_dialog import NewProjectDialog
+from ui.dialogs.recovery_center_dialog import RecoveryCenterDialog
 from ui.pages.dashboard_page import DashboardPage
 from ui.activity_log import ActivityLogView
 from ui.pages.draft_center_page import DraftCenterPage
@@ -95,6 +99,7 @@ from ui.tutorial.interaction_observer import InteractionObserverAdapter
 from ui.tutorial.navigation_adapter import MainWindowRouter, NavigationAdapter
 from ui.tutorial.spotlight_layer import SpotlightLayerAdapter
 from ui.pages.settings_page import SettingsCenterPage
+from ui.project_status import format_project_status
 from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
@@ -147,15 +152,27 @@ class _QtScheduler:
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
+    waveform_debug_signal = Signal(str)
+    _DEBUG_CATEGORY_CONTROLS = (
+        ("recovery", "chk_debug_recovery"),
+        ("canonical_save", "chk_debug_canonical_save"),
+        ("project_switch", "chk_debug_project_switch"),
+        ("project_status", "chk_debug_project_status"),
+        ("waveform", "chk_debug_waveform"),
+        ("artifact_sync", "chk_debug_artifact_sync"),
+    )
 
     def __init__(self, revision_tracker=None, recovery_manager=None, undo_manager=None,
                  parent=None, project_service=None, media_import_service=None,
                  startup_context=None):
         super().__init__(parent)
         self.startup_context = startup_context
+        self._debug_config = DebugConfig()
+        self._last_debug_project_status_state = False
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
+        self.waveform_debug_signal.connect(self._on_waveform_debug_message)
 
         # --- KHỞI TẠO HỆ THỐNG PROJECT (SPRINT 7) ---
         self.artifact_store = ArtifactStore()
@@ -290,6 +307,11 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_new_project)
         sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
         sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
+        self.btn_recovery_center = self.create_side_action_button(
+            "🛟  Recovery Center", self.open_recovery_center
+        )
+        self.btn_recovery_center.setObjectName("btn_recovery_center")
+        sidebar_layout.addWidget(self.btn_recovery_center)
         
         # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
@@ -353,6 +375,15 @@ class MainWindow(QMainWindow):
         self.lbl_page_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; border: none;")
         topbar_layout.addWidget(self.lbl_page_title)
         topbar_layout.addStretch()
+
+        self.lbl_project_status = QLabel("No Project")
+        self.lbl_project_status.setObjectName("lbl_project_status")
+        self.lbl_project_status.setFixedWidth(280)
+        self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_project_status.setStyleSheet(
+            f"font-size: 11px; color: {Theme.TEXT_SECONDARY}; border: none;"
+        )
+        topbar_layout.addWidget(self.lbl_project_status)
 
         self.btn_minimize = QPushButton("—")
         self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
@@ -618,7 +649,7 @@ class MainWindow(QMainWindow):
         queue_layout.setContentsMargins(8, 8, 8, 8)
         self.queue_ui = QueueWidget()
         self.queue_ui.item_clicked.connect(self.on_queue_item_clicked)
-        self.queue_ui.item_removed.connect(self.queue_mgr.remove_video)
+        self.queue_ui.item_removed.connect(self._on_queue_remove_requested)
         queue_layout.addWidget(self.queue_ui)
         self.stack.addWidget(self.page_queue)
 
@@ -648,7 +679,17 @@ class MainWindow(QMainWindow):
         self.page_settings.canonical_autosave_delay_combo.currentIndexChanged.connect(
             self._on_canonical_autosave_delay_changed
         )
+        self.page_settings.chk_debug_logging_master.stateChanged.connect(
+            self._on_debug_master_changed
+        )
+        for category, control_name in self._DEBUG_CATEGORY_CONTROLS:
+            getattr(self.page_settings, control_name).stateChanged.connect(
+                lambda state, category=category: self._on_debug_category_changed(
+                    category, state
+                )
+            )
         self.stack.addWidget(self.page_settings)
+        self._sync_debug_logging_controls()
         self._canonical_status_timer = QTimer(self)
         self._canonical_status_timer.timeout.connect(self._update_canonical_save_status)
         self._canonical_status_timer.start(100)
@@ -914,7 +955,10 @@ class MainWindow(QMainWindow):
 
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         if req_vid_path != self.queue_mgr.active_vid:
-            print(f"[DEBUG-WAVEFORM] Bỏ qua kết quả cũ của worker do người dùng đã chuyển video: {req_vid_path}")
+            self._emit_debug_event(
+                "waveform",
+                f"stale waveform result ignored after video switch: {req_vid_path}",
+            )
             return
 
         try:
@@ -927,9 +971,20 @@ class MainWindow(QMainWindow):
                 self.timeline_data_provider.get_all_segments(),
                 peaks
             )
-            print("[DEBUG-WAVEFORM] 7. Vẽ Timeline UI thành công!")
+            self._emit_debug_event("waveform", "waveform accepted")
         except RuntimeError as e:
-            print(f"[DEBUG-WAVEFORM] ❌ LỖI KHI VẼ UI: {e}")
+            print(f"[ERROR-WAVEFORM] Timeline rendering failed: {e}", file=sys.stderr)
+
+    @Slot(str)
+    def _on_waveform_debug_message(self, message):
+        self._emit_debug_event("waveform", message)
+
+    def _emit_debug_event(self, category, message):
+        def emit(record):
+            level, event_category, diagnostic = record
+            self.append_log(f"[{level}][{event_category}] {diagnostic}")
+
+        return debug_log(category, message, self._debug_config, emit)
 
     def center_on_screen(self):
         screen_geo = QApplication.primaryScreen().availableGeometry()
@@ -1095,6 +1150,52 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(slot)
         return btn
 
+    def _active_recovery_session_id(self):
+        autosave = getattr(self, "autosave_coordinator", None)
+        bound_session_id = getattr(autosave, "bound_session_id", None)
+        active_session = getattr(self.recovery_manager, "_active_session", None)
+        active_session_id = getattr(active_session, "session_id", None)
+        if bound_session_id and bound_session_id == active_session_id:
+            return bound_session_id
+        return None
+
+    def _recovery_source_info_by_project(self):
+        source_info_by_project = {}
+        for candidate in self.recovery_manager.scan_candidates():
+            video_path = candidate.manifest.video_path
+            if not video_path or not os.path.exists(video_path):
+                continue
+            try:
+                source_info_by_project[candidate.manifest.project_id] = (
+                    generate_source_info(video_path)
+                )
+            except (OSError, ValueError):
+                continue
+        return source_info_by_project
+
+    def _list_recovery_entries_for_center(self):
+        return self.recovery_manager.list_recovery_entries(
+            active_session_id=self._active_recovery_session_id(),
+            source_info_by_project=self._recovery_source_info_by_project(),
+        )
+
+    def _delete_recovery_entry_for_center(
+        self, session_id, *, active_session_id=None
+    ):
+        return self.recovery_manager.delete_entry(
+            session_id, active_session_id=active_session_id
+        )
+
+    def open_recovery_center(self):
+        dialog = RecoveryCenterDialog(
+            entries_provider=self._list_recovery_entries_for_center,
+            live_session_id_provider=self._active_recovery_session_id,
+            restore_callback=self._restore_recovery_entry,
+            delete_callback=self._delete_recovery_entry_for_center,
+            parent=self,
+        )
+        dialog.exec()
+
     def switch_page(self, original_index):
         self._active_nav_index = original_index
         if original_index == 7 and hasattr(self, "page_help"):
@@ -1104,6 +1205,8 @@ class MainWindow(QMainWindow):
         # Hướng trang 1 & 2 vào chung Workspace (Index 1)
         target_stack_idx = 1 if is_editor_workspace else (original_index - 1 if original_index > 2 else original_index)
         self.stack.setCurrentIndex(target_stack_idx)
+        if original_index == 6:
+            self._sync_debug_logging_controls()
 
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
@@ -1252,16 +1355,67 @@ class MainWindow(QMainWindow):
         self.canonical_save_coordinator.set_delay_ms(int(delay))
         self._persist_canonical_setting("canonical_auto_save_delay_ms", int(delay))
 
+    def _debug_category_controls(self):
+        return {
+            category: getattr(self.page_settings, control_name)
+            for category, control_name in self._DEBUG_CATEGORY_CONTROLS
+        }
+
+    def _sync_debug_logging_controls(self):
+        controls = self._debug_category_controls()
+        all_controls = [self.page_settings.chk_debug_logging_master, *controls.values()]
+        blockers = [QSignalBlocker(control) for control in all_controls]
+
+        self.page_settings.chk_debug_logging_master.setChecked(
+            self._debug_config.master_enabled
+        )
+        for category, control in controls.items():
+            control.setChecked(category in self._debug_config.enabled_categories)
+            control.setEnabled(self._debug_config.master_enabled)
+        del blockers
+
+    def _on_debug_master_changed(self, state):
+        self._debug_config.master_enabled = bool(state)
+        self._sync_debug_logging_controls()
+
+    def _on_debug_category_changed(self, category, state):
+        if state:
+            self._debug_config.enabled_categories.add(category)
+        else:
+            self._debug_config.enabled_categories.discard(category)
+
     def _update_canonical_save_status(self):
         coordinator = getattr(self, "canonical_save_coordinator", None)
         label = getattr(self, "canonical_save_status_label", None)
-        if coordinator is None or label is None:
+        if coordinator is None:
             return
-        text = f"Auto Save · {coordinator.status_text()}"
         countdown = coordinator.countdown_text()
+        status = coordinator.status_text()
+        text = f"Auto Save · {status}"
         if countdown:
             text += f" · {countdown}"
-        label.setText(text)
+        if label is not None:
+            label.setText(text)
+
+        project_service = getattr(self, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        project_root = getattr(project_service, "project_dir", None)
+        project_status = format_project_status(
+            project,
+            countdown or status,
+            project_root=project_root,
+        )
+        project_label = getattr(self, "lbl_project_status", None)
+        if project_label is not None:
+            project_label.setToolTip(project_status)
+            available_width = project_label.contentsRect().width()
+            project_label.setText(
+                project_label.fontMetrics().elidedText(
+                    project_status,
+                    Qt.TextElideMode.ElideMiddle,
+                    available_width,
+                )
+            )
     def on_motion_preset_changed(self):
         preset = self.page_settings.motion_preset_combo.currentData()
         
@@ -1430,6 +1584,9 @@ class MainWindow(QMainWindow):
             coordinator.clear_session()
         if getattr(self, "recovery_manager", None):
             self.recovery_manager.finalize_clean_shutdown()
+        refresh_status = getattr(self, "_update_canonical_save_status", None)
+        if callable(refresh_status):
+            refresh_status()
 
     def select_output_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu kết quả")
@@ -1570,6 +1727,9 @@ class MainWindow(QMainWindow):
                 self.append_log(
                     f"📦 [HỆ THỐNG] Đã tự động tạo/nạp dự án cho video: {file_name}"
                 )
+                self._emit_debug_event(
+                    "project_switch", "project transition completed"
+                )
             except (OSError, RuntimeError, ValueError) as exc:
                 # Never leave another video's project active after a failed
                 # auto-project switch.
@@ -1599,7 +1759,9 @@ class MainWindow(QMainWindow):
         from core.waveform.waveform_service import WaveformService
         def _load_waveform():
             # [FIX REVIEW 1] Luồng này giờ chỉ thuần túy xử lý audio, tuyệt đối không chạm vào UI State
-            print(f"[DEBUG-WAVEFORM] Bắt đầu nạp sóng âm cho: {vid_path}")
+            self.waveform_debug_signal.emit(
+                f"waveform load started: {vid_path}"
+            )
             try:
                 video_data = {}
                 if hasattr(self.queue_mgr, "get_item"):
@@ -1613,7 +1775,7 @@ class MainWindow(QMainWindow):
                 try:
                     peaks = WaveformService.generate_waveform_peaks(vid_path)
                 except (OSError, RuntimeError, ValueError) as e:
-                    print(f"[DEBUG-WAVEFORM] ❌ LỖI Trích xuất sóng âm: {e}")
+                    print(f"[ERROR-WAVEFORM] Waveform extraction failed: {e}", file=sys.stderr)
 
                 if duration_ms <= 0 and peaks is not None and len(peaks) > 0:
                     duration_ms = int((len(peaks) / 100.0) * 1000)
@@ -1625,7 +1787,7 @@ class MainWindow(QMainWindow):
                 self.waveform_ready_signal.emit(vid_path, duration_ms, peaks)
                 
             except (OSError, RuntimeError, ValueError) as e:
-                print(f"[DEBUG-WAVEFORM] ❌ LỖI TỔNG QUÁT LUỒNG SÓNG ÂM: {e}")
+                print(f"[ERROR-WAVEFORM] Waveform worker failed: {e}", file=sys.stderr)
 
         threading.Thread(target=_load_waveform, daemon=True).start()
         # ---------------------------------------------------
@@ -1644,6 +1806,44 @@ class MainWindow(QMainWindow):
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
+    def _on_queue_remove_requested(self, item_ref):
+        item_key = self.queue_mgr.get_item_key(item_ref)
+        if item_key is None:
+            return False
+        was_active = item_key == getattr(self.queue_mgr, "active_item_key", None)
+        if was_active:
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical is not None and canonical.enabled:
+                if not self._flush_canonical_save_before_transition():
+                    return False
+            else:
+                sub_editor = getattr(self, "sub_editor", None)
+                commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
+                if commit_pending_edit:
+                    commit_pending_edit()
+                tracker = getattr(self, "revision_tracker", None)
+                if tracker is not None and tracker.is_dirty:
+                    project = getattr(self.project_service, "current_project", None)
+                    project_name = getattr(project, "name", "hiện tại")
+                    reply = QMessageBox.question(
+                        self,
+                        "Lưu thay đổi?",
+                        f"Dự án '{project_name}' có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi xóa khỏi hàng đợi không?",
+                        QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                        QMessageBox.Save,
+                    )
+                    if reply == QMessageBox.Cancel:
+                        return False
+                    if reply == QMessageBox.Save and not self.action_save_project():
+                        return False
+
+        self._queue_removal_was_active = was_active
+        try:
+            self.queue_mgr.remove_video(item_key)
+        finally:
+            self._queue_removal_was_active = False
+        return True
+
     def on_queue_item_removed_handler(self, vid_path):
         self._queue_project_dirs.pop(vid_path, None)
         items = self.queue_mgr.get_items()
@@ -1651,6 +1851,14 @@ class MainWindow(QMainWindow):
             coordinator = getattr(self, "autosave_coordinator", None)
             if coordinator:
                 coordinator.clear_session()
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical:
+                canonical.cancel_pending()
+            self.project_service.close_project()
+            self.revision_tracker.reset_for_new_document()
+            recovery_manager = getattr(self, "recovery_manager", None)
+            if recovery_manager:
+                recovery_manager.finalize_clean_shutdown()
             self.video_player.cleanup()
             self.timeline_widget.clear()  
             self.sub_editor.all_segments.clear()
@@ -1658,9 +1866,15 @@ class MainWindow(QMainWindow):
             self.video_player.sub_controller.load_srt(None)
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
-        elif self.queue_mgr.active_vid:
+        elif (
+            getattr(self, "_queue_removal_was_active", False)
+            and self.queue_mgr.active_vid
+        ):
             active_ref = getattr(self.queue_mgr, "active_item_key", None)
             self.on_queue_item_clicked(active_ref or self.queue_mgr.active_vid)
+        refresh_status = getattr(self, "_update_canonical_save_status", None)
+        if callable(refresh_status):
+            refresh_status()
 
     def _load_draft_from_center(self, draft_path, silent=False):
         if not draft_path or not os.path.exists(draft_path):
@@ -2303,6 +2517,113 @@ class MainWindow(QMainWindow):
             compiled, configured=bool(context.context.strip() or context.glossary)
         )
 
+    def _restore_recovery_entry(
+        self,
+        session_id: str,
+        *,
+        linked: bool,
+        active_session_id: str | None = None,
+    ) -> bool:
+        """Restore one recovery candidate through the project lifecycle."""
+        if active_session_id is not None and session_id == active_session_id:
+            return False
+
+        recovery_manager = getattr(self, "recovery_manager", None)
+        resolve_candidate = getattr(
+            recovery_manager, "resolve_recovery_candidate", None
+        )
+        if not callable(resolve_candidate):
+            return False
+        candidate = resolve_candidate(
+            session_id, active_session_id=active_session_id
+        )
+        if candidate is None:
+            return False
+
+        manifest = candidate.manifest
+        source_info = None
+        if manifest.video_path and os.path.exists(manifest.video_path):
+            try:
+                source_info = generate_source_info(manifest.video_path)
+            except (OSError, ValueError):
+                source_info = None
+        validation = recovery_manager.validate_candidate(candidate, source_info)
+        if not validation.is_valid or (linked and not validation.source_matches):
+            return False
+
+        if not self._prepare_recovery_session_switch():
+            return False
+
+        target_open = False
+        try:
+            if linked:
+                current = getattr(self.project_service, "current_project", None)
+                current_id = getattr(current, "project_id", None)
+                if current is None or (
+                    manifest.project_id is not None
+                    and current_id != manifest.project_id
+                ):
+                    self.project_service.open_project(manifest.project_file_path)
+                    target_open = True
+                current = getattr(self.project_service, "current_project", None)
+                current_root = getattr(self.project_service, "project_dir", None)
+                if current is None:
+                    raise ValueError("target project did not become active")
+                if (
+                    manifest.project_id is not None
+                    and getattr(current, "project_id", None) != manifest.project_id
+                ):
+                    raise ValueError("target project identity mismatch")
+                if current_root and os.path.abspath(current_root) != os.path.abspath(
+                    manifest.project_file_path
+                ):
+                    raise ValueError("target project root mismatch")
+                target_open = True
+            elif getattr(self.project_service, "current_project", None) is not None:
+                self.project_service.close_project()
+                if getattr(self.project_service, "current_project", None) is not None:
+                    raise ValueError("current project did not close")
+
+            recovery_manager.release_active_session_for_switch()
+            self.apply_recovery_working_state(candidate.snapshot, linked=linked)
+            self.revision_tracker.restore_from_snapshot(
+                candidate.snapshot.edit_revision,
+                manifest.last_saved_revision,
+                manifest.last_clean_revision,
+            )
+            project = getattr(self.project_service, "current_project", None)
+            if project is not None and hasattr(project, "state"):
+                project.state.dirty = True
+
+            new_session = recovery_manager.handoff_recovered_state(
+                candidate,
+                candidate.snapshot,
+                RecoveryContext(
+                    manifest.project_id,
+                    manifest.project_file_path,
+                    manifest.video_path,
+                    manifest.source_fingerprint,
+                    manifest.source_modified_at,
+                    manifest.app_version,
+                ),
+            )
+            autosave = getattr(self, "autosave_coordinator", None)
+            if autosave is not None:
+                autosave.bind_session(new_session.session_id)
+            canonical = getattr(self, "canonical_save_coordinator", None)
+            if canonical is not None:
+                canonical.cancel_pending()
+            return True
+        except (OSError, RuntimeError, TypeError, ValueError):
+            current = getattr(self.project_service, "current_project", None)
+            if target_open and current is not None:
+                try:
+                    self.project_service.close_project()
+                except (OSError, RuntimeError):
+                    pass
+            self._rollback_recovery_session_switch()
+            return False
+
     def _show_context_inspector(self) -> None:
         self.generation_dock.show()
         self.dock_tabs.setCurrentWidget(self.context_panel)
@@ -2420,6 +2741,12 @@ class MainWindow(QMainWindow):
     def _update_window_title_dirty_marker(self, is_dirty: bool):
         title = self.windowTitle().replace(" *", "")
         self.setWindowTitle(title + (" *" if is_dirty else ""))
+        status_state = bool(is_dirty)
+        if status_state != self._last_debug_project_status_state:
+            self._last_debug_project_status_state = status_state
+            self._emit_debug_event(
+                "project_status", f"dirty state changed to {status_state}"
+            )
 
     def closeEvent(self, event):
         self._flush_canonical_save_before_close()
@@ -2597,6 +2924,7 @@ class MainWindow(QMainWindow):
             getattr(source, "modified_at", 0.0) if source else 0.0,
         ))
         self.autosave_coordinator.bind_session(session.session_id)
+        self._emit_debug_event("recovery", "session transition completed")
         return session
 
     def _prepare_recovery_session_switch(self):
@@ -2898,6 +3226,7 @@ class MainWindow(QMainWindow):
             self._update_window_title_dirty_marker(self.revision_tracker.is_dirty)
             if notify_user:
                 Toast.show_success(self, f"Đã lưu dự án '{self.project_service.current_project.name}' thành công!")
+            self._emit_debug_event("canonical_save", "save completed")
             return True
             
         except (OSError, ValueError, RuntimeError) as e:
@@ -3074,6 +3403,7 @@ class MainWindow(QMainWindow):
         if mark_dirty:
             self.project_service.mark_dirty()
         self.append_log(f"📦 [PROJECT] Đã lưu Artifact {a_type.name}: {os.path.basename(path)}")
+        self._emit_debug_event("artifact_sync", "artifact registration completed")
         return artifact
 
 if __name__ == "__main__":

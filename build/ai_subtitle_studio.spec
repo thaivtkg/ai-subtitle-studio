@@ -25,6 +25,31 @@ if os.path.exists(resources_dir):
 binaries = []
 binaries += collect_dynamic_libs('ctranslate2')
 
+# PyInstaller can collect the Poppler runtime from the configured native
+# dependency path while resolving binary dependencies.  These two Poppler ICU
+# DLLs conflict with Qt's ICU runtime in the one-folder bundle, and the app
+# has no Poppler/pdf runtime dependency.  Match the verified source path as
+# well as the filename so Qt-owned ICU files are not removed accidentally.
+_poppler_icu_names = {'icuuc.dll', 'icudt78.dll'}
+_poppler_bin_marker = os.path.normcase(
+    os.path.join('native', 'poppler', 'library', 'bin')
+)
+
+
+def _exclude_conflicting_poppler_icu(entries):
+    filtered = []
+    for entry in entries:
+        destination, source, *metadata = entry
+        source_path = os.path.normcase(os.path.normpath(str(source)))
+        source_name = os.path.basename(source_path)
+        if (
+            source_name in _poppler_icu_names
+            and _poppler_bin_marker in source_path
+        ):
+            continue
+        filtered.append((destination, source, *metadata))
+    return type(entries)(filtered)
+
 # 2. Hidden imports để tránh lỗi thiếu module ngầm của PySide6, PyTorch và nội bộ
 hiddenimports = [
     'PySide6.QtCore',
@@ -67,6 +92,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+a.binaries = _exclude_conflicting_poppler_icu(a.binaries)
 
 pyz = PYZ(a.pure)
 

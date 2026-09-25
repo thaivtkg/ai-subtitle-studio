@@ -142,17 +142,20 @@ class ActivityStreamModelTests(unittest.TestCase):
 
     def test_b2_source_filter(self):
         model = self._model("[DEBUG-WAVEFORM] debug", "[INFO-PROJECT] info", "[ERROR-WAVEFORM] error")
+        model.set_show_technical_reports(True)
         model.set_source_filter("WAVEFORM")
         self.assertEqual([e.source for e in model.visible_entries], ["WAVEFORM", "WAVEFORM"])
 
     def test_b3_combined_filter(self):
         model = self._model("[DEBUG-WAVEFORM] match", "[DEBUG-PROJECT] no", "[ERROR-WAVEFORM] no")
+        model.set_show_technical_reports(True)
         model.set_level_filter("DEBUG")
         model.set_source_filter("WAVEFORM")
         self.assertEqual([e.message for e in model.visible_entries], ["match"])
 
     def test_b4_all_restores_all_retained_entries(self):
         model = self._model("[DEBUG-WAVEFORM] debug", "[INFO-PROJECT] info")
+        model.set_show_technical_reports(True)
         model.set_level_filter("DEBUG")
         model.set_source_filter("WAVEFORM")
         model.set_level_filter("ALL")
@@ -164,6 +167,63 @@ class ActivityStreamModelTests(unittest.TestCase):
         model.set_level_filter("ERROR")
         model.set_source_filter("WAVEFORM")
         self.assertEqual([e.message for e in model.entries], ["one", "two", "three"])
+
+    def test_technical_reports_are_hidden_by_default_and_revealed_by_option(self):
+        model = self._model(
+            "[DEBUG] Resolved artifact id",
+            "[DEBUG-WAVEFORM] Old waveform trace",
+            "[RECOVERY-SNAPSHOT] recovery snapshot cycle armed",
+            "[E4-AUTOSAVE-TRACE] stage=save-start",
+            "[DEBUG][waveform] waveform accepted",
+            "[WARNING-QUEUE] queue warning",
+            "[ERROR-WAVEFORM] extraction failed",
+            "[TIMING] Timing saved",
+        )
+
+        self.assertEqual(
+            [entry.raw_text for entry in model.visible_entries],
+            [
+                "[DEBUG][waveform] waveform accepted",
+                "[WARNING-QUEUE] queue warning",
+                "[ERROR-WAVEFORM] extraction failed",
+                "[TIMING] Timing saved",
+            ],
+        )
+        self.assertEqual(len(model.entries), 8)
+
+        model.set_show_technical_reports(True)
+        self.assertEqual(len(model.visible_entries), 8)
+        model.set_show_technical_reports(False)
+        self.assertEqual(len(model.visible_entries), 4)
+        self.assertEqual(len(model.entries), 8)
+
+    def test_activity_stream_option_reveals_retained_technical_reports(self):
+        from ui.pages.dashboard_page import DashboardPage
+
+        page = DashboardPage()
+        page.append_activity_log("[RECOVERY-SNAPSHOT] recovery snapshot cycle armed")
+        page.append_activity_log("[E4-AUTOSAVE-TRACE] stage=save-start")
+        page.append_activity_log("[TIMING] Timing saved")
+
+        option = getattr(page.activity_log, "technical_reports_control", None)
+        self.assertIsNotNone(option, "Activity Stream must expose the technical-report option")
+        self.assertFalse(option.isChecked())
+        self.assertNotIn("RECOVERY-SNAPSHOT", page.activity_log.toPlainText())
+        self.assertNotIn("E4-AUTOSAVE-TRACE", page.activity_log.toPlainText())
+        self.assertIn("Timing saved", page.activity_log.toPlainText())
+
+        option.setChecked(True)
+        self.app.processEvents()
+        self.assertIn("RECOVERY-SNAPSHOT", page.activity_log.toPlainText())
+        self.assertIn("E4-AUTOSAVE-TRACE", page.activity_log.toPlainText())
+        self.assertEqual(len(page.activity_log_model.entries), 3)
+
+        option.setChecked(False)
+        self.app.processEvents()
+        self.assertNotIn("RECOVERY-SNAPSHOT", page.activity_log.toPlainText())
+        self.assertNotIn("E4-AUTOSAVE-TRACE", page.activity_log.toPlainText())
+        self.assertIn("Timing saved", page.activity_log.toPlainText())
+        self.assertEqual(len(page.activity_log_model.entries), 3)
 
     def test_c1_clear_removes_buffer_and_visible_rows(self):
         model = self._model("one", "two", "three")
@@ -375,16 +435,19 @@ class ActivityStreamUiContractTests(unittest.TestCase):
 
         self.assertIsNotNone(getattr(drawer_view, "level_filter", None))
         self.assertIsNotNone(getattr(drawer_view, "source_filter", None))
+        self.assertIsNotNone(getattr(drawer_view, "technical_reports_control", None))
         self.assertIsNotNone(getattr(drawer_view, "auto_scroll_control", None))
         self.assertIsNotNone(getattr(drawer_view, "clear_button", None))
 
         self._append(page, "[DEBUG-WAVEFORM] shared")
+        drawer_view.technical_reports_control.setChecked(True)
         drawer_view.level_filter.setCurrentText("Debug")
         drawer_view.source_filter.setCurrentText("WAVEFORM")
         drawer_view.auto_scroll_control.setChecked(False)
 
         self.assertEqual(page.activity_level_filter.currentText(), "Debug")
         self.assertEqual(page.activity_source_filter.currentText(), "WAVEFORM")
+        self.assertTrue(page.activity_technical_reports.isChecked())
         self.assertFalse(page.activity_auto_scroll.isChecked())
 
         drawer_view.clear_button.click()
@@ -433,6 +496,7 @@ class ActivityStreamUiContractTests(unittest.TestCase):
 
         page = DashboardPage()
         self._append(page, "[DEBUG-WAVEFORM] message")
+        page.activity_technical_reports.setChecked(True)
         rendered = page.activity_log.toPlainText()
         self.assertNotIn("[DEBUG-WAVEFORM]", rendered)
 
@@ -441,6 +505,7 @@ class ActivityStreamUiContractTests(unittest.TestCase):
 
         page = DashboardPage()
         self._append(page, "[DEBUG-WAVEFORM] message")
+        page.activity_technical_reports.setChecked(True)
         rendered = page.activity_log.toPlainText()
         self.assertIn("DEBUG", rendered)
         self.assertIn("WAVEFORM", rendered)
@@ -586,6 +651,7 @@ class ActivityStreamUiContractTests(unittest.TestCase):
 
         page = DashboardPage()
         self._append(page, "[DEBUG-WAVEFORM] GPU READY")
+        page.activity_technical_reports.setChecked(True)
         rendered = page.activity_log.toPlainText()
         self.assertIn("DEBUG", rendered)
         self.assertIn("WAVEFORM", rendered)

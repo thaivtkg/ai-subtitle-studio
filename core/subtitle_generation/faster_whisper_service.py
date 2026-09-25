@@ -11,7 +11,7 @@ from core.subtitle_generation.subtitle_generation_result import (
     WhisperSegmentResult,
 )
 from core.runtime.runtime_paths import RuntimePaths
-from core.services.model_manager import ModelManager
+from core.services.model_manager import ModelManager, ModelStorageError
 
 
 class FasterWhisperService:
@@ -36,14 +36,19 @@ class FasterWhisperService:
             from faster_whisper import WhisperModel
 
             model_path = ModelManager.get_model_path_for_inference(model_size)
+            models_dir = RuntimePaths.get_models_dir()
+            if model_path == model_size:
+                models_dir = ModelManager.prepare_models_storage("load model")
             self.model = WhisperModel(
                 model_path,
                 device=self.device,
                 compute_type=compute_type,
-                download_root=str(RuntimePaths.get_models_dir()),
+                download_root=str(models_dir),
             )
             self.current_model_size = model_size
             self.current_compute_type = compute_type
+        except ModelStorageError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Failed to load Faster-Whisper model: {exc}") from exc
 

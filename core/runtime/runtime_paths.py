@@ -109,11 +109,9 @@ class RuntimePaths:
 
     @classmethod
     def ensure_user_data_dirs(cls) -> None:
-        """[S7.2-T18] Khởi tạo các thư mục dữ liệu cần thiết lúc khởi động ứng dụng"""
+        """Prepare app-root and recovery directories needed during startup."""
         cls.get_user_data_dir().mkdir(parents=True, exist_ok=True)
-        cls.get_models_dir().mkdir(exist_ok=True)
         cls.get_logs_dir().mkdir(exist_ok=True)
-        cls.get_media_imports_dir().mkdir(exist_ok=True)
         cls.get_recovery_dir().mkdir(parents=True, exist_ok=True)
         cls.get_recovery_sessions_dir().mkdir(parents=True, exist_ok=True)
         cls.get_recovery_quarantine_dir().mkdir(parents=True, exist_ok=True)

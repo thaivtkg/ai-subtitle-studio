@@ -36,6 +36,13 @@ class Theme:
                 font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
                 font-size: 13px;
             }}
+            QToolTip {{
+                background-color: {cls.SURFACE_ELEVATED};
+                color: {cls.TEXT_PRIMARY};
+                border: 1px solid {cls.BORDER};
+                padding: 5px 8px;
+                border-radius: 4px;
+            }}
             /* Định dạng Scrollbar hiện đại */
             QScrollBar:vertical {{
                 background: transparent;

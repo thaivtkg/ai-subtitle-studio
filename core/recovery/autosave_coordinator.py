@@ -32,6 +32,10 @@ class AutosaveCoordinator:
         self._connected = False
         self._last_snapshot_revision = revision_tracker.snapshot_revision
 
+    @property
+    def bound_session_id(self):
+        return self._bound_session_id if self._bound else None
+
     def start(self):
         if not self._connected:
             self.revision_tracker.revision_changed.connect(self._on_revision_changed)
