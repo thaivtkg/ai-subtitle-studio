@@ -8,16 +8,11 @@
 
 1. [Giới thiệu](#-giới-thiệu)
 2. [Tính năng cốt lõi](#-tính-năng-cốt-lõi)
-3. [Bố cục Giao diện Chuẩn DAW (3-Tier Workspace)](#-bố-cục-giao-diện-chuẩn-daw-3-tier-workspace)
-4. [Bảng Phím tắt Toàn cục (Shortcuts)](#-bảng-phím-tắt-toàn-cục-shortcuts)
-5. [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
-6. [Hướng dẫn cài đặt & Chạy mã nguồn](#-hướng-dẫn-cài-đặt--chạy-mã-nguồn)
-7. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#-đóng-gói--tạo-bộ-cài-đặt-windows-installer)
-8. [Cấu trúc thư mục dự án](#-cấu-trúc-thư-mục-dự-án)
-9. [Quy trình làm việc (Workflows)](#-quy-trình-làm-việc-workflows)
-10. [Kiểm thử tự động (Automated Testing)](#-kiểm-thử-tự-động-automated-testing)
-11. [Xử lý sự cố thường gặp (Troubleshooting)](#-xử-lý-sự-cố-thường-gặp-troubleshooting)
-12. [Lộ trình phát triển (Roadmap)](#-lộ-trình-phát-triển-roadmap)
+3. [Bảng Phím tắt Toàn cục (Shortcuts)](#-bảng-phím-tắt-toàn-cục-shortcuts)
+4. [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
+5. [Hướng dẫn cài đặt & Chạy mã nguồn](#-hướng-dẫn-cài-đặt--chạy-mã-nguồn)
+6. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#dong-goi-installer)
+7. [Xử lý sự cố thường gặp (Troubleshooting)](#troubleshooting)
 
 ---
 
@@ -68,32 +63,6 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
   * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
 
 ---
-
-## 🖥️ Bố cục Giao diện Chuẩn DAW (3-Tier Workspace)
-
-Giao diện làm việc chính (`Video Workspace`) được quy hoạch theo bố cục 3 tầng dọc tối ưu luồng mắt:
-
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        TẦNG 1: VIDEO PREVIEW                           │
-│               [Khung nhìn Video + Subtitle Overlay Nổi]                │
-│               [Nút Play/Pause | Thanh Tua Seek | Âm lượng]             │
-├──────────────────────────────────────────┬─────────────────────────────┤
-│          TẦNG 2A: SUBTITLE EDITOR        │   TẦNG 2B: AI / LOG PANEL   │
-│                                          │                             │
-│  STT | Bắt đầu  | Kết thúc | Nội dung    │  [Tab AI Quick Actions]     │
-│   1  | 00:00:00 | 00:00:04 | Chào bạn... │  - Chọn Model / Mode        │
-│   2  | 00:00:04 | 00:00:08 | ...         │  - Batch Mode & Time/Count  │
-│                                          │  [Tab Live Log]             │
-│  [Chốt Timing] [Lưu Draft] [Lưu SRT]     │  - Nhật ký tiến trình ngầm  │
-├──────────────────────────────────────────┴─────────────────────────────┤
-│                         TẦNG 3: TIMELINE & WAVEFORM                    │
-│ 00:00      00:01      00:02      00:03      00:04      00:05      │
-│ ════════════════════════ Waveform Sóng Âm ════════════════════════════ │
-│   [ #1 Chào bạn... ]   [ #2 ...          ]                             │
-│          │ (Playhead Đồng bộ Kim thời gian)                            │
-└────────────────────────────────────────────────────────────────────────┘
-```
 
 ## ⌨️ Bảng Phím tắt Toàn cục (Shortcuts)
 
@@ -185,6 +154,8 @@ python main.py
 
 ```
 
+<a id="dong-goi-installer"></a>
+
 ## 🛠️ Đóng gói & Tạo bộ cài đặt Windows (Installer)
 
 ### 1. Đóng gói mã nguồn thành File thực thi (`PyInstaller`)
@@ -201,66 +172,57 @@ python main.py
 2. Chạy `scripts/build_windows.ps1`; script sẽ gọi `installer/setup.iss` nếu Inno Setup đã được cài.
 3. File cài đặt được xuất vào thư mục `release/`.
 
-## 📂 Cấu trúc thư mục dự án
+<a id="troubleshooting"></a>
 
+## 🧰 Xử lý sự cố thường gặp (Troubleshooting)
 
-```
-ai-subtitle-studio/
-├── ffmpeg/                       # Binary FFmpeg / FFprobe độc lập
-├── resources/                    # Icon, tutorial catalog và media nội bộ
-├── tools/                        # Công cụ phát triển, gồm demo-capture
-├── core/                         # Tầng Logic Xử lý Cốt lõi
-│   ├── artifacts/                # Quản lý Artifact & Vòng đời Subtitle/Draft
-│   ├── subtitle_generation/      # Domain Faster-Whisper, Planner, Reconciler, Checkpoint
-│   ├── services/                 # Quản lý Trạng thái Dự án & Workspace
-│   ├── timeline/                 # Động cơ Timeline & Quản lý Lệnh (Undo/Redo)
-│   ├── timing/                   # Thuật toán Timing & VAD Batching
-│   ├── tutorial/                 # Guided tour và progress store
-│   ├── waveform/                 # Dịch vụ Trích xuất Sóng âm Background
-│   └── queue_manager.py          # Quản lý danh sách hàng đợi Video
-├── installer/                    # Kịch bản đóng gói Inno Setup
-├── player/                       # Thành phần Video Player (QGraphicsView)
-├── tests/                        # Bộ kiểm thử Tự động (Automated Test Suite)
-│   └── test_subtitle_generation.py
-├── ui/                           # Giao diện Người dùng PySide6 (Qt6)
-│   ├── subtitle_generation_panel.py # Panel ngăn kéo cấu hình ASR & Batch
-│   ├── demo_capture/             # Encoder/capture cho tutorial tooling
-│   ├── Gui.py                    # Cửa sổ Chính & Điều phối Sự kiện Toàn cục
-│   └── SubEditor.py              # Bảng Biên tập Phụ đề Dạng Lưới
-├── workers/                      # Background Worker Threads (Hardsub, Subtitle Gen)
-├── requirements.txt              # Profile dependency nền linh hoạt
-├── requirements-runtime.txt      # Profile runtime/reproducible đã ghim
-└── requirements-dev.txt          # Dependency development/test-only
+### Ứng dụng không khởi động từ mã nguồn
 
-```
+Đảm bảo môi trường ảo đã được kích hoạt và các dependency đã được cài đúng profile:
 
-## 🧪 Kiểm thử tự động (Automated Testing)
-
-Sau khi kích hoạt `.venv`, cài phần bổ sung dành cho development/test:
-
-```bash
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
+python main.py
 ```
 
-Chạy bộ kiểm thử tích hợp (bao gồm kiểm tra Time/Segment Planner, Stale Guard, Checkpoint Resume và Boundary Reconciliation):
+Nếu dùng profile runtime đã ghim, thay `requirements.txt` bằng `requirements-runtime.txt`.
 
+### Không tìm thấy FFmpeg / FFprobe
 
-```bash
-python -m unittest tests/test_subtitle_generation.py -v
-python -m unittest tests/test_timeline.py -v
+Đặt `ffmpeg.exe` và `ffprobe.exe` trong thư mục `ffmpeg/` của dự án hoặc thêm thư mục chứa chúng vào `PATH`.
+
+Kiểm tra nhanh:
+
+```powershell
+ffmpeg -version
+ffprobe -version
 ```
 
-Chạy toàn bộ test suite:
+### CUDA / GPU không hoạt động
 
-```bash
-python -m unittest discover -s tests -v
+Nếu nhận dạng giọng nói hoặc tác vụ AI không dùng được GPU, kiểm tra driver NVIDIA và môi trường PyTorch/CUDA đang cài. Có thể xác minh nhanh bằng:
+
+```powershell
+python -c "import torch; print(torch.cuda.is_available()); print(torch.version.cuda)"
 ```
 
-Trên Linux CI/headless, dùng:
+Nếu `torch.cuda.is_available()` trả về `False`, ứng dụng vẫn có thể chạy bằng CPU nếu tác vụ tương ứng hỗ trợ.
 
-```bash
-QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
+### Lỗi quyền truy cập thư mục dữ liệu người dùng
 
+Ứng dụng lưu dữ liệu runtime trong hồ sơ người dùng Windows. Hãy chạy ứng dụng bằng tài khoản Windows đang sở hữu hồ sơ đó và tránh tự gán `LOCALAPPDATA` sang hồ sơ của tài khoản khác.
+
+Nếu lỗi quyền vẫn xuất hiện, kiểm tra quyền truy cập của thư mục dữ liệu ứng dụng trong `%LOCALAPPDATA%`.
+
+### Build Windows thất bại vì không tìm thấy PyInstaller
+
+Kích hoạt `.venv` trước khi chạy script build, hoặc bảo đảm `.venv\Scripts` có trong `PATH` của phiên terminal hiện tại:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+.\scripts\build_windows.ps1
 ```
 
 ## 📄 Giấy phép
