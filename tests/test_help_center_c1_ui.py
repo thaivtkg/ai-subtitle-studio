@@ -79,7 +79,10 @@ class TestHelpCenterC1RuntimeShortcutProvider(unittest.TestCase):
         page = HelpCenterPage(controller, None)
         page._search.setText("first")
         page._search.setText("second")
-        QTest.qWait(220)
+        self._wait_until(
+            lambda: controller.queries == ["second"],
+            timeout_ms=1500,
+        )
         self.assertEqual(controller.queries, ["second"])
         self.assertTrue(
             any(label.text().startswith("Second") for label in page._cards.findChildren(QLabel))

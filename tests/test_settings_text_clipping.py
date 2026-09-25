@@ -119,6 +119,21 @@ class SettingsTextClippingContracts(unittest.TestCase):
                     metrics = QFontMetrics(widget.font())
                     text = self._widget_text(widget)
                     with self.subTest(text=text):
+                        if isinstance(widget, QCheckBox) and not text:
+                            option = QStyleOptionButton()
+                            option.initFrom(widget)
+                            option.rect = widget.rect()
+                            indicator = widget.style().subElementRect(
+                                QStyle.SubElement.SE_CheckBoxIndicator,
+                                option,
+                                widget,
+                            )
+                            self.assertTrue(
+                                widget.contentsRect().contains(indicator),
+                                f"Checkbox indicator {indicator.getRect()} is outside "
+                                f"content rect {widget.contentsRect().getRect()}",
+                            )
+                            continue
                         self.assertGreaterEqual(
                             widget.contentsRect().height(),
                             metrics.height(),
