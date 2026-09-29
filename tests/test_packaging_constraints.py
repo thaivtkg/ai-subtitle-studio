@@ -1,3 +1,4 @@
+import ast
 import unittest
 from pathlib import Path
 
@@ -19,16 +20,17 @@ class TestPackagingConstraints(unittest.TestCase):
             "It must be excluded to maintain the SSRF boundary."
         )
 
-    def test_spec_file_excludes_curl_cffi(self):
-        spec_files = list(Path(".").glob("*.spec"))
-        if not spec_files:
-            self.skipTest("No .spec file found in project root")
-        for spec in spec_files:
-            self.assertIn(
-                "curl_cffi",
-                spec.read_text(encoding="utf-8"),
-                f"File {spec.name} is missing curl_cffi exclusion",
-            )
+    def test_active_spec_excludes_curl_cffi(self):
+        spec = Path(__file__).resolve().parents[1] / "build" / "ai_subtitle_studio.spec"
+        tree = ast.parse(spec.read_text(encoding="utf-8"), filename=str(spec))
+        analyses = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "Analysis"
+        ]
+        self.assertEqual(len(analyses), 1)
+        excludes = next(kw.value for kw in analyses[0].keywords if kw.arg == "excludes")
+        self.assertIn("curl_cffi", ast.literal_eval(excludes))
 
 
 if __name__ == "__main__":

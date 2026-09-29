@@ -88,7 +88,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # LƯU Ý: Không loại trừ 'unittest' vì PyTorch cần nó
-    excludes=['tkinter', 'pytest', 'IPython', 'notebook'],
+    excludes=['tkinter', 'pytest', 'IPython', 'notebook', 'curl_cffi'],
     noarchive=False,
     optimize=0,
 )
