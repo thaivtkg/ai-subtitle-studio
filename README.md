@@ -13,6 +13,7 @@
 5. [Hướng dẫn cài đặt & Chạy mã nguồn](#-hướng-dẫn-cài-đặt--chạy-mã-nguồn)
 6. [Đóng gói & Tạo bộ cài đặt Windows (Installer)](#dong-goi-installer)
 7. [Xử lý sự cố thường gặp (Troubleshooting)](#troubleshooting)
+8. [Tài liệu thiết kế và lịch sử dự án](docs/README.md)
 
 ---
 
@@ -224,6 +225,10 @@ Kích hoạt `.venv` trước khi chạy script build, hoặc bảo đảm `.ven
 .\.venv\Scripts\Activate.ps1
 .\scripts\build_windows.ps1
 ```
+
+## 📚 Tài liệu thiết kế và lịch sử dự án
+
+Các design spec, implementation plan và hồ sơ review lịch sử được liệt kê tại [docs/README.md](docs/README.md). Checklist trong tài liệu cũ không đại diện cho backlog hiện hành.
 
 ## 📄 Giấy phép
 

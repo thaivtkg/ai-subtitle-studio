@@ -68,9 +68,6 @@ def main():
     # 0. Khởi tạo toàn bộ cấu trúc thư mục Dữ liệu Người dùng ngay khi app mở
     RuntimePaths.ensure_user_data_dirs()
 
-    if os.name == 'nt':
-        myappid = 'aisubtitlestudio.v0.1.alpha' 
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
 
     guard = SingleInstanceGuard()
@@ -297,8 +294,6 @@ def suppress_qt_warnings(mode, context, message):
     # Nếu log là cảnh báo (Warning) và chứa dòng chữ QFont::setPointSize, lờ nó đi
     if mode == QtMsgType.QtWarningMsg and "QFont::setPointSize" in message:
         return
-    # Nếu là lỗi khác, vẫn có thể in ra bình thường (tùy chọn)
-        print(message)
 
 if __name__ == "__main__":
     qInstallMessageHandler(suppress_qt_warnings)
