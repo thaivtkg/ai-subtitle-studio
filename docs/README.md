@@ -28,6 +28,8 @@ Các plan/spec dưới đây là hồ sơ thiết kế và triển khai tại th
 
 ## Build/test cleanup debt
 
-`AISubtitleStudio_v0.1.0_Alpha.spec` không được build flow hiện tại dùng làm spec chính; build gọi `build/ai_subtitle_studio.spec`. Tuy nhiên `tests/test_packaging_constraints.py` quét `*.spec` ở repository root và áp dụng assertion lên các spec đó. Đây là coupling của test/build contract cần xử lý trong phase riêng; không xóa spec hoặc sửa test tại đây.
+**RESOLVED — CLEANUP.6 (`7ae2b3a6`):** Build dùng `build/ai_subtitle_studio.spec`; `tests/test_packaging_constraints.py` kiểm tra trực tiếp spec này thay vì quét `*.spec` ở root. Spec Alpha cũ đã được xóa; `curl_cffi` vẫn được loại khỏi bundle theo packaging policy.
+
+**REVIEW-LATER:** `test_curl_cffi_is_strictly_excluded` kiểm tra môi trường Python chạy test, không tự chứng minh nội dung bundle. Cần xem lại contract và thông báo lỗi `SECURITY BREACH` / `maintain the SSRF boundary` trong phase test riêng; CLEANUP.6 không xác lập đã có lỗ hổng SSRF.
 
 README chính: [README.md](../README.md).
