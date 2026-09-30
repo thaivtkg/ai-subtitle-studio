@@ -1752,16 +1752,7 @@ class MainWindow(QMainWindow):
         self.video_player.load_video(vid_path)
 
         # 1. [FIX REVIEW 1] LUÔN LOAD SRT VÀO GIAO DIỆN TRƯỚC ĐỂ TRÁNH LỖI TRỐNG DỮ LIỆU
-        if srt_path and os.path.exists(srt_path):
-            if srt_path.endswith('.ai-subtitle-draft'):
-                self.sub_editor.load_draft_file(srt_path)
-            else:
-                self.sub_editor.load_srt_file(srt_path)
-            self.video_player.sub_controller.load_srt(srt_path)
-        else:
-            self.sub_editor.all_segments.clear()
-            self.sub_editor.render_page()
-            self.video_player.sub_controller.load_srt(None)
+        self._load_context_subtitles(srt_path)
 
         # 2. KHỞI CHẠY LUỒNG SÓNG ÂM (Background Worker)
         from core.waveform.waveform_service import WaveformService
@@ -1800,16 +1791,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_load_waveform, daemon=True).start()
         # ---------------------------------------------------
 
-        if srt_path and os.path.exists(srt_path):
-            if srt_path.endswith('.ai-subtitle-draft'):
-                self.sub_editor.load_draft_file(srt_path)
-            else:
-                self.sub_editor.load_srt_file(srt_path)
-            self.video_player.sub_controller.load_srt(srt_path)
-        else:
-            self.sub_editor.all_segments.clear()
-            self.sub_editor.render_page()
-            self.video_player.sub_controller.load_srt(None)
+        self._load_context_subtitles(srt_path)
 
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
@@ -2358,7 +2340,7 @@ class MainWindow(QMainWindow):
         except (OSError, RuntimeError, ValueError) as exc:
             self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
 
-    def _on_generation_batch_sync(self, batch=None, segments=None):
+    def _on_generation_batch_sync(self, batch=None, segments=None, *, artifact=None):
         """Persist the generated Shadow SRT without disturbing the active editor."""
         for segment in segments or []:
             start_str = self.timing_service._ms_to_time_str(segment.start_ms)
@@ -2366,12 +2348,11 @@ class MainWindow(QMainWindow):
             self.append_log(f"[{start_str} --> {end_str}] {segment.text}")
 
         project = self.project_service.current_project
-        if not project or not project.state.subtitle_artifact_id:
+        if not project:
             return None
 
-        artifact = self.project_service.artifact_store.get(
-            project.state.subtitle_artifact_id
-        )
+        if artifact is None:
+            artifact = self.project_service.artifact_store.get(project.state.subtitle_artifact_id)
         if not artifact or not os.path.exists(artifact.path):
             return None
 
@@ -2421,24 +2402,54 @@ class MainWindow(QMainWindow):
             self._load_generated_subtitles_into_ui(shadow_srt_path)
         self.generation_panel._on_finish()
 
+    def _load_context_subtitles(self, subtitle_path):
+        """Hydrate known canonical artifacts; parse only genuine SRT inputs."""
+        from core.artifacts.artifact_types import ArtifactType
+
+        project = self.project_service.current_project
+        artifact = None
+        if project and subtitle_path:
+            for artifact_id in (project.state.subtitle_artifact_id, project.state.active_artifact_id):
+                candidate = self.project_service.artifact_store.get(artifact_id)
+                if candidate and candidate.artifact_type == ArtifactType.SUBTITLE:
+                    shadow = candidate.path.replace(".sub.json", "_shadow.srt")
+                    if any(os.path.normcase(os.path.abspath(subtitle_path)) == os.path.normcase(os.path.abspath(path))
+                           for path in (candidate.path, shadow)):
+                        artifact = candidate
+                        break
+        if artifact is not None:
+            if artifact.source_project_id != project.project_id:
+                raise ValueError("Subtitle artifact does not belong to the current project.")
+            active_video = getattr(self.queue_mgr, "active_vid", None)
+            if active_video:
+                item = self.queue_mgr.get_item(self.queue_mgr.active_item_key) or {}
+                if (not self.project_service.is_current_project_for_video(active_video)
+                        or not self._queue_project_identity_matches(item.get("project_id"), item.get("project_root"))):
+                    raise ValueError("Subtitle artifact does not belong to the active media context.")
+            data = self.subtitle_generation_service.artifact_service.load_data(artifact.path)
+            shadow = artifact.path.replace(".sub.json", "_shadow.srt")
+            if os.path.normcase(os.path.abspath(subtitle_path)) == os.path.normcase(os.path.abspath(artifact.path)):
+                shadow = self._on_generation_batch_sync(artifact=artifact)
+                if shadow is None:
+                    raise RuntimeError("Cannot render the canonical subtitle artifact as Shadow SRT.")
+            self.sub_editor.load_canonical_segments(data["segments"], shadow)
+            self.video_player.sub_controller.load_srt(shadow)
+        elif subtitle_path and os.path.exists(subtitle_path):
+            if subtitle_path.endswith(".ai-subtitle-draft"):
+                self.sub_editor.load_draft_file(subtitle_path)
+            else:
+                self.sub_editor.load_srt_file(subtitle_path)
+            self.video_player.sub_controller.load_srt(subtitle_path)
+        else:
+            self.sub_editor.all_segments.clear()
+            self.sub_editor.render_page()
+            self.video_player.sub_controller.load_srt(None)
+
     def _load_generated_subtitles_into_ui(self, shadow_srt_path):
         """Reload editor, player and timeline only after a full ASR run completes."""
-
-        self.sub_editor.load_srt_file(shadow_srt_path)
-        # Shadow SRT is a player/export view, not the identity/metadata owner.
-        project = self.project_service.current_project
-        artifact = self.project_service.artifact_store.get(project.state.subtitle_artifact_id) if project else None
-        if artifact:
-            data = self.subtitle_generation_service.artifact_service.load_data(artifact.path)
-            self.sub_editor.all_segments = copy.deepcopy(data["segments"])
-            for index, row in enumerate(self.sub_editor.all_segments, 1):
-                row["stt"] = str(index)
-                row["start"] = self.timing_service._ms_to_time_str(row["start_ms"])
-                row["end"] = self.timing_service._ms_to_time_str(row["end_ms"])
-            self.sub_editor.render_page()
+        self._load_context_subtitles(shadow_srt_path)
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
-        self.video_player.sub_controller.load_srt(shadow_srt_path)
 
         duration_ms = self.generation_panel.video_duration_ms
         if duration_ms <= 0 and hasattr(self.video_player, "player"):

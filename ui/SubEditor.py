@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -739,7 +740,19 @@ class SubtitleEditorWidget(QWidget):
         if not srt_path or not os.path.exists(srt_path):
             return
         with open(srt_path, "r", encoding="utf-8", errors="ignore") as handle:
-            self.all_segments = parse_srt_content(handle.read())
+            segments = parse_srt_content(handle.read())
+        self._load_segments(segments, srt_path)
+
+    def load_canonical_segments(self, segments, srt_path):
+        rows = copy.deepcopy(segments)
+        for index, row in enumerate(rows, 1):
+            row["stt"] = str(index)
+            row["start"] = ms_to_time_str(row["start_ms"])
+            row["end"] = ms_to_time_str(row["end_ms"])
+        self._load_segments(rows, srt_path)
+
+    def _load_segments(self, segments, srt_path):
+        self.all_segments = segments
         self.srt_path = srt_path
         self.current_page = 0
         self.render_page()
@@ -823,15 +836,7 @@ class SubtitleEditorWidget(QWidget):
         if not getattr(self, "project_service", None) or not draft_path:
             return
         data = self.project_service.load_draft(draft_path)
-        self.srt_path = draft_path
-        self.all_segments = data.get("segments", [])
-        self.current_page = 0
-        self.render_page()
-        if self.undo_manager:
-            self.undo_manager.clear()
-        if self.selection_controller:
-            self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
-        self.update_draft_progress()
+        self._load_segments(data.get("segments", []), draft_path)
 
     def on_row_double_clicked(self, row, column):
         start_item = self.table.item(row, 1)
