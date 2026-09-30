@@ -500,7 +500,19 @@ class SubtitleGenerationPanel(QWidget):
                 existing_segments=existing_segments,
             )
         except Exception as exc:
-            self._on_error(str(exc))
+            self._on_error(self._range_error_message(str(exc)))
+
+    @staticmethod
+    def _range_error_message(message):
+        if message.startswith("TIMING_RECONCILIATION_REQUIRED:"):
+            return "Kết quả phụ đề vượt ngoài khoảng thời gian đã chọn. Khoảng hiện có chưa được thay đổi."
+        if message.startswith("STALE_RANGE_CONFLICT:"):
+            return "Khoảng đã chọn đã thay đổi. Vui lòng kiểm tra lại trước khi tạo."
+        if message.startswith("RECONCILIATION_UNSAFE:"):
+            return "Không thể tự điều chỉnh thời gian an toàn. Phụ đề chưa được thêm."
+        if message.startswith("OVERLAPS_SUBTITLE:"):
+            return "Khoảng đã chọn hiện có phụ đề; hãy chọn một khoảng trống khác."
+        return message
 
     @Slot()
     def _on_resume_clicked(self):

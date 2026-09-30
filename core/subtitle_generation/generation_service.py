@@ -24,8 +24,13 @@ from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
 )
 from core.subtitle_generation.generation_range import (
+    GenerationRange,
     GenerationRangeStatus,
     validate_generation_range,
+)
+from core.subtitle_generation.generation_timing_reconciler import (
+    ReconciliationStatus,
+    reconcile_generated_timing,
 )
 from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult,
@@ -63,10 +68,12 @@ class SubtitleGenerationService(QObject):
         self._is_range_generation = False
         self._range_committed = False
         self._range_artifact_id = None
+        self._range_state_artifact_id = None
         self._range_artifact_revision = 0
         self._range_artifact_hash = ""
         self._range_duration_ms = 0
         self._range_editor_segments = []
+        self.last_range_reconciliation = None
         self.range_segments_provider = None
 
         # Optional UI callbacks kept decoupled from the service.
@@ -179,7 +186,9 @@ class SubtitleGenerationService(QObject):
 
         self._is_range_generation = True
         self._range_committed = False
+        self.last_range_reconciliation = None
         self._range_artifact_id = artifact.artifact_id if artifact else None
+        self._range_state_artifact_id = artifact_id
         self._range_artifact_revision = artifact.revision if artifact else 0
         self._range_artifact_hash = (
             self.artifact_service.content_hash(artifact.path)
@@ -311,7 +320,15 @@ class SubtitleGenerationService(QObject):
             self.current_checkpoint.active_batch = None
             self.current_checkpoint.updated_at = self._now()
             self._save_checkpoint()
-            self._notify_progress(100, "Subtitle generation completed.")
+            completion_message = "Subtitle generation completed."
+            report = self.last_range_reconciliation
+            if (
+                self._is_range_generation
+                and report
+                and report.changed_segment_count
+            ):
+                completion_message = "Đã tạo phụ đề và tự điều chỉnh thời gian."
+            self._notify_progress(100, completion_message)
             self._pending_finish = True
             self._complete_terminal_if_idle()
             return
@@ -492,22 +509,6 @@ class SubtitleGenerationService(QObject):
         try:
             if not result.segments:
                 raise RuntimeError("No subtitle segments were generated for this range.")
-            for segment in result.segments:
-                try:
-                    start_ms, end_ms = int(segment.start_ms), int(segment.end_ms)
-                except (TypeError, ValueError, OverflowError):
-                    raise RuntimeError("Generated subtitle timing is invalid.")
-                if start_ms < batch.start_ms or end_ms > batch.end_ms or end_ms <= start_ms:
-                    raise RuntimeError(
-                        "TIMING_RECONCILIATION_REQUIRED: generated timing falls outside the selected range."
-                    )
-
-            generated = SubtitleGenerationValidator.validate(
-                result.segments, batch.start_ms, batch.end_ms
-            )
-            if not generated:
-                raise RuntimeError("No valid subtitle text was generated for this range.")
-
             project = self._require_project()
             self._validate_request_source(self.current_request, project)
             state_artifact_id = getattr(project.state, "subtitle_artifact_id", None)
@@ -515,14 +516,6 @@ class SubtitleGenerationService(QObject):
                 self.project_service.artifact_store.get(state_artifact_id)
                 if state_artifact_id else None
             )
-            if (artifact.artifact_id if artifact else None) != self._range_artifact_id:
-                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
-            if artifact and artifact.revision != self._range_artifact_revision:
-                raise RuntimeError("STALE_SUBTITLE: artifact revision changed during range generation.")
-            if artifact and self._range_artifact_hash:
-                if self.artifact_service.content_hash(artifact.path) != self._range_artifact_hash:
-                    raise RuntimeError("STALE_SUBTITLE_FILE: artifact changed during range generation.")
-
             editor_segments = (
                 self.range_segments_provider()
                 if callable(self.range_segments_provider)
@@ -534,13 +527,34 @@ class SubtitleGenerationService(QObject):
                 else {"version": 1, "segments": []}
             )
             artifact_rows = artifact_data.get("segments", [])
-            validation = validate_generation_range(
-                batch.start_ms, batch.end_ms, self._range_duration_ms,
-                list(editor_segments or []) + list(artifact_rows),
+            current_subtitles = list(editor_segments or []) + list(artifact_rows)
+            reconciled = reconcile_generated_timing(
+                GenerationRange(batch.start_ms, batch.end_ms),
+                result.segments,
+                self._range_duration_ms,
+                current_subtitles=current_subtitles,
             )
-            if validation.status != GenerationRangeStatus.VALID:
-                raise RuntimeError("OVERLAPS_SUBTITLE: subtitle timing changed during generation.")
+            self.last_range_reconciliation = reconciled
+            if reconciled.status == ReconciliationStatus.STALE_RANGE_CONFLICT:
+                raise RuntimeError(f"STALE_RANGE_CONFLICT: {reconciled.reason}")
+            if reconciled.status != ReconciliationStatus.SUCCESS:
+                raise RuntimeError(f"RECONCILIATION_UNSAFE: {reconciled.reason}")
 
+            if state_artifact_id != self._range_state_artifact_id:
+                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
+            if (artifact.artifact_id if artifact else None) != self._range_artifact_id:
+                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
+            if artifact and artifact.revision != self._range_artifact_revision:
+                raise RuntimeError("STALE_SUBTITLE: artifact revision changed during range generation.")
+            if artifact and self._range_artifact_hash:
+                if self.artifact_service.content_hash(artifact.path) != self._range_artifact_hash:
+                    raise RuntimeError("STALE_SUBTITLE_FILE: artifact changed during range generation.")
+
+            generated = SubtitleGenerationValidator.validate(
+                list(reconciled.segments), batch.start_ms, batch.end_ms
+            )
+            if len(generated) != len(reconciled.segments):
+                raise RuntimeError("RECONCILIATION_UNSAFE: generated output failed subtitle validation.")
             rows = self._merge_editor_rows(artifact_rows, editor_segments or [])
             rows.extend(
                 {

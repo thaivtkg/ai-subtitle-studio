@@ -2002,10 +2002,7 @@ class MainWindow(QMainWindow):
         self.timeline_widget.set_generation_busy(False)
         request = self.subtitle_generation_service.current_request
         if request and request.range_start_ms is not None:
-            if message.startswith("TIMING_RECONCILIATION_REQUIRED:"):
-                message = "Kết quả phụ đề vượt ngoài khoảng thời gian đã chọn. Khoảng hiện có chưa được thay đổi."
-            elif message.startswith("OVERLAPS_SUBTITLE:"):
-                message = "Khoảng đã chọn hiện có phụ đề; hãy chọn một khoảng trống khác."
+            message = self.generation_panel._range_error_message(message)
         self.generation_panel._on_error(message)
 
     def _queue_update_progress(self, percent, message):

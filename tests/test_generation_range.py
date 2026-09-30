@@ -337,19 +337,58 @@ class TestRangeGenerationTransaction(unittest.TestCase):
         self.assertIsNone(self.project_service.artifact_store.get("sub_123"))
         self.assertEqual(self.dirty_calls, [])
 
-    def test_asr_result_outside_range_does_not_create_artifact_or_checkpoint(self):
+    def test_asr_result_outside_range_is_shifted_before_atomic_insertion(self):
         from core.subtitle_generation.subtitle_generation_result import SubtitleGenerationResult, WhisperSegmentResult
 
         self.whisper.transcribe_batch = lambda _request, batch, _cancel: SubtitleGenerationResult(
-            batch.batch_id, [WhisperSegmentResult(7900, 8100, "outside")]
+            batch.batch_id, [WhisperSegmentResult(7900, 8100, "boundary")]
         )
         errors = []
         self.service.on_error = errors.append
         self.service.start_generation(self.request, 10000, existing_segments=[])
 
-        checkpoint_path = self.service.checkpoint_manager._get_checkpoint_path()
-        self.assertEqual(self.project_service.current_project.state.subtitle_artifact_id, "sub_123")
-        self.assertIsNone(self.project_service.artifact_store.get("sub_123"))
-        self.assertFalse(os.path.exists(checkpoint_path))
+        artifact = self.project_service.artifact_store.get("sub_123")
+        self.assertIsNotNone(artifact)
+        self.assertEqual(errors, [])
+        rows = self.service.artifact_service.load_data(artifact.path)["segments"]
+        self.assertEqual((rows[0]["start_ms"], rows[0]["end_ms"]), (7800, 8000))
+        self.assertEqual(rows[0]["text"], "boundary")
+        self.assertEqual(len(self.dirty_calls), 1)
+        self.assertEqual(self.service.last_range_reconciliation.global_shift_ms, -100)
+        self.assertEqual(self.service.last_range_reconciliation.changed_segment_count, 1)
+
+    def test_new_subtitle_coverage_during_asr_blocks_atomic_commit(self):
+        from core.subtitle_generation.subtitle_generation_result import (
+            SubtitleGenerationResult,
+            WhisperSegmentResult,
+        )
+        from workers.subtitle_generation_worker import SubtitleGenerationWorker
+
+        artifact = self.service.artifact_service.get_or_create_artifact()
+        self.dirty_calls.clear()
+        SubtitleGenerationWorker.start = lambda _worker: None
+        errors = []
+        self.service.on_error = errors.append
+        self.service.start_generation(self.request, 10000, existing_segments=[])
+        current_row = {"id": "new", "start_ms": 6000, "end_ms": 7000, "text": "newer edit"}
+        self.service.artifact_service._save_atomic(
+            artifact.path, {"version": 1, "segments": [current_row]}
+        )
+        artifact.revision += 1
+        self.service.range_segments_provider = lambda: [current_row]
+        batch = self.service.current_batches[0]
+
+        self.service._commit_range_batch(
+            batch,
+            SubtitleGenerationResult(
+                batch.batch_id, [WhisperSegmentResult(3100, 5000, "generated")]
+            ),
+        )
+
+        self.assertTrue(any(error.startswith("STALE_RANGE_CONFLICT:") for error in errors))
+        self.assertEqual(
+            self.service.artifact_service.load_data(artifact.path)["segments"],
+            [current_row],
+        )
         self.assertEqual(self.dirty_calls, [])
-        self.assertTrue(any("TIMING_RECONCILIATION_REQUIRED" in error for error in errors))
+        self.assertEqual(batch.status, "FAILED")
