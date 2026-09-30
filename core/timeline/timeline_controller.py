@@ -35,6 +35,8 @@ class TimelineController(QObject):
             self.ui.container.ruler.setFocusPolicy(Qt.StrongFocus)
             
         self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
+        if hasattr(self.ui, "gap_selected"):
+            self.ui.gap_selected.connect(self._on_gap_selected)
         
         self.ui.installEventFilter(self)
         if hasattr(self.ui.container, 'ruler'):
@@ -97,6 +99,8 @@ class TimelineController(QObject):
             self.ui.center_on_time((segment.start_ms + segment.end_ms) // 2)
 
     def sync_selection(self, index, segment_id, source=None):
+        if hasattr(self.ui, "clear_gap_selection"):
+            self.ui.clear_gap_selection()
         track = self.ui.container.track
         segment = None
         if segment_id:
@@ -118,6 +122,10 @@ class TimelineController(QObject):
         if source == SelectionSource.EDITOR and hasattr(self.ui, "center_on_time"):
             midpoint_ms = (segment.start_ms + segment.end_ms) // 2
             self.ui.center_on_time(midpoint_ms)
+
+    def _on_gap_selected(self, gap):
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.TIMELINE)
 
     # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
     def sync_from_editor(self, ms: int):

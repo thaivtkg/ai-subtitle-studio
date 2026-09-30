@@ -13,6 +13,7 @@ class EditMode(Enum):
 
 class SubtitleTrack(QWidget):
     segment_clicked = Signal(str, bool)
+    gap_clicked = Signal(object)
     edit_committed = Signal(str, EditMode, int)
     
     action_split_requested = Signal(str)
@@ -26,6 +27,8 @@ class SubtitleTrack(QWidget):
         self.setFixedHeight(60)
         self.setFocusPolicy(Qt.StrongFocus)
         self.segments = []
+        self.gaps = []
+        self.selected_gap = None
         self.pixels_per_second = 100
         self.duration_ms = 0
         
@@ -52,6 +55,20 @@ class SubtitleTrack(QWidget):
         self.duration_ms = duration_ms
         self.update_geometry_size()
         self.update()
+
+    def set_gaps(self, gaps):
+        self.gaps = gaps
+        self.selected_gap = None
+        self.update()
+
+    def _gap_at(self, x, marker=False):
+        for gap in self.gaps:
+            left, right = self._ms_to_x(gap.start_ms), self._ms_to_x(gap.end_ms)
+            if left <= x < max(left + 1, right):
+                return gap
+            if marker and left - 5 <= x <= right + 5:
+                return gap
+        return None
 
     def set_zoom(self, pixels_per_second: int):
         self.pixels_per_second = max(10, min(pixels_per_second, 1000))
@@ -91,7 +108,17 @@ class SubtitleTrack(QWidget):
     def mousePressEvent(self, event):
         self.setFocus()
         if event.button() == Qt.LeftButton:
-            seg, mode = self.get_hit_target(event.pos().x())
+            # The narrow top marker keeps even a 1 ms gap clickable without
+            # stealing the existing subtitle edge-drag interaction.
+            point = event.position().toPoint()
+            gap = self._gap_at(point.x(), marker=point.y() < 5)
+            seg, mode = self.get_hit_target(point.x())
+            if gap is not None and (point.y() < 5 or seg is None):
+                self.selected_ids.clear()
+                self.update()
+                self.gap_clicked.emit(gap)
+                super().mousePressEvent(event)
+                return
             is_ctrl = event.modifiers() == Qt.ControlModifier
             
             if seg:
@@ -189,6 +216,12 @@ class SubtitleTrack(QWidget):
         
         rect = event.rect()
         painter.fillRect(rect, QColor(Theme.SURFACE))
+
+        for gap in self.gaps:
+            x1 = self._ms_to_x(gap.start_ms)
+            x2 = self._ms_to_x(gap.end_ms)
+            marker = QRect(x1, 0, max(8, x2 - x1), 4)
+            painter.fillRect(marker, QColor(Theme.CYAN if gap == self.selected_gap else Theme.WARNING))
 
         if not self.segments: return
 
