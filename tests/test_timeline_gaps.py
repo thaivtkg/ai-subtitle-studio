@@ -81,9 +81,10 @@ class TestTimelineGapSelection(unittest.TestCase):
         QTest.mouseClick(track, Qt.LeftButton, pos=track.rect().center())
         self.assertEqual((timeline.selected_gap.start_ms, timeline.selected_gap.end_ms), (1000, 3000))
         self.assertEqual(timeline.container.waveform._selected_range_ms, (1000, 3000))
-        self.assertIn("00:00:01,000", timeline.container.gap_details.text())
-        self.assertIn("00:00:03,000", timeline.container.gap_details.text())
-        self.assertFalse(timeline.container.generate_gap_button.isEnabled())
+        self.assertEqual(timeline.container.start_range_edit.text(), "00:00:01,000")
+        self.assertEqual(timeline.container.end_range_edit.text(), "00:00:03,000")
+        self.assertEqual(timeline.container.range_duration.text(), "00:00:02,000")
+        self.assertTrue(timeline.container.generate_gap_button.isEnabled())
         self.assertEqual((raw[0].start_ms, raw[0].end_ms), (0, 1000))
 
     def test_reload_or_subtitle_click_clears_selected_gap(self):

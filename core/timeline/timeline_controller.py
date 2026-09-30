@@ -27,6 +27,7 @@ class TimelineController(QObject):
         self.state_manager = TimelineStateManager()
         self.undo_manager = undo_manager or UndoRedoManager()
         self.selection_controller = selection_controller
+        self._range_drag_start_ms = None
 
         self.ui.setFocusPolicy(Qt.StrongFocus)
         if hasattr(self.ui.container, 'waveform'):
@@ -161,11 +162,27 @@ class TimelineController(QObject):
             if event.button() == Qt.LeftButton:
                 obj.setFocus() 
                 if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    if (
+                        obj is self.ui.container.waveform
+                        and event.modifiers() & Qt.ShiftModifier
+                    ):
+                        self.ui.clear_gap_selection()
+                        self._range_drag_start_ms = self._x_to_ms(event.pos().x())
+                        self._update_visual_range(event.pos().x())
+                        return True
                     self._do_seek(event.pos().x(), event.modifiers())
                     return True 
         elif event.type() == QEvent.MouseMove and (event.buttons() & Qt.LeftButton):
             if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                    self._update_visual_range(event.pos().x())
+                    return True
                 self._do_seek(event.pos().x(), event.modifiers())
+                return True
+        elif event.type() == QEvent.MouseButtonRelease:
+            if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                self._update_visual_range(event.pos().x())
+                self._range_drag_start_ms = None
                 return True
         elif event.type() == QEvent.KeyPress:
             key = event.key()
@@ -180,6 +197,17 @@ class TimelineController(QObject):
                 self._trigger_delete()
                 return True
         return super().eventFilter(obj, event)
+
+    def _x_to_ms(self, x):
+        scale = self.ui.container.waveform.pixels_per_second
+        return max(0, min(self.ui.duration_ms, int(x * 1000.0 / scale)))
+
+    def _update_visual_range(self, x):
+        end_ms = self._x_to_ms(x)
+        start_ms = min(self._range_drag_start_ms, end_ms)
+        end_ms = max(self._range_drag_start_ms, end_ms)
+        if end_ms > start_ms:
+            self.ui.set_generation_range(start_ms, end_ms)
 
     def _do_seek(self, x, modifiers=Qt.NoModifier):
         pixels_per_sec = self.ui.container.track.pixels_per_second

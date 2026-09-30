@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import copy
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Callable, List, Optional
@@ -21,6 +22,10 @@ from core.subtitle_generation.subtitle_generation_checkpoint import (
 )
 from core.subtitle_generation.subtitle_generation_request import (
     SubtitleGenerationRequest,
+)
+from core.subtitle_generation.generation_range import (
+    GenerationRangeStatus,
+    validate_generation_range,
 )
 from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult,
@@ -55,6 +60,14 @@ class SubtitleGenerationService(QObject):
         self._pending_finish = False
         self._pending_error: Optional[str] = None
         self._terminal_notified = False
+        self._is_range_generation = False
+        self._range_committed = False
+        self._range_artifact_id = None
+        self._range_artifact_revision = 0
+        self._range_artifact_hash = ""
+        self._range_duration_ms = 0
+        self._range_editor_segments = []
+        self.range_segments_provider = None
 
         # Optional UI callbacks kept decoupled from the service.
         self.on_progress: Optional[Callable[[int, str], None]] = None
@@ -73,13 +86,22 @@ class SubtitleGenerationService(QObject):
         return bool(self.current_worker and self.current_worker.isRunning())
 
     def start_generation(
-        self, request: SubtitleGenerationRequest, video_duration_ms: int
+        self, request: SubtitleGenerationRequest, video_duration_ms: int,
+        *, existing_segments=None,
     ) -> None:
         self._ensure_idle()
         project = self._require_project()
         self._validate_request_source(request, project)
         if video_duration_ms <= 0:
             raise ValueError("Video duration must be positive.")
+
+        if request.range_start_ms is not None or request.range_end_ms is not None:
+            self._start_range_generation(
+                request, video_duration_ms, existing_segments or []
+            )
+            return
+
+        self._is_range_generation = False
 
         artifact = self.artifact_service.get_or_create_artifact()
         if artifact is None:
@@ -138,8 +160,72 @@ class SubtitleGenerationService(QObject):
         self.whisper_service.load_model(request.model_size, request.compute_type)
         self._dispatch_next_batch()
 
+    def _start_range_generation(self, request, duration_ms, existing_segments):
+        project = self._require_project()
+        start_ms, end_ms = request.range_start_ms, request.range_end_ms
+        artifact_id = getattr(project.state, "subtitle_artifact_id", None)
+        artifact = self.project_service.artifact_store.get(artifact_id) if artifact_id else None
+        artifact_segments = (
+            self.artifact_service.load_data(artifact.path).get("segments", [])
+            if artifact and os.path.exists(artifact.path)
+            else []
+        )
+        validation = validate_generation_range(
+            start_ms, end_ms, duration_ms,
+            list(existing_segments) + list(artifact_segments),
+        )
+        if validation.status != GenerationRangeStatus.VALID:
+            raise ValueError(validation.status.value)
+
+        self._is_range_generation = True
+        self._range_committed = False
+        self._range_artifact_id = artifact.artifact_id if artifact else None
+        self._range_artifact_revision = artifact.revision if artifact else 0
+        self._range_artifact_hash = (
+            self.artifact_service.content_hash(artifact.path)
+            if artifact and os.path.exists(artifact.path)
+            else ""
+        )
+        self._range_editor_segments = copy.deepcopy(list(existing_segments))
+        self._range_duration_ms = duration_ms
+        self.current_timing_ranges = []
+        self._is_cancelled = False
+        self._pending_dispatch = False
+        self._pending_finish = False
+        self._pending_error = None
+        self._terminal_notified = False
+        self.current_request = request
+        batch = SubtitleGenerationBatch(
+            batch_id=str(uuid.uuid4()),
+            start_ms=start_ms,
+            end_ms=end_ms,
+            status="PENDING",
+            revision=0,
+            created_at=self._now(),
+            updated_at=self._now(),
+        )
+        self.current_batches = [batch]
+        self.current_checkpoint = SubtitleGenerationCheckpoint(
+            project_id=project.project_id,
+            source_fingerprint=project.source.fingerprint,
+            request_id=request.request_id,
+            subtitle_artifact_id=artifact.artifact_id if artifact else (artifact_id or ""),
+            artifact_revision=artifact.revision if artifact else 0,
+            completed_batches=[],
+            request_data=asdict(request),
+            batches_data=[asdict(batch)],
+            active_batch=None,
+            next_start_ms=start_ms,
+            detected_language=None,
+            updated_at=self._now(),
+            artifact_content_hash=self._range_artifact_hash,
+        )
+        self.whisper_service.load_model(request.model_size, request.compute_type)
+        self._dispatch_next_batch()
+
     def resume_generation(self) -> None:
         self._ensure_idle()
+        self._is_range_generation = False
         project = self._require_project()
         checkpoint = self.checkpoint_manager.load_checkpoint()
         if checkpoint is None:
@@ -207,7 +293,7 @@ class SubtitleGenerationService(QObject):
             self.current_checkpoint.status = "CANCELLED"
             self.current_checkpoint.active_batch = None
             self.current_checkpoint.updated_at = self._now()
-            self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+            self._save_checkpoint()
         # Do not unload the model or notify the UI while inference is still
         # inside QThread.run(). Resume becomes available only after finished.
         self._pending_finish = True
@@ -224,7 +310,7 @@ class SubtitleGenerationService(QObject):
             self.current_checkpoint.status = "COMPLETED"
             self.current_checkpoint.active_batch = None
             self.current_checkpoint.updated_at = self._now()
-            self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+            self._save_checkpoint()
             self._notify_progress(100, "Subtitle generation completed.")
             self._pending_finish = True
             self._complete_terminal_if_idle()
@@ -232,7 +318,7 @@ class SubtitleGenerationService(QObject):
 
         self.current_checkpoint.active_batch = asdict(batch)
         self.current_checkpoint.updated_at = self._now()
-        self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+        self._save_checkpoint()
         completed_count = len(self.current_checkpoint.completed_batches)
         total = len(self.current_batches)
         self._notify_progress(
@@ -261,6 +347,9 @@ class SubtitleGenerationService(QObject):
         self, batch: SubtitleGenerationBatch, result: SubtitleGenerationResult
     ) -> None:
         if self._is_cancelled or not self.current_checkpoint:
+            return
+        if self._is_range_generation:
+            self._commit_range_batch(batch, result)
             return
         try:
             project = self._require_project()
@@ -346,7 +435,7 @@ class SubtitleGenerationService(QObject):
         if self.current_checkpoint:
             self.current_checkpoint.status = "FAILED"
             self.current_checkpoint.updated_at = self._now()
-            self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+            self._save_checkpoint()
         self._pending_dispatch = False
         self._pending_error = message
         self._complete_terminal_if_idle()
@@ -392,6 +481,153 @@ class SubtitleGenerationService(QObject):
     def _ensure_idle(self) -> None:
         if self.current_worker and self.current_worker.isRunning():
             raise RuntimeError("Subtitle generation is already running.")
+
+    def _save_checkpoint(self):
+        if not self._is_range_generation:
+            self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
+
+    def _commit_range_batch(self, batch, result):
+        if self._is_cancelled or not self.current_checkpoint:
+            return
+        try:
+            if not result.segments:
+                raise RuntimeError("No subtitle segments were generated for this range.")
+            for segment in result.segments:
+                try:
+                    start_ms, end_ms = int(segment.start_ms), int(segment.end_ms)
+                except (TypeError, ValueError, OverflowError):
+                    raise RuntimeError("Generated subtitle timing is invalid.")
+                if start_ms < batch.start_ms or end_ms > batch.end_ms or end_ms <= start_ms:
+                    raise RuntimeError(
+                        "TIMING_RECONCILIATION_REQUIRED: generated timing falls outside the selected range."
+                    )
+
+            generated = SubtitleGenerationValidator.validate(
+                result.segments, batch.start_ms, batch.end_ms
+            )
+            if not generated:
+                raise RuntimeError("No valid subtitle text was generated for this range.")
+
+            project = self._require_project()
+            self._validate_request_source(self.current_request, project)
+            state_artifact_id = getattr(project.state, "subtitle_artifact_id", None)
+            artifact = (
+                self.project_service.artifact_store.get(state_artifact_id)
+                if state_artifact_id else None
+            )
+            if (artifact.artifact_id if artifact else None) != self._range_artifact_id:
+                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
+            if artifact and artifact.revision != self._range_artifact_revision:
+                raise RuntimeError("STALE_SUBTITLE: artifact revision changed during range generation.")
+            if artifact and self._range_artifact_hash:
+                if self.artifact_service.content_hash(artifact.path) != self._range_artifact_hash:
+                    raise RuntimeError("STALE_SUBTITLE_FILE: artifact changed during range generation.")
+
+            editor_segments = (
+                self.range_segments_provider()
+                if callable(self.range_segments_provider)
+                else self._range_editor_segments
+            )
+            artifact_data = (
+                self.artifact_service.load_data(artifact.path)
+                if artifact and os.path.exists(artifact.path)
+                else {"version": 1, "segments": []}
+            )
+            artifact_rows = artifact_data.get("segments", [])
+            validation = validate_generation_range(
+                batch.start_ms, batch.end_ms, self._range_duration_ms,
+                list(editor_segments or []) + list(artifact_rows),
+            )
+            if validation.status != GenerationRangeStatus.VALID:
+                raise RuntimeError("OVERLAPS_SUBTITLE: subtitle timing changed during generation.")
+
+            rows = self._merge_editor_rows(artifact_rows, editor_segments or [])
+            rows.extend(
+                {
+                    "id": str(uuid.uuid4()),
+                    "start_ms": int(segment.start_ms),
+                    "end_ms": int(segment.end_ms),
+                    "text": segment.text,
+                    "words": segment.words,
+                    "status": "generated",
+                }
+                for segment in generated
+            )
+            rows.sort(key=lambda row: (int(row["start_ms"]), int(row["end_ms"])))
+            data = dict(artifact_data)
+            data["segments"] = rows
+
+            if artifact:
+                self.artifact_service._save_atomic(artifact.path, data)
+                artifact.revision += 1
+                artifact.updated_at = self._now()
+                mark_dirty = getattr(self.project_service, "mark_dirty", None)
+                if mark_dirty:
+                    mark_dirty()
+            else:
+                artifact = self.artifact_service.create_artifact_with_data(data)
+                if artifact is None:
+                    raise RuntimeError("Unable to create subtitle artifact.")
+
+            self._range_committed = True
+            self.current_checkpoint.status = "COMPLETED"
+            self.current_checkpoint.artifact_revision = artifact.revision
+            self.current_checkpoint.artifact_content_hash = self.artifact_service.content_hash(artifact.path)
+            self.current_checkpoint.completed_batches = [batch.batch_id]
+            batch.status = "COMPLETED"
+            batch.updated_at = self._now()
+            if self.on_batch_complete:
+                self.on_batch_complete(batch, generated)
+            self._pending_dispatch = True
+            self._dispatch_next_batch_if_idle()
+        except Exception as exc:
+            batch.status = "FAILED"
+            self._fail(str(exc))
+
+    @staticmethod
+    def _segment_value(segment, key, default=None):
+        if isinstance(segment, dict):
+            return segment.get(key, default)
+        if hasattr(segment, "get_raw_dict"):
+            return segment.get_raw_dict().get(key, default)
+        return getattr(segment, key, default)
+
+    @classmethod
+    def _merge_editor_rows(cls, artifact_rows, editor_segments):
+        rows = copy.deepcopy(list(artifact_rows or []))
+        by_id = {str(row.get("id")): row for row in rows if row.get("id") is not None}
+        for index, segment in enumerate(editor_segments or []):
+            raw = (
+                segment.get_raw_dict()
+                if hasattr(segment, "get_raw_dict")
+                else segment
+            )
+            if not isinstance(raw, dict):
+                continue
+            start = cls._segment_value(segment, "start_ms")
+            end = cls._segment_value(segment, "end_ms")
+            if start is None or end is None:
+                continue
+            segment_id = str(raw.get("id") or f"editor-{index}")
+            row = by_id.get(segment_id)
+            if row is None:
+                row = next(
+                    (candidate for candidate in rows
+                     if int(candidate.get("start_ms", -1)) == int(start)
+                     and int(candidate.get("end_ms", -1)) == int(end)),
+                    None,
+                )
+            if row is None:
+                row = copy.deepcopy(raw)
+                row["id"] = raw.get("id") or str(uuid.uuid4())
+                rows.append(row)
+            row.update({
+                "start_ms": int(start),
+                "end_ms": int(end),
+                "text": raw.get("text", ""),
+            })
+            by_id[str(row["id"])] = row
+        return rows
 
     def _require_project(self):
         project = self.project_service.current_project

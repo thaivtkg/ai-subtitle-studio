@@ -1,7 +1,13 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
 from core.timeline.gaps import find_timeline_gaps
+from core.subtitle_generation.generation_range import (
+    GenerationRange,
+    GenerationRangeValidation,
+    GenerationRangeStatus,
+    validate_generation_range,
+)
 from ui.timeline.subtitle_track import SubtitleTrack
 from ui.timeline.timeline_ruler import TimeRuler
 from ui.timeline.waveform_view import WaveformView
@@ -50,11 +56,24 @@ class TimelineContainer(QWidget):
         self.gap_row = QWidget()
         gap_layout = QHBoxLayout(self.gap_row)
         gap_layout.setContentsMargins(8, 2, 8, 2)
-        self.gap_details = QLabel()
+        self.start_range_edit = QLineEdit()
+        self.start_range_edit.setPlaceholderText("HH:MM:SS,mmm")
+        self.start_range_edit.setMaximumWidth(125)
+        self.end_range_edit = QLineEdit()
+        self.end_range_edit.setPlaceholderText("HH:MM:SS,mmm")
+        self.end_range_edit.setMaximumWidth(125)
+        self.range_duration = QLabel("--")
+        self.range_validation = QLabel()
+        self.range_validation.setWordWrap(True)
         self.generate_gap_button = QPushButton("Generate")
         self.generate_gap_button.setEnabled(False)
-        self.generate_gap_button.setToolTip("Generate sẽ khả dụng sau khi phạm vi tạo phụ đề được hỗ trợ.")
-        gap_layout.addWidget(self.gap_details)
+        gap_layout.addWidget(QLabel("Start"))
+        gap_layout.addWidget(self.start_range_edit)
+        gap_layout.addWidget(QLabel("End"))
+        gap_layout.addWidget(self.end_range_edit)
+        gap_layout.addWidget(QLabel("Duration"))
+        gap_layout.addWidget(self.range_duration)
+        gap_layout.addWidget(self.range_validation, stretch=1)
         gap_layout.addWidget(self.generate_gap_button)
         self.layout.addWidget(self.gap_row)
         self.gap_row.hide()
@@ -69,6 +88,7 @@ class TimelineContainer(QWidget):
 class TimelineWidget(QScrollArea):
     seek_requested = Signal(int)
     gap_selected = Signal(object)
+    range_generation_requested = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -110,6 +130,9 @@ class TimelineWidget(QScrollArea):
 
         self.duration_ms = 0
         self.selected_gap = None
+        self.generation_range = None
+        self.range_validation = None
+        self._generation_busy = False
         self._minimum_height_before_gap = None
         self.pixels_per_second = 100
 
@@ -119,6 +142,9 @@ class TimelineWidget(QScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self._on_user_scroll)
         self.container.track.gap_clicked.connect(self.select_gap)
         self.container.track.segment_clicked.connect(lambda *_: self.clear_gap_selection())
+        self.container.start_range_edit.editingFinished.connect(self._on_manual_range_changed)
+        self.container.end_range_edit.editingFinished.connect(self._on_manual_range_changed)
+        self.container.generate_gap_button.clicked.connect(self._emit_range_generation)
 
     @staticmethod
     def _format_ms(value):
@@ -130,15 +156,15 @@ class TimelineWidget(QScrollArea):
     def select_gap(self, gap):
         if gap not in self.container.track.gaps:
             return
+        self.clear_gap_selection()
         self.gap_selected.emit(gap)
         self.selected_gap = gap
         self.container.track.selected_gap = gap
         self.container.track.update()
-        self.container.waveform.set_selected_range(gap.start_ms, gap.end_ms)
-        self.container.gap_details.setText(
-            f"Start {self._format_ms(gap.start_ms)}  ·  End {self._format_ms(gap.end_ms)}"
-            f"  ·  Duration {self._format_ms(gap.duration_ms)}"
-        )
+        self._show_range_row()
+        self._apply_generation_range(gap.start_ms, gap.end_ms, update_fields=True)
+
+    def _show_range_row(self):
         self.container.gap_row.show()
         if self._minimum_height_before_gap is None:
             self._minimum_height_before_gap = self.minimumHeight()
@@ -153,15 +179,115 @@ class TimelineWidget(QScrollArea):
         self.setMinimumHeight(max(self._minimum_height_before_gap, required_height))
 
     def clear_gap_selection(self):
-        if self.selected_gap is not None:
-            self.container.waveform.clear_selected_range()
+        self.container.waveform.clear_selected_range()
+        self.selected_gap = None
+        self.generation_range = None
+        self.range_validation = None
+        self.container.track.selected_gap = None
+        self.container.track.update()
+        self.container.start_range_edit.clear()
+        self.container.end_range_edit.clear()
+        self.container.range_duration.setText("--")
+        self.container.range_validation.clear()
+        self.container.generate_gap_button.setEnabled(False)
+        if self.duration_ms > 0:
+            self._show_range_row()
+        else:
+            self.container.gap_row.hide()
+        if self._minimum_height_before_gap is not None and self.duration_ms <= 0:
+            self.setMinimumHeight(self._minimum_height_before_gap)
+            self._minimum_height_before_gap = None
+
+    def set_generation_range(self, start_ms, end_ms, *, update_fields=True):
+        """Set the single transient range; waveform is only its visual projection."""
         self.selected_gap = None
         self.container.track.selected_gap = None
         self.container.track.update()
-        self.container.gap_row.hide()
-        if self._minimum_height_before_gap is not None:
-            self.setMinimumHeight(self._minimum_height_before_gap)
-            self._minimum_height_before_gap = None
+        self._show_range_row()
+        self._apply_generation_range(start_ms, end_ms, update_fields)
+
+    def _apply_generation_range(self, start_ms, end_ms, update_fields):
+        try:
+            start_ms, end_ms = int(start_ms), int(end_ms)
+        except (TypeError, ValueError, OverflowError):
+            self.generation_range = None
+            self.container.waveform.clear_selected_range()
+            self._refresh_range_validation()
+            return
+
+        self.generation_range = GenerationRange(start_ms, end_ms)
+        if update_fields:
+            self.container.start_range_edit.setText(self._format_ms(start_ms))
+            self.container.end_range_edit.setText(self._format_ms(end_ms))
+        if 0 <= start_ms < end_ms <= self.duration_ms:
+            self.container.waveform.set_selected_range(start_ms, end_ms)
+        else:
+            self.container.waveform.clear_selected_range()
+        self._refresh_range_validation()
+
+    def _on_manual_range_changed(self):
+        from core.subtitle_generation.generation_range import parse_timecode_ms
+
+        self.selected_gap = None
+        self.container.track.selected_gap = None
+        self.container.track.update()
+        self._show_range_row()
+        try:
+            start_ms = parse_timecode_ms(self.container.start_range_edit.text())
+            end_ms = parse_timecode_ms(self.container.end_range_edit.text())
+        except ValueError:
+            self.generation_range = None
+            self.container.waveform.clear_selected_range()
+            self._refresh_range_validation(GenerationRangeStatus.INVALID_FORMAT)
+            return
+        self._apply_generation_range(start_ms, end_ms, update_fields=False)
+
+    def _refresh_range_validation(self, forced_status=None):
+        if forced_status is not None:
+            result = GenerationRangeValidation(forced_status)
+        elif self.generation_range is None:
+            result = validate_generation_range(None, None, self.duration_ms)
+        else:
+            result = validate_generation_range(
+                self.generation_range.start_ms,
+                self.generation_range.end_ms,
+                self.duration_ms,
+                self.container.track.segments,
+            )
+        self.range_validation = result
+        self.container.range_duration.setText(
+            self._format_ms(self.generation_range.duration_ms)
+            if self.generation_range and self.generation_range.end_ms > self.generation_range.start_ms
+            else "--"
+        )
+        messages = {
+            GenerationRangeStatus.VALID: "",
+            GenerationRangeStatus.NO_MEDIA: "Chưa có media hợp lệ.",
+            GenerationRangeStatus.INVALID_FORMAT: "Định dạng thời gian không hợp lệ.",
+            GenerationRangeStatus.OUT_OF_BOUNDS: "Thời gian vượt quá độ dài media.",
+            GenerationRangeStatus.EMPTY_OR_REVERSED: "Khoảng thời gian không hợp lệ.",
+            GenerationRangeStatus.OVERLAPS_SUBTITLE: "Khoảng đã chọn đang chứa phụ đề.",
+        }
+        self.container.range_validation.setText(messages[result.status])
+        self.container.generate_gap_button.setEnabled(
+            result.status == GenerationRangeStatus.VALID and not self._generation_busy
+        )
+
+    def _emit_range_generation(self):
+        if self.generation_range and self.range_validation.status == GenerationRangeStatus.VALID:
+            self.range_generation_requested.emit(
+                self.generation_range.start_ms, self.generation_range.end_ms
+            )
+
+    def set_generation_busy(self, busy):
+        self._generation_busy = bool(busy)
+        self._refresh_range_validation()
+
+    def set_range_segments(self, segments):
+        """Refresh overlap validity after editor subtitle state changes."""
+        if self.generation_range is not None:
+            self.container.track.segments = segments
+            self._refresh_range_validation()
 
     def _on_user_scroll(self, value):
         """Tự động tắt Auto-scroll nếu người dùng chủ động kéo thanh cuộn"""
@@ -180,6 +306,13 @@ class TimelineWidget(QScrollArea):
         self.container.track.set_gaps(find_timeline_gaps(duration_ms, segments))
         if peaks_normalized is not None:
             self.container.waveform.set_data(peaks_normalized, duration_ms)
+        if duration_ms > 0:
+            self._show_range_row()
+        else:
+            self.container.gap_row.hide()
+            if self._minimum_height_before_gap is not None:
+                self.setMinimumHeight(self._minimum_height_before_gap)
+                self._minimum_height_before_gap = None
 
     def set_zoom(self, pixels_per_second: int):
         self.pixels_per_second = pixels_per_second

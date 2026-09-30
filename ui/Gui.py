@@ -229,6 +229,9 @@ class MainWindow(QMainWindow):
         self.subtitle_generation_service = SubtitleGenerationService(
             self.subtitle_whisper_service, self.project_service
         )
+        self.subtitle_generation_service.range_segments_provider = (
+            lambda: self.sub_editor.all_segments
+        )
         self.subtitle_generation_service.on_batch_complete = self._on_generation_batch_sync
         self.timing_service = TimingBatchService(self.project_service)
 
@@ -615,6 +618,9 @@ class MainWindow(QMainWindow):
         from ui.timeline.timeline_widget import TimelineWidget
 
         self.timeline_widget = TimelineWidget()
+        self.timeline_widget.range_generation_requested.connect(
+            self._start_range_generation
+        )
         self.timeline_widget.setMinimumHeight(160) # Timeline nay đã nằm dưới cùng, chiếm ưu thế
         self.workspace_vertical_splitter.addWidget(self.timeline_widget)
 
@@ -1976,13 +1982,31 @@ class MainWindow(QMainWindow):
         self.subtitle_generation_service.on_progress = (
             self.generation_panel._update_progress
         )
-        self.subtitle_generation_service.on_error = self.generation_panel._on_error
+        self.subtitle_generation_service.on_error = self._on_interactive_generation_error
         self.subtitle_generation_service.on_finish = (
             self._on_interactive_generation_finished
         )
         self.subtitle_generation_service.on_batch_complete = (
             self._on_generation_batch_sync
         )
+
+    def _start_range_generation(self, start_ms, end_ms):
+        self.timeline_widget.set_generation_busy(True)
+        self.generation_panel.start_range_generation(
+            start_ms, end_ms, self.sub_editor.all_segments
+        )
+        if not self.subtitle_generation_service.is_running:
+            self.timeline_widget.set_generation_busy(False)
+
+    def _on_interactive_generation_error(self, message):
+        self.timeline_widget.set_generation_busy(False)
+        request = self.subtitle_generation_service.current_request
+        if request and request.range_start_ms is not None:
+            if message.startswith("TIMING_RECONCILIATION_REQUIRED:"):
+                message = "Kết quả phụ đề vượt ngoài khoảng thời gian đã chọn. Khoảng hiện có chưa được thay đổi."
+            elif message.startswith("OVERLAPS_SUBTITLE:"):
+                message = "Khoảng đã chọn hiện có phụ đề; hãy chọn một khoảng trống khác."
+        self.generation_panel._on_error(message)
 
     def _queue_update_progress(self, percent, message):
         """Mirror Queue generation progress in the global bar and drawer."""
@@ -2357,6 +2381,17 @@ class MainWindow(QMainWindow):
 
     def _on_interactive_generation_finished(self):
         """Publish the completed ASR result once, preserving editor pagination."""
+        self.timeline_widget.set_generation_busy(False)
+        current_request = self.subtitle_generation_service.current_request
+        current_checkpoint = self.subtitle_generation_service.current_checkpoint
+        if (
+            current_request
+            and current_request.range_start_ms is not None
+            and current_checkpoint
+            and current_checkpoint.status == "CANCELLED"
+        ):
+            self.generation_panel._on_finish()
+            return
         shadow_srt_path = self._on_generation_batch_sync()
         if shadow_srt_path:
             self._load_generated_subtitles_into_ui(shadow_srt_path)
