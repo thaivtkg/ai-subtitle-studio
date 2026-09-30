@@ -19,7 +19,7 @@ class TimelineEditCommand:
         if not project: return False
         art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else None
         if not art_id: 
-            art_id = project.state.active_artifact_id
+            art_id = project.state.active_artifact_id or getattr(project.state, 'subtitle_artifact_id', None)
         if not art_id: return False
         return self.project_service.artifact_store.get(art_id) is not None
 
@@ -30,7 +30,7 @@ class TimelineEditCommand:
         
         art_id = getattr(project.state.timing, 'timing_artifact_id', None) if hasattr(project.state, 'timing') else None
         if not art_id: 
-            art_id = project.state.active_artifact_id
+            art_id = project.state.active_artifact_id or getattr(project.state, 'subtitle_artifact_id', None)
             
         artifact = self.project_service.artifact_store.get(art_id)
         if not artifact: return False # BLOCKER 2 FIXED
@@ -136,7 +136,8 @@ class ResizeEndCommand(TimelineEditCommand):
         seg = self.data_provider.get_segment(self.segment_id)
         if not seg: return False
         new_end = seg.end_ms + self.delta_ms
-        return new_end >= (seg.start_ms + MIN_DURATION_MS)
+        duration_ms = self.data_provider.get_duration_ms()
+        return (seg.start_ms + MIN_DURATION_MS) <= new_end <= duration_ms
 
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")

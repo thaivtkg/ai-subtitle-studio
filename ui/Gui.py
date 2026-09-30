@@ -452,7 +452,11 @@ class MainWindow(QMainWindow):
             lambda stt, start, text: self.sub_editor.sync_playback_highlight(int(stt) - 1)
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
-        self.sub_editor.live_edit_applied.connect(lambda *args: self.project_service.mark_dirty() if getattr(self, 'project_service', None) else None)
+        self.sub_editor.live_edit_applied.connect(
+            lambda *args: self.project_service.mark_dirty()
+            if getattr(self, 'project_service', None) and not self.sub_editor.is_rendering
+            else None
+        )
         self._setup_global_shortcuts()
 
         self.workspace_vertical_splitter.addWidget(self.top_horizontal_splitter)
@@ -2398,6 +2402,17 @@ class MainWindow(QMainWindow):
         """Reload editor, player and timeline only after a full ASR run completes."""
 
         self.sub_editor.load_srt_file(shadow_srt_path)
+        # Shadow SRT is a player/export view, not the identity/metadata owner.
+        project = self.project_service.current_project
+        artifact = self.project_service.artifact_store.get(project.state.subtitle_artifact_id) if project else None
+        if artifact:
+            data = self.subtitle_generation_service.artifact_service.load_data(artifact.path)
+            self.sub_editor.all_segments = copy.deepcopy(data["segments"])
+            for index, row in enumerate(self.sub_editor.all_segments, 1):
+                row["stt"] = str(index)
+                row["start"] = self.timing_service._ms_to_time_str(row["start_ms"])
+                row["end"] = self.timing_service._ms_to_time_str(row["end_ms"])
+            self.sub_editor.render_page()
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
         self.video_player.sub_controller.load_srt(shadow_srt_path)
@@ -3140,7 +3155,7 @@ class MainWindow(QMainWindow):
                 project = self.project_service.current_project
                 
                 # Tìm ID của file Artifact đang được dùng
-                art_id = project.state.active_artifact_id
+                art_id = project.state.active_artifact_id or project.state.subtitle_artifact_id
                 if hasattr(project.state, 'timing') and getattr(project.state.timing, 'timing_artifact_id', None):
                     art_id = project.state.timing.timing_artifact_id
 
@@ -3211,7 +3226,13 @@ class MainWindow(QMainWindow):
                                 print(f"[LỖI XUẤT SRT] {ex}")
                                 raise
                                 
-                        # TRƯỜNG HỢP 2: File đang mở là Draft (.json) -> Dùng hàm lưu Draft
+                        elif artifact.artifact_id == project.state.subtitle_artifact_id:
+                            subtitle_store = self.subtitle_generation_service.artifact_service
+                            data = subtitle_store.load_data(artifact.path)
+                            data["segments"] = copy.deepcopy(self.sub_editor.all_segments)
+                            subtitle_store._save_atomic(artifact_path, data)
+                            artifact.path = artifact_path
+                        # Draft artifacts retain their existing save path.
                         else:
                             self.sub_editor.srt_path = artifact_path
                             draft_path = self.sub_editor.save_draft(silent=True)

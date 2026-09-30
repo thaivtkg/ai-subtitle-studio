@@ -67,6 +67,9 @@ class TimelineContainer(QWidget):
         self.range_validation.setWordWrap(True)
         self.generate_gap_button = QPushButton("Generate")
         self.generate_gap_button.setEnabled(False)
+        self.play_segment_button = QPushButton("Play Segment")
+        self.play_segment_button.setEnabled(False)
+        self.play_segment_button.hide()
         gap_layout.addWidget(QLabel("Start"))
         gap_layout.addWidget(self.start_range_edit)
         gap_layout.addWidget(QLabel("End"))
@@ -75,6 +78,7 @@ class TimelineContainer(QWidget):
         gap_layout.addWidget(self.range_duration)
         gap_layout.addWidget(self.range_validation, stretch=1)
         gap_layout.addWidget(self.generate_gap_button)
+        gap_layout.addWidget(self.play_segment_button)
         self.layout.addWidget(self.gap_row)
         self.gap_row.hide()
         self.layout.addStretch()
@@ -89,6 +93,10 @@ class TimelineWidget(QScrollArea):
     seek_requested = Signal(int)
     gap_selected = Signal(object)
     range_generation_requested = Signal(int, int)
+    generation_range_selected = Signal()
+    play_segment_requested = Signal()
+    workflow_reset = Signal()
+    timing_edit_started = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,6 +153,33 @@ class TimelineWidget(QScrollArea):
         self.container.start_range_edit.editingFinished.connect(self._on_manual_range_changed)
         self.container.end_range_edit.editingFinished.connect(self._on_manual_range_changed)
         self.container.generate_gap_button.clicked.connect(self._emit_range_generation)
+        self.container.play_segment_button.clicked.connect(self.play_segment_requested.emit)
+
+    @property
+    def focused_segment(self):
+        track = self.container.track
+        if self.generation_range is not None or len(track.selected_ids) != 1:
+            return None
+        segment = next((s for s in track.segments if s.segment_id in track.selected_ids), None)
+        if segment and 0 <= segment.start_ms < segment.end_ms <= self.duration_ms:
+            return segment
+        return None
+
+    def refresh_segment_focus(self):
+        segment = self.focused_segment
+        focused = segment is not None
+        self.container.start_range_edit.setReadOnly(focused)
+        self.container.end_range_edit.setReadOnly(focused)
+        self.container.play_segment_button.setVisible(focused)
+        self.container.play_segment_button.setEnabled(focused)
+        self.container.generate_gap_button.setVisible(not focused)
+        if segment:
+            self._show_range_row()
+            self.container.start_range_edit.setText(self._format_ms(segment.start_ms))
+            self.container.end_range_edit.setText(self._format_ms(segment.end_ms))
+            self.container.range_duration.setText(self._format_ms(segment.end_ms - segment.start_ms))
+            self.container.range_validation.setText("Kéo mép trái/phải để chỉnh thời gian.")
+            self.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
 
     @staticmethod
     def _format_ms(value):
@@ -179,6 +214,7 @@ class TimelineWidget(QScrollArea):
         self.setMinimumHeight(max(self._minimum_height_before_gap, required_height))
 
     def clear_gap_selection(self):
+        self.workflow_reset.emit()
         self.container.waveform.clear_selected_range()
         self.selected_gap = None
         self.generation_range = None
@@ -190,6 +226,11 @@ class TimelineWidget(QScrollArea):
         self.container.range_duration.setText("--")
         self.container.range_validation.clear()
         self.container.generate_gap_button.setEnabled(False)
+        self.container.generate_gap_button.show()
+        self.container.play_segment_button.hide()
+        self.container.play_segment_button.setEnabled(False)
+        self.container.start_range_edit.setReadOnly(False)
+        self.container.end_range_edit.setReadOnly(False)
         if self.duration_ms > 0:
             self._show_range_row()
         else:
@@ -200,6 +241,9 @@ class TimelineWidget(QScrollArea):
 
     def set_generation_range(self, start_ms, end_ms, *, update_fields=True):
         """Set the single transient range; waveform is only its visual projection."""
+        self.clear_gap_selection()
+        self.generation_range_selected.emit()
+        self.container.track.set_selection(set())
         self.selected_gap = None
         self.container.track.selected_gap = None
         self.container.track.update()
@@ -228,6 +272,13 @@ class TimelineWidget(QScrollArea):
     def _on_manual_range_changed(self):
         from core.subtitle_generation.generation_range import parse_timecode_ms
 
+        start_text = self.container.start_range_edit.text()
+        end_text = self.container.end_range_edit.text()
+        self.clear_gap_selection()
+        self.generation_range_selected.emit()
+        self.container.track.set_selection(set())
+        self.container.start_range_edit.setText(start_text)
+        self.container.end_range_edit.setText(end_text)
         self.selected_gap = None
         self.container.track.selected_gap = None
         self.container.track.update()
@@ -243,6 +294,10 @@ class TimelineWidget(QScrollArea):
         self._apply_generation_range(start_ms, end_ms, update_fields=False)
 
     def _refresh_range_validation(self, forced_status=None):
+        if self.focused_segment is not None:
+            self.refresh_segment_focus()
+            self.container.generate_gap_button.setEnabled(False)
+            return
         if forced_status is not None:
             result = GenerationRangeValidation(forced_status)
         elif self.generation_range is None:
@@ -300,6 +355,7 @@ class TimelineWidget(QScrollArea):
 
     def load_project_data(self, duration_ms: int, segments: list, peaks_normalized=None):
         self.clear_gap_selection()
+        self.container.track.set_selection(set())
         self.duration_ms = duration_ms
         self.container.ruler.set_data(duration_ms)
         self.container.track.set_data(segments, duration_ms)
@@ -361,6 +417,7 @@ class TimelineWidget(QScrollArea):
     def clear(self):
         """Xóa trắng Timeline khi không có Video"""
         self.clear_gap_selection()
+        self.container.track.set_selection(set())
         self.duration_ms = 0
         self.container.ruler.set_data(0)
         self.container.track.set_data([], 0)

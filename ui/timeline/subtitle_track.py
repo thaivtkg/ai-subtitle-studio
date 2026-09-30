@@ -13,6 +13,7 @@ class EditMode(Enum):
 
 class SubtitleTrack(QWidget):
     segment_clicked = Signal(str, bool)
+    selection_cleared = Signal()
     gap_clicked = Signal(object)
     edit_committed = Signal(str, EditMode, int)
     
@@ -141,6 +142,7 @@ class SubtitleTrack(QWidget):
             else:
                 self.selected_ids.clear()
                 self.update()
+                self.selection_cleared.emit()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):

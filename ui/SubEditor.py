@@ -397,10 +397,10 @@ class SubtitleEditorWidget(QWidget):
             self.table.setItem(row, 4, text_item)
 
         self.table.blockSignals(False)
-        self.is_rendering = False
         self.update_empty_state()
         self._load_current_editor()
         self.sync_to_controller()
+        self.is_rendering = False
 
     def _video_duration_ms(self):
         try:

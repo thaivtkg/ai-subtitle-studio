@@ -106,6 +106,7 @@ class VideoPlayerWidget(QWidget):
         self._position_edit_mode = False
         self._placement_drag_session = None
         self._placement_drag_offset = QPointF()
+        self._segment_range_provider = None
         
         self.init_ui()
         self.init_player()
@@ -263,7 +264,7 @@ class VideoPlayerWidget(QWidget):
         self.player.setVideoOutput(self.video_item)
 
         self.sub_controller = SubtitleController()
-        self.player.positionChanged.connect(self.sub_controller.sync_position)
+        self.player.positionChanged.connect(self._sync_subtitle_position)
         
         # [FIX CRITICAL] Đã xóa bỏ kết nối subtitle_cleared tại đây.
         # Giao quyền quản lý hiển thị/ẩn hoàn toàn cho position_changed.
@@ -273,20 +274,52 @@ class VideoPlayerWidget(QWidget):
         self.player.positionChanged.connect(self.position_changed)
         self.player.durationChanged.connect(self.duration_changed)
         self.player.playingChanged.connect(self.update_play_button)
+        self.player.playingChanged.connect(self._on_playing_changed)
 
         self.update_play_button()
 
     def load_video(self, file_path):
+        self.cancel_segment_playback(pause=True)
         if os.path.exists(file_path):
             self.empty_state_lbl.hide()
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.pause()
 
     def toggle_playback(self):
+        self.cancel_segment_playback()
         if self.player.isPlaying():
             self.player.pause()
         else:
             self.player.play()
+
+    def play_segment(self, range_provider):
+        """Play the currently selected range; bounds stay derived from selection."""
+        bounds = range_provider()
+        if bounds is None:
+            return
+        start_ms, end_ms = bounds
+        if not 0 <= start_ms < end_ms <= self.get_video_duration_ms():
+            return
+        self.cancel_segment_playback(pause=True)
+        self.set_position(start_ms)
+        self._segment_range_provider = range_provider
+        self.player.play()
+
+    def cancel_segment_playback(self, *, pause=False):
+        active = getattr(self, "_segment_range_provider", None) is not None
+        self._segment_range_provider = None
+        if active and pause:
+            self.player.pause()
+
+    def _on_playing_changed(self, playing):
+        if not playing:
+            self.cancel_segment_playback()
+
+    def _sync_subtitle_position(self, position):
+        # Explicit segment playback keeps user selection stable, including at
+        # a touching next-subtitle boundary, before position_changed pauses.
+        if getattr(self, "_segment_range_provider", None) is None:
+            self.sub_controller.sync_position(position)
 
     def get_current_time_ms(self):
         return self.player.position()
@@ -301,6 +334,13 @@ class VideoPlayerWidget(QWidget):
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
 
     def position_changed(self, position):
+        range_provider = getattr(self, "_segment_range_provider", None)
+        if range_provider:
+            bounds = range_provider()
+            if bounds is None or position >= bounds[1]:
+                self.cancel_segment_playback(pause=True)
+            elif position < bounds[0]:
+                self.cancel_segment_playback()
         self.slider_seek.setValue(position)
         self.update_time_label()
 
@@ -378,7 +418,7 @@ class VideoPlayerWidget(QWidget):
             # [FIX] Kích hoạt thanh Highlight của bảng Editor
             if self._last_highlighted_stt != stt_val:
                 self._last_highlighted_stt = stt_val
-                if hasattr(main_window, 'sub_editor'):
+                if not range_provider and hasattr(main_window, 'sub_editor'):
                     main_window.sub_editor.highlight_row_by_stt(stt_val)
         else:
             self.subtitle_overlay.clear_subtitle()
@@ -386,7 +426,7 @@ class VideoPlayerWidget(QWidget):
             # [FIX] Xóa Highlight khi kim thời gian rơi vào khoảng nghỉ (không có sub)
             if self._last_highlighted_stt is not None:
                 self._last_highlighted_stt = None
-                if hasattr(main_window, 'sub_editor'):
+                if not range_provider and hasattr(main_window, 'sub_editor'):
                     main_window.sub_editor.clear_highlight()
         self.timeline_position_changed.emit(position)
 
@@ -395,10 +435,15 @@ class VideoPlayerWidget(QWidget):
         self.update_time_label()
 
     def set_position(self, position):
+        range_provider = getattr(self, "_segment_range_provider", None)
+        if range_provider:
+            bounds = range_provider()
+            if bounds is None or not bounds[0] <= position < bounds[1]:
+                self.cancel_segment_playback()
         self.player.setPosition(position)
         # [FIX] Ép đồng bộ giao diện phụ đề ngay lập tức nếu video đang Tạm dừng
         if not self.player.isPlaying():
-            self.sub_controller.sync_position(position)
+            self._sync_subtitle_position(position)
             self.position_changed(position)
 
     def set_volume(self, volume):
@@ -419,6 +464,7 @@ class VideoPlayerWidget(QWidget):
         return f"{m:02d}:{s:02d}"
 
     def cleanup(self):
+        self.cancel_segment_playback()
         self.player.stop()
         self.player.setSource(QUrl())
         self.empty_state_lbl.show()
