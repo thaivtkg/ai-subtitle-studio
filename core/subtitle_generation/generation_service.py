@@ -72,7 +72,7 @@ class SubtitleGenerationService(QObject):
         self._range_artifact_revision = 0
         self._range_artifact_hash = ""
         self._range_duration_ms = 0
-        self._range_editor_segments = []
+        self._range_editor_segments = None
         self.last_range_reconciliation = None
         self.range_segments_provider = None
 
@@ -104,7 +104,7 @@ class SubtitleGenerationService(QObject):
 
         if request.range_start_ms is not None or request.range_end_ms is not None:
             self._start_range_generation(
-                request, video_duration_ms, existing_segments or []
+                request, video_duration_ms, existing_segments
             )
             return
 
@@ -179,7 +179,7 @@ class SubtitleGenerationService(QObject):
         )
         validation = validate_generation_range(
             start_ms, end_ms, duration_ms,
-            list(existing_segments) + list(artifact_segments),
+            self._resolve_range_coverage(artifact_segments, existing_segments),
         )
         if validation.status != GenerationRangeStatus.VALID:
             raise ValueError(validation.status.value)
@@ -195,7 +195,7 @@ class SubtitleGenerationService(QObject):
             if artifact and os.path.exists(artifact.path)
             else ""
         )
-        self._range_editor_segments = copy.deepcopy(list(existing_segments))
+        self._range_editor_segments = existing_segments
         self._range_duration_ms = duration_ms
         self.current_timing_ranges = []
         self._is_cancelled = False
@@ -516,18 +516,15 @@ class SubtitleGenerationService(QObject):
                 self.project_service.artifact_store.get(state_artifact_id)
                 if state_artifact_id else None
             )
-            editor_segments = (
-                self.range_segments_provider()
-                if callable(self.range_segments_provider)
-                else self._range_editor_segments
-            )
             artifact_data = (
                 self.artifact_service.load_data(artifact.path)
                 if artifact and os.path.exists(artifact.path)
                 else {"version": 1, "segments": []}
             )
             artifact_rows = artifact_data.get("segments", [])
-            current_subtitles = list(editor_segments or []) + list(artifact_rows)
+            current_subtitles = self._resolve_range_coverage(
+                artifact_rows, self._range_editor_segments
+            )
             reconciled = reconcile_generated_timing(
                 GenerationRange(batch.start_ms, batch.end_ms),
                 result.segments,
@@ -555,7 +552,10 @@ class SubtitleGenerationService(QObject):
             )
             if len(generated) != len(reconciled.segments):
                 raise RuntimeError("RECONCILIATION_UNSAFE: generated output failed subtitle validation.")
-            rows = self._merge_editor_rows(artifact_rows, editor_segments or [])
+            rows = copy.deepcopy([
+                segment.get_raw_dict() if hasattr(segment, "get_raw_dict") else segment
+                for segment in current_subtitles
+            ])
             rows.extend(
                 {
                     "id": str(uuid.uuid4()),
@@ -598,50 +598,18 @@ class SubtitleGenerationService(QObject):
             batch.status = "FAILED"
             self._fail(str(exc))
 
-    @staticmethod
-    def _segment_value(segment, key, default=None):
-        if isinstance(segment, dict):
-            return segment.get(key, default)
-        if hasattr(segment, "get_raw_dict"):
-            return segment.get_raw_dict().get(key, default)
-        return getattr(segment, key, default)
+    def _resolve_range_coverage(self, artifact_rows, supplied_segments):
+        """Providers/callers supply complete rows for the validated request context.
 
-    @classmethod
-    def _merge_editor_rows(cls, artifact_rows, editor_segments):
-        rows = copy.deepcopy(list(artifact_rows or []))
-        by_id = {str(row.get("id")): row for row in rows if row.get("id") is not None}
-        for index, segment in enumerate(editor_segments or []):
-            raw = (
-                segment.get_raw_dict()
-                if hasattr(segment, "get_raw_dict")
-                else segment
-            )
-            if not isinstance(raw, dict):
-                continue
-            start = cls._segment_value(segment, "start_ms")
-            end = cls._segment_value(segment, "end_ms")
-            if start is None or end is None:
-                continue
-            segment_id = str(raw.get("id") or f"editor-{index}")
-            row = by_id.get(segment_id)
-            if row is None:
-                row = next(
-                    (candidate for candidate in rows
-                     if int(candidate.get("start_ms", -1)) == int(start)
-                     and int(candidate.get("end_ms", -1)) == int(end)),
-                    None,
-                )
-            if row is None:
-                row = copy.deepcopy(raw)
-                row["id"] = raw.get("id") or str(uuid.uuid4())
-                rows.append(row)
-            row.update({
-                "start_ms": int(start),
-                "end_ms": int(end),
-                "text": raw.get("text", ""),
-            })
-            by_id[str(row["id"])] = row
-        return rows
+        None means unavailable; an empty list is authoritative, not a fallback.
+        Call again immediately before insertion to observe edits made during ASR.
+        """
+        current = (
+            self.range_segments_provider()
+            if callable(self.range_segments_provider)
+            else supplied_segments
+        )
+        return list(artifact_rows if current is None else current)
 
     def _require_project(self):
         project = self.project_service.current_project

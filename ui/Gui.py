@@ -229,9 +229,7 @@ class MainWindow(QMainWindow):
         self.subtitle_generation_service = SubtitleGenerationService(
             self.subtitle_whisper_service, self.project_service
         )
-        self.subtitle_generation_service.range_segments_provider = (
-            lambda: self.sub_editor.all_segments
-        )
+        self.subtitle_generation_service.range_segments_provider = self._current_range_segments
         self.subtitle_generation_service.on_batch_complete = self._on_generation_batch_sync
         self.timing_service = TimingBatchService(self.project_service)
 
@@ -1993,6 +1991,31 @@ class MainWindow(QMainWindow):
         self.subtitle_generation_service.on_batch_complete = (
             self._on_generation_batch_sync
         )
+
+    def _current_range_segments(self):
+        """Return complete editor coverage only for the loaded Queue/project context."""
+        project = self.project_service.current_project
+        if not project or not self.project_service.is_current_project_for_video(self.queue_mgr.active_vid):
+            return None
+        item = self.queue_mgr.get_item(self.queue_mgr.active_item_key) or {}
+        if not item.get("project_id") and not item.get("project_root"):
+            return None
+        if not self._queue_project_identity_matches(item.get("project_id"), item.get("project_root")):
+            return None
+        artifact_id = getattr(project.state, "subtitle_artifact_id", None)
+        artifact = self.project_service.artifact_store.get(artifact_id) if artifact_id else None
+        _, queue_path = self.queue_mgr.get_active_data()
+        loaded_path = self.sub_editor.srt_path
+        expected_paths = [queue_path]
+        if artifact:
+            expected_paths.extend([artifact.path, artifact.path.replace(".sub.json", "_shadow.srt")])
+        if loaded_path:
+            loaded = os.path.normcase(os.path.abspath(loaded_path))
+            if not any(path and os.path.normcase(os.path.abspath(path)) == loaded for path in expected_paths):
+                return None
+        elif artifact or queue_path:
+            return None
+        return self.sub_editor.all_segments
 
     def _start_range_generation(self, start_ms, end_ms):
         self.timeline_widget.set_generation_busy(True)
