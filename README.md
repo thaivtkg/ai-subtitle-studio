@@ -63,6 +63,31 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
   * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
   * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
 
+### Bổ sung phụ đề cho đoạn âm thanh còn thiếu
+
+Tính năng hỗ trợ rà soát và tạo phụ đề bổ sung cho các khoảng thời gian trống trên trục timeline:
+
+* **Nhận diện khoảng trống trên Timeline (Uncovered Timeline Ranges):**
+  * Trục thời gian tự động đánh dấu các khoảng thời gian chưa có phụ đề bao phủ (đây là các khoảng trống thời gian trên timeline, không phải do AI hoặc VAD phát hiện có tiếng nói).
+* **Cách chọn khoảng thời gian (Range Selection):**
+  * Nhấp chuột trực tiếp vào khoảng trống (gap) trên timeline.
+  * Nhập trực tiếp mốc thời gian **Start / End** trên thanh công cụ tạo phụ đề.
+  * Giữ phím **Shift** và kéo rê chuột trên dải sóng âm (waveform) để khoanh vùng đoạn cần xử lý.
+* **Quy tắc tạo phụ đề theo vùng chọn:**
+  * Tính năng tạo phụ đề chỉ áp dụng cho khoảng thời gian hợp lệ chưa có phụ đề bao phủ.
+  * Khoảng thời gian có phần giao dương (chồng lấn) với các phụ đề hiện hữu sẽ bị từ chối tạo phụ đề để đảm bảo tính toàn vẹn của dữ liệu.
+  * Quá trình sinh phụ đề chỉ tác động đến duy nhất phạm vi thời gian đã chọn; toàn bộ các phụ đề nằm ngoài phạm vi này được giữ nguyên.
+  * Mốc thời gian của phụ đề mới sinh có thể được tự động điều chỉnh an toàn để đảm bảo nằm trọn vẹn trong khoảng thời gian đã chỉ định.
+* **Tiêu điểm và phát riêng đoạn phụ đề (Focus & Play Segment):**
+  * Khi chọn một dòng phụ đề, dải sóng âm sẽ tự động làm nổi bật (highlight) phạm vi thời gian tương ứng và hiển thị chi tiết **Start**, **End** cùng **Duration**.
+  * Nhấn nút **Play Segment** để phát riêng biệt đoạn âm thanh của phụ đề đó, giúp kiểm tra nhanh nội dung và độ khớp.
+* **Tinh chỉnh thời gian trực quan (Trim / Extend):**
+  * Kéo mép trái sang phải để cắt ngắn (trim) đoạn đầu; kéo sang trái để mở rộng (extend) đoạn đầu.
+  * Kéo mép phải sang trái để cắt ngắn (trim) đoạn cuối; kéo sang phải để mở rộng (extend) đoạn cuối.
+  * Toàn bộ thao tác chỉnh sửa thời gian đều hỗ trợ hoàn tác (**Undo** - `Ctrl+Z`) và làm lại (**Redo** - `Ctrl+Shift+Z`).
+* **Giới hạn hiện tại:**
+  * Tính năng tạo phụ đề theo vùng chọn hiện chỉ hỗ trợ các khoảng trống chưa có phụ đề (uncovered ranges). Việc tái tạo hoặc thay thế đè (regenerate/replace) lên các phụ đề đã tồn tại chưa nằm trong phạm vi của chức năng này.
+
 ---
 
 ## ⌨️ Bảng Phím tắt Toàn cục (Shortcuts)
