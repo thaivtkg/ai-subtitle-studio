@@ -27,6 +27,7 @@ class TimelineController(QObject):
         self.state_manager = TimelineStateManager()
         self.undo_manager = undo_manager or UndoRedoManager()
         self.selection_controller = selection_controller
+        self._range_drag_start_ms = None
 
         self.ui.setFocusPolicy(Qt.StrongFocus)
         if hasattr(self.ui.container, 'waveform'):
@@ -35,6 +36,11 @@ class TimelineController(QObject):
             self.ui.container.ruler.setFocusPolicy(Qt.StrongFocus)
             
         self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
+        self.ui.container.track.segment_clicked.connect(self._on_track_selection_changed)
+        self.ui.container.track.selection_cleared.connect(self._clear_selection)
+        self.ui.generation_range_selected.connect(self._clear_selection)
+        if hasattr(self.ui, "gap_selected"):
+            self.ui.gap_selected.connect(self._on_gap_selected)
         
         self.ui.installEventFilter(self)
         if hasattr(self.ui.container, 'ruler'):
@@ -97,6 +103,10 @@ class TimelineController(QObject):
             self.ui.center_on_time((segment.start_ms + segment.end_ms) // 2)
 
     def sync_selection(self, index, segment_id, source=None):
+        if getattr(self, "_syncing_track_selection", False):
+            return
+        if hasattr(self.ui, "clear_gap_selection"):
+            self.ui.clear_gap_selection()
         track = self.ui.container.track
         segment = None
         if segment_id:
@@ -104,7 +114,7 @@ class TimelineController(QObject):
                 (candidate for candidate in track.segments if candidate.segment_id == segment_id),
                 None,
             )
-        if segment is None and 0 <= index < len(track.segments):
+        if segment is None and not segment_id and 0 <= index < len(track.segments):
             segment = track.segments[index]
 
         if segment is None:
@@ -114,10 +124,44 @@ class TimelineController(QObject):
 
         track.set_selection({segment.segment_id})
         self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+        if hasattr(self.ui, "refresh_segment_focus"):
+            self.ui.refresh_segment_focus()
 
         if source == SelectionSource.EDITOR and hasattr(self.ui, "center_on_time"):
             midpoint_ms = (segment.start_ms + segment.end_ms) // 2
             self.ui.center_on_time(midpoint_ms)
+
+    def _on_gap_selected(self, gap):
+        self._clear_selection()
+
+    def _clear_selection(self):
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.TIMELINE)
+
+    def _on_track_selection_changed(self, *_):
+        track = self.ui.container.track
+        selected_ids = set(track.selected_ids)
+        same_selection = (
+            self.selection_controller
+            and len(selected_ids) == 1
+            and self.selection_controller.selected_segment_id in selected_ids
+            and self.ui.generation_range is None
+        )
+        if not same_selection:
+            self.ui.clear_gap_selection()
+        if self.selection_controller:
+            if len(selected_ids) == 1:
+                segment_id = next(iter(selected_ids))
+                index = next((i for i, s in enumerate(track.segments) if s.segment_id == segment_id), -1)
+                self.selection_controller.select(index, segment_id, SelectionSource.TIMELINE)
+            else:
+                self._syncing_track_selection = True
+                try:
+                    self.selection_controller.clear_selection(SelectionSource.TIMELINE)
+                finally:
+                    self._syncing_track_selection = False
+        track.set_selection(selected_ids)
+        self.ui.refresh_segment_focus()
 
     # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
     def sync_from_editor(self, ms: int):
@@ -135,6 +179,7 @@ class TimelineController(QObject):
             track.selected_ids.clear()
             
         track.update()
+        self._on_track_selection_changed()
 
         # Tự động cuộn thanh Scroll của Timeline
         from PySide6.QtWidgets import QScrollArea
@@ -152,12 +197,32 @@ class TimelineController(QObject):
         if event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton:
                 obj.setFocus() 
+                if obj is self.ui.container.track:
+                    segment, mode = obj.get_hit_target(event.position().x())
+                    if segment and mode != EditMode.NONE:
+                        self.ui.timing_edit_started.emit()
                 if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    if (
+                        obj is self.ui.container.waveform
+                        and event.modifiers() & Qt.ShiftModifier
+                    ):
+                        self.ui.clear_gap_selection()
+                        self._range_drag_start_ms = self._x_to_ms(event.pos().x())
+                        self._update_visual_range(event.pos().x())
+                        return True
                     self._do_seek(event.pos().x(), event.modifiers())
                     return True 
         elif event.type() == QEvent.MouseMove and (event.buttons() & Qt.LeftButton):
             if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                    self._update_visual_range(event.pos().x())
+                    return True
                 self._do_seek(event.pos().x(), event.modifiers())
+                return True
+        elif event.type() == QEvent.MouseButtonRelease:
+            if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                self._update_visual_range(event.pos().x())
+                self._range_drag_start_ms = None
                 return True
         elif event.type() == QEvent.KeyPress:
             key = event.key()
@@ -172,6 +237,17 @@ class TimelineController(QObject):
                 self._trigger_delete()
                 return True
         return super().eventFilter(obj, event)
+
+    def _x_to_ms(self, x):
+        scale = self.ui.container.waveform.pixels_per_second
+        return max(0, min(self.ui.duration_ms, int(x * 1000.0 / scale)))
+
+    def _update_visual_range(self, x):
+        end_ms = self._x_to_ms(x)
+        start_ms = min(self._range_drag_start_ms, end_ms)
+        end_ms = max(self._range_drag_start_ms, end_ms)
+        if end_ms > start_ms:
+            self.ui.set_generation_range(start_ms, end_ms)
 
     def _do_seek(self, x, modifiers=Qt.NoModifier):
         pixels_per_sec = self.ui.container.track.pixels_per_second
@@ -196,6 +272,7 @@ class TimelineController(QObject):
             else:
                 track.selected_ids.clear()
             track.update()
+            self._on_track_selection_changed()
 
     def _trigger_split(self):
         track = self.ui.container.track
@@ -225,6 +302,7 @@ class TimelineController(QObject):
                 self._execute_safe(cmd)
                 if hasattr(cmd, 'target_segment') and cmd.target_segment:
                     self.ui.container.track.selected_ids = {cmd.target_segment.segment_id}
+                    self._on_track_selection_changed()
             else:
                 Toast.show_info(self.ui.window(), "Chỉ có thể gộp các khối phụ đề đứng cạnh nhau!")
         else:
@@ -237,10 +315,12 @@ class TimelineController(QObject):
             if cmd.can_execute(None):
                 self._execute_safe(cmd)
                 self.ui.container.track.selected_ids.clear()
+                self._clear_selection()
         else:
             Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề nào để xóa.")
 
     def handle_edit_commit(self, segment_id: str, mode: EditMode, delta_ms: int):
+        self.ui.timing_edit_started.emit()
         if not self.state_manager.can_transition(TimelineState.COMMITTING):
             self.ui.container.track.update()
             return
@@ -316,10 +396,14 @@ class TimelineController(QObject):
         
         # 2. ĐẨY LÊN TIMELINE VIEW SAU (Lúc này danh sách đã được sắp xếp chuẩn 100%)
         self.ui.load_project_data(self.data_provider.get_duration_ms(), self.data_provider.get_all_segments())
+        if self.selection_controller:
+            segment_id = self.selection_controller.selected_segment_id
+            if segment_id and self.data_provider.get_segment(segment_id) is None:
+                self.selection_controller.clear_selection()
+            else:
+                self.sync_selection(self.selection_controller.selected_index, segment_id)
         
         # 3. VẼ LẠI TABLE BÊN DƯỚI
         main_window = self.ui.window()
         if hasattr(main_window, 'sub_editor'):
             main_window.sub_editor.render_page()
-            if hasattr(main_window, 'project_service'):
-                main_window.project_service.mark_dirty()

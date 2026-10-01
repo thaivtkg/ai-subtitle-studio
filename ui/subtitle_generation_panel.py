@@ -385,7 +385,17 @@ class SubtitleGenerationPanel(QWidget):
             self.cmb_batch_mode.setCurrentIndex(0)
 
     def check_resumable_state(self):
-        if self._is_timing_mode():
+        current_request = getattr(self.generation_service, "current_request", None)
+        current_checkpoint = getattr(self.generation_service, "current_checkpoint", None)
+        range_run_terminal = bool(
+            current_request
+            and current_request.range_start_ms is not None
+            and current_checkpoint
+            and current_checkpoint.status in {"COMPLETED", "CANCELLED", "FAILED"}
+        )
+        if range_run_terminal:
+            resumable = False
+        elif self._is_timing_mode():
             resumable = self._has_resumable_timing_checkpoint()
         else:
             checkpoint = self.generation_service.checkpoint_manager.load_checkpoint()
@@ -432,25 +442,34 @@ class SubtitleGenerationPanel(QWidget):
                 )
             return
 
+        request = self._build_asr_request()
+        if request is None:
+            return
+
+        self._set_ui_state_running()
+        try:
+            self.generation_service.start_generation(request, self.video_duration_ms)
+        except Exception as exc:
+            self._on_error(str(exc))
+
+    def _build_asr_request(self, range_start_ms=None, range_end_ms=None):
         project = self.generation_service.project_service.current_project
         if not project:
             QMessageBox.warning(self, "Lỗi", "Chưa có dự án nào được mở.")
-            return
+            return None
         source = getattr(project, "source", None)
-        source_fp = getattr(source, "fingerprint", "")
         video_path = getattr(source, "path", "")
         if not video_path:
             QMessageBox.warning(self, "Lỗi", "Không tìm thấy đường dẫn Video gốc trong Dự án.")
-            return
-
-        language = self.cmb_language.currentText()
+            return None
         compiled_context = self.generation_service.compile_prompt_context(
             project.transcription_context
         )
-        request = SubtitleGenerationRequest(
+        language = self.cmb_language.currentText()
+        return SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
-            source_fingerprint=source_fp,
+            source_fingerprint=getattr(source, "fingerprint", ""),
             video_path=video_path,
             model_size=self.cmb_model.currentText(),
             compute_type=self.cmb_compute.currentText(),
@@ -462,12 +481,38 @@ class SubtitleGenerationPanel(QWidget):
             batch_size_value=self.spin_batch_val.value(),
             overlap_ms=2000,
             prompt_context=compiled_context.text,
+            range_start_ms=range_start_ms,
+            range_end_ms=range_end_ms,
         )
+
+    def start_range_generation(self, start_ms, end_ms, existing_segments):
+        if self.video_duration_ms <= 0 or self._is_timing_mode():
+            self._on_error("Range generation requires loaded media in Full Subtitle mode.")
+            return
+        request = self._build_asr_request(start_ms, end_ms)
+        if request is None:
+            return
         self._set_ui_state_running()
         try:
-            self.generation_service.start_generation(request, self.video_duration_ms)
+            self.generation_service.start_generation(
+                request,
+                self.video_duration_ms,
+                existing_segments=existing_segments,
+            )
         except Exception as exc:
-            self._on_error(str(exc))
+            self._on_error(self._range_error_message(str(exc)))
+
+    @staticmethod
+    def _range_error_message(message):
+        if message.startswith("TIMING_RECONCILIATION_REQUIRED:"):
+            return "Kết quả phụ đề vượt ngoài khoảng thời gian đã chọn. Khoảng hiện có chưa được thay đổi."
+        if message.startswith("STALE_RANGE_CONFLICT:"):
+            return "Khoảng đã chọn đã thay đổi. Vui lòng kiểm tra lại trước khi tạo."
+        if message.startswith("RECONCILIATION_UNSAFE:"):
+            return "Không thể tự điều chỉnh thời gian an toàn. Phụ đề chưa được thêm."
+        if message.startswith("OVERLAPS_SUBTITLE:"):
+            return "Khoảng đã chọn hiện có phụ đề; hãy chọn một khoảng trống khác."
+        return message
 
     @Slot()
     def _on_resume_clicked(self):
@@ -622,8 +667,18 @@ class SubtitleGenerationPanel(QWidget):
         self._reset_ui_state()
 
     def _on_finish(self):
-        checkpoint = self.generation_service.checkpoint_manager.load_checkpoint()
-        if checkpoint and checkpoint.status == "CANCELLED":
+        current = getattr(self.generation_service, "current_checkpoint", None)
+        range_run = bool(
+            getattr(self.generation_service, "current_request", None)
+            and self.generation_service.current_request.range_start_ms is not None
+        )
+        checkpoint = (
+            None if range_run
+            else self.generation_service.checkpoint_manager.load_checkpoint()
+        )
+        if (range_run and current and current.status == "CANCELLED") or (
+            checkpoint and checkpoint.status == "CANCELLED"
+        ):
             self.lbl_status.setText("Cancelled. Resume when ready.")
             self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED};")
             self.progress_bar.setValue(0)

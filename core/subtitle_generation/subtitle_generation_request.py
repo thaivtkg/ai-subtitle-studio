@@ -26,12 +26,16 @@ class SubtitleGenerationRequest:
     overlap_ms: int = 2000
     batch_duration_ms: Optional[int] = None
     prompt_context: str = ""
+    range_start_ms: Optional[int] = None
+    range_end_ms: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.batch_mode not in {"time", "segments"}:
             raise ValueError("batch_mode must be 'time' or 'segments'")
         if self.batch_size_value <= 0:
             raise ValueError("batch_size_value must be positive")
+        if (self.range_start_ms is None) != (self.range_end_ms is None):
+            raise ValueError("range_start_ms and range_end_ms must be provided together")
 
         # Migrate the former ``batch_duration_ms`` contract when an old
         # request/checkpoint is loaded without explicit batching fields.

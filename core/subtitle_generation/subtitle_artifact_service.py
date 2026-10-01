@@ -57,6 +57,46 @@ class SubtitleArtifactService:
             mark_dirty()
         return artifact
 
+    def create_artifact_with_data(self, data: dict) -> Optional[Artifact]:
+        """Create the first artifact only after a complete result is ready."""
+        project = self.project_service.current_project
+        project_dir = getattr(self.project_service, "project_dir", None) or getattr(
+            project, "project_dir", None
+        )
+        if not project or not project_dir:
+            return None
+
+        artifact_store = self.project_service.artifact_store
+        artifact_id = getattr(project.state, "subtitle_artifact_id", None) or str(uuid.uuid4())
+        registered = artifact_store.get(artifact_id)
+        if registered:
+            return registered
+
+        subtitle_dir = os.path.join(project_dir, "artifacts", "subtitle")
+        os.makedirs(subtitle_dir, exist_ok=True)
+        path = os.path.join(subtitle_dir, f"{artifact_id}.sub.json")
+        if os.path.exists(path):
+            raise FileExistsError(f"Unregistered subtitle artifact already exists: {path}")
+
+        now = datetime.now().isoformat()
+        self._save_atomic(path, data)
+        artifact = Artifact(
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.SUBTITLE,
+            path=path,
+            created_at=now,
+            updated_at=now,
+            source_project_id=project.project_id,
+            status=ArtifactStatus.READY,
+            revision=1,
+        )
+        artifact_store.register(artifact)
+        project.state.subtitle_artifact_id = artifact_id
+        mark_dirty = getattr(self.project_service, "mark_dirty", None)
+        if mark_dirty:
+            mark_dirty()
+        return artifact
+
     @staticmethod
     def _save_atomic(path: str, data: dict) -> None:
         temp_path = f"{path}.tmp"

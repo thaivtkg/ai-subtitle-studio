@@ -137,12 +137,7 @@ class WorkspaceService:
                 
                 # Ép nạp thẳng vào Editor
                 if target_artifact_path:
-                    if target_artifact_path.endswith('.ai-subtitle-draft'):
-                        self.ui.sub_editor.load_draft_file(target_artifact_path)
-                    else:
-                        self.ui.sub_editor.load_srt_file(target_artifact_path)
-                    
-                    self.ui.video_player.sub_controller.load_srt(target_artifact_path)
+                    self.ui._load_context_subtitles(target_artifact_path)
                     print("[DEBUG] Đã ÉP nạp Artifact trực tiếp vào Inline Editor thành công!")
                 
                 # Seek video mượt mà

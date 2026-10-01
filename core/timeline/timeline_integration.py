@@ -17,6 +17,19 @@ class TimelineVideoSync:
         
         # 2. Chiều từ Timeline -> Video Player
         self.timeline.seek_requested.connect(self.on_timeline_seek_requested)
+        self.timeline.play_segment_requested.connect(self.play_selected_segment)
+        self.timeline.workflow_reset.connect(self.cancel_segment_playback)
+        self.timeline.timing_edit_started.connect(self.cancel_segment_playback)
+
+    def cancel_segment_playback(self):
+        self.player.cancel_segment_playback(pause=True)
+
+    def play_selected_segment(self):
+        self.player.play_segment(self._selected_range)
+
+    def _selected_range(self):
+        segment = self.timeline.focused_segment
+        return (segment.start_ms, segment.end_ms) if segment else None
 
     def on_player_position_changed(self, position_ms: int):
         """Khi Video chạy, nhích Kim thời gian trên Timeline"""
