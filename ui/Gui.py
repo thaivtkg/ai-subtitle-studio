@@ -106,7 +106,7 @@ from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
 from ui.theme import Theme
 from ui.toast import Toast
-from utils import load_settings, save_settings
+from core.utils.settings_utils import load_settings, save_settings
 from workers.TaskQueue import HardsubWorker
 
 
