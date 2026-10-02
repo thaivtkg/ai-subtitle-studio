@@ -37,9 +37,10 @@ class TestAgenticPromptBuilder(unittest.TestCase):
         )
         
         self.assertIn("<glossary>", ctx.prompt_text)
-        self.assertIn("Bankai -> Giải phóng cuối cùng", ctx.prompt_text)
+        self.assertIn("Bankai -&gt; Giải phóng cuối cùng", ctx.prompt_text)
         self.assertIn("<tm_matches>", ctx.prompt_text)
         self.assertIn("Xin chào", ctx.prompt_text)
+        self.assertIn("00:00:10,000 --&gt; 00:00:12,000", ctx.prompt_text)
         
         self.assertEqual(ctx.glossary_items_used, 1)
         self.assertEqual(ctx.tm_matches_used, 1)

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from tests.test_canonical_autosave import FakeScheduler, FakeTracker
+from tests.core.test_canonical_autosave import FakeScheduler, FakeTracker
 
 from core.recovery.canonical_save_coordinator import CanonicalSaveCoordinator
 

@@ -2,7 +2,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from tests import test_generation_range
+from tests.core import test_generation_range
 from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult, WhisperSegmentResult,
 )
