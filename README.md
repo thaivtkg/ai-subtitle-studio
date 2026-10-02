@@ -62,6 +62,15 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
 * 🎬 **Xuất xưởng Đa Định dạng & Render Hardsub GPU/CPU**
   * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
   * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
+---
+
+### Audio Range & Gap Editing
+
+AI Subtitle Studio allows precise control over subtitle generation and editing for specific audio segments without affecting the rest of your project.
+
+*   **Audio Gap Recovery:** The timeline automatically identifies gaps (sections without subtitles). Click on any gap directly on the subtitle track to select that specific audio range.
+*   **Range Generation:** Generate subtitles only for a selected audio range. You can select a range by clicking a gap, manually entering Start/End times, or Shift-dragging on the waveform. The generation process safely inserts new subtitles into the selected range without overwriting existing ones.
+*   **Segment Editing & Focus:** Select an individual subtitle segment to focus playback and edit its text or timing independently. Trim or extend segments directly within the editor constraints.
 
 ---
 
