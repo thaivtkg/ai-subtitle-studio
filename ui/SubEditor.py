@@ -310,7 +310,7 @@ class SubtitleEditorWidget(QWidget):
         btn_layout = QHBoxLayout()
         
         self.ai_translate_btn = QPushButton("🪄 AI Translate")
-        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PURPLE}; color: white; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
+        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; color: white; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
         self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
         
         self.approve_btn = QPushButton("✅ Chốt Timing")
