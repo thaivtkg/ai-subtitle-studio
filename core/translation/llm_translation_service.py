@@ -79,6 +79,7 @@ class LLMTranslationService:
         target_lang: str,
         glossary: List[str] = None,
         tm_matches: List[TMMatch] = None,
+        previous_context: str = None,
     ) -> TranslationResult:
         """
         Translates a batch of subtitles using Agentic Prompting.
@@ -89,7 +90,8 @@ class LLMTranslationService:
                 source_lang=source_lang,
                 target_lang=target_lang,
                 glossary=glossary,
-                tm_matches=tm_matches
+                tm_matches=tm_matches,
+                previous_context=previous_context
             )
             
             translated_text = self.provider.translate(context.prompt_text)

@@ -4,6 +4,7 @@ from PySide6.QtCore import QObject, QRunnable, Signal
 from core.translation.llm_translation_service import LLMTranslationService
 from core.database.tm_manager import TranslationMemoryManager
 from core.database.glossary_manager import GlossaryManager
+from core.subtitle_quality.auto_qc_service import AutoQCService
 
 class BatchTranslatorSignals(QObject):
     progress = Signal(int, int) # current_chunk, total_chunks
@@ -42,12 +43,10 @@ class TranslationBatchWorker(QRunnable):
         self.is_cancelled = True
 
     def _chunk_segments_dynamic(self) -> list[list[dict]]:
-        """Cắt lô động dựa trên Token Counter để không làm tràn output LLM."""
         chunks = []
         current_chunk = []
         current_tokens = 0
         
-        # We need access to the token counter used by the prompt builder
         token_counter = self.service.prompt_builder._token_counter
         
         for seg in self.segments:
@@ -56,7 +55,6 @@ class TranslationBatchWorker(QRunnable):
             end = seg.get("end", "00:00:00,000")
             text = seg.get("original_text", seg.get("text", ""))
             
-            # Tính token ước lượng cho đoạn SRT
             seg_str = f"{idx}\n{start} --> {end}\n{text}\n\n"
             seg_tokens = token_counter.count(seg_str)
             
@@ -80,30 +78,38 @@ class TranslationBatchWorker(QRunnable):
             start = seg.get("start", "00:00:00,000")
             end = seg.get("end", "00:00:00,000")
             text = seg.get("original_text", seg.get("text", ""))
-            
             lines.append(f"{idx}\n{start} --> {end}\n{text}\n")
         return "\n".join(lines)
 
+    def _extract_previous_context(self, previous_chunk: list[dict]) -> str:
+        if not previous_chunk:
+            return ""
+        # Take the last 3 segments to provide context
+        context_segs = previous_chunk[-3:]
+        lines = []
+        for seg in context_segs:
+            text = seg.get("original_text", seg.get("text", ""))
+            lines.append(text)
+        return " ".join(lines)
+
     def run(self):
         try:
-            # Prepare glossary for the whole domain
             glossary_map = self.glossary_manager.get_term_mappings(self.domain)
             glossary_list = [f"{k} -> {v}" for k, v in glossary_map.items()]
             
             chunks = self._chunk_segments_dynamic()
             total_chunks = len(chunks)
+            previous_context = ""
             
             for chunk_idx, chunk in enumerate(chunks):
                 if self.is_cancelled:
                     break
                 
-                # Fetch TM Matches for this chunk
                 tm_matches = []
                 for seg in chunk:
                     orig = seg.get("original_text", "").strip()
                     if orig and orig != "[Unknown Source]":
                         matches = self.tm_manager.find_matches(orig)
-                        # Take the top 1 exact/fuzzy match per sentence to save budget
                         if matches:
                             tm_matches.append(matches[0])
                             
@@ -112,10 +118,10 @@ class TranslationBatchWorker(QRunnable):
                 retries = 0
                 success = False
                 last_error = ""
+                translated_segments = None
                 
                 while retries <= self.max_retries and not success and not self.is_cancelled:
                     if retries > 0:
-                        # Exponential Backoff with Jitter
                         base_delay = 2.0
                         jitter = random.uniform(0.1, 1.0)
                         backoff = (base_delay * (2 ** (retries - 1))) + jitter
@@ -126,7 +132,8 @@ class TranslationBatchWorker(QRunnable):
                         source_lang=self.source_lang,
                         target_lang=self.target_lang,
                         glossary=glossary_list,
-                        tm_matches=tm_matches
+                        tm_matches=tm_matches,
+                        previous_context=previous_context
                     )
                     
                     if result.error:
@@ -138,22 +145,49 @@ class TranslationBatchWorker(QRunnable):
                             self.signals.error.emit(f"Chunk {chunk_idx + 1} Failed: {result.error}")
                             return
                     else:
-                        # Alignment Validator
-                        translated_segments = self._parse_and_validate(result.translated_text, chunk)
-                        if translated_segments is None:
-                            # Validation failed! Triggers retry (maybe LLM hallucinated the format)
+                        parsed_segs = self._parse_and_validate(result.translated_text, chunk)
+                        if parsed_segs is None:
                             retries += 1
                             last_error = "Alignment Validation Failed: Output segment count does not match input."
                             continue
                             
+                        translated_segments = parsed_segs
                         success = True
-                        self.signals.chunk_completed.emit(chunk_idx, translated_segments)
                 
+                # Handle Fallback if max retries exceeded
                 if not success and not self.is_cancelled:
-                    self.signals.error.emit(f"Max retries exceeded on Chunk {chunk_idx + 1}. Last Error: {last_error}")
-                    return
+                    if "Alignment Validation Failed" in last_error:
+                        # Fallback: Copy original text and inject metadata
+                        translated_segments = []
+                        for seg in chunk:
+                            fallback_seg = seg.copy()
+                            fallback_seg["text"] = fallback_seg.get("original_text", fallback_seg.get("text", ""))
+                            fallback_seg["metadata"] = {"qc_flags": ["alignment_failed_fallback"]}
+                            translated_segments.append(fallback_seg)
+                    else:
+                        self.signals.error.emit(f"Max retries exceeded on Chunk {chunk_idx + 1}. Last Error: {last_error}")
+                        return
+                
+                # Apply AutoQC to the translated segments
+                for seg in translated_segments:
+                    src_text = seg.get("original_text", seg.get("text", ""))
+                    tgt_text = seg.get("text", "")
                     
+                    qc_flags = AutoQCService.evaluate_segment(src_text, tgt_text, glossary_map)
+                    
+                    if qc_flags:
+                        metadata = seg.get("metadata", {})
+                        existing_flags = metadata.get("qc_flags", [])
+                        existing_flags.extend(qc_flags)
+                        metadata["qc_flags"] = existing_flags
+                        seg["metadata"] = metadata
+                
+                # Emit completion for this chunk
+                self.signals.chunk_completed.emit(chunk_idx, translated_segments)
                 self.signals.progress.emit(chunk_idx + 1, total_chunks)
+                
+                # Prepare context for next chunk
+                previous_context = self._extract_previous_context(chunk)
                 
             self.signals.finished.emit()
             
@@ -161,22 +195,20 @@ class TranslationBatchWorker(QRunnable):
             self.signals.error.emit(str(e))
 
     def _parse_and_validate(self, srt_text: str, original_chunk: list[dict]) -> list[dict] | None:
-        """Parse the translated SRT and validate against original chunk length."""
         from core.export.subtitle_parser import parse_srt_content
         
         try:
             parsed = parse_srt_content(srt_text)
             
-            # Alignment Validator
             if len(parsed) != len(original_chunk):
                 return None
                 
-            # Re-align with original chunk to maintain structure
+            result_chunk = []
             for i, o_seg in enumerate(original_chunk):
-                # Optionally check if timing matches strictly or not, but typically LLM messes up timing strings lightly
-                # We just map by index since numbering was instructed to be maintained.
-                o_seg["text"] = parsed[i]["text"]
+                new_seg = o_seg.copy()
+                new_seg["text"] = parsed[i]["text"]
+                result_chunk.append(new_seg)
                 
-            return original_chunk
+            return result_chunk
         except Exception:
             return None

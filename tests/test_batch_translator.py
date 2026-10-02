@@ -80,5 +80,34 @@ class TestTranslationBatchWorker(unittest.TestCase):
         result = worker._parse_and_validate(srt_output, self.segments)
         self.assertIsNone(result)
 
+    def test_fallback_and_qc(self):
+        worker = TranslationBatchWorker(
+            service=self.service_mock,
+            tm_manager=self.tm_mock,
+            glossary_manager=self.glossary_mock,
+            segments=[{"stt": "1", "start": "0", "end": "1", "original_text": "Katarina is here."}],
+            source_lang="en",
+            target_lang="vi",
+            max_retries=0  # Force immediate failure if alignment fails
+        )
+        
+        # Mock service to return invalid alignment
+        self.service_mock.translate_batch.return_value = TranslationResult(
+            translated_text="1\n0\nMerged\n", # Only 1 line, will fail parsing
+            prompt_context=MagicMock(),
+            error=None
+        )
+        
+        # Override run to catch signals
+        emitted_chunks = []
+        worker.signals.chunk_completed.connect(lambda idx, segs: emitted_chunks.append(segs))
+        
+        worker.run()
+        
+        self.assertEqual(len(emitted_chunks), 1)
+        fallback_segs = emitted_chunks[0]
+        self.assertEqual(fallback_segs[0]["text"], "Katarina is here.")
+        self.assertIn("alignment_failed_fallback", fallback_segs[0]["metadata"]["qc_flags"])
+
 if __name__ == "__main__":
     unittest.main()

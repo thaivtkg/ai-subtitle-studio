@@ -54,6 +54,13 @@ Only output the translated subtitles in standard SRT format.
 {self.escape_xml(source_text)}
 </source_text>"""
 
+    def _format_previous_context(self, previous_context: str) -> str:
+        if not previous_context:
+            return ""
+        return f"""<previous_context>
+{self.escape_xml(previous_context)}
+</previous_context>"""
+
     def build(
         self,
         source_text: str,
@@ -61,6 +68,7 @@ Only output the translated subtitles in standard SRT format.
         target_lang: str,
         glossary: list[str] = None,
         tm_matches: list[TMMatch] = None,
+        previous_context: str = None,
         max_tokens: int = DEFAULT_TRANSLATION_BUDGET,
     ) -> AgenticPromptContext:
         glossary = glossary or []
@@ -68,9 +76,15 @@ Only output the translated subtitles in standard SRT format.
         
         system_text = self._format_system(source_lang, target_lang)
         source_block = self._format_source(source_text)
+        prev_block = self._format_previous_context(previous_context)
         
-        # Base prompt without any injected context
-        base_prompt = f"{system_text}\n\n{source_block}"
+        # Base prompt without any injected context (Glossary/TM)
+        parts = [system_text]
+        if prev_block:
+            parts.append(prev_block)
+        parts.append(source_block)
+        
+        base_prompt = "\n\n".join(parts)
         base_tokens = self._token_counter.count(base_prompt)
         
         if base_tokens > max_tokens:
@@ -121,6 +135,8 @@ Only output the translated subtitles in standard SRT format.
             parts.append(glossary_final)
         if tm_final:
             parts.append(tm_final)
+        if prev_block:
+            parts.append(prev_block)
         parts.append(source_block)
         
         final_prompt = "\n\n".join(parts)
