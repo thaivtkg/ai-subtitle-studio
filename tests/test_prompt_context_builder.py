@@ -56,6 +56,18 @@ class TestPromptContextBuilder(unittest.TestCase):
         result2 = self.builder.build(ctx, 10)
         self.assertEqual(result1, result2)
 
+    def test_mapped_glossary_prompt_generation(self):
+        ctx = TranscriptionContext(
+            context="Thần chết vs Ninja",
+            glossary=["Bankai -> Giải phóng cuối cùng", "Rasengan -> La Toàn Hoàn"],
+        )
+        result = self.builder.build(ctx, max_tokens=50)
+        self.assertIn(
+            "Terminology: Bankai -> Giải phóng cuối cùng, Rasengan -> La Toàn Hoàn.",
+            result.text,
+        )
+        self.assertIn("Context: Thần chết vs Ninja", result.text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -223,6 +223,8 @@ class ProjectService:
             transcription_context=TranscriptionContext(
                 context=str((p_data.get("transcription_context") or {}).get("context", "")),
                 glossary=list((p_data.get("transcription_context") or {}).get("glossary", [])),
+                domain=str((p_data.get("transcription_context") or {}).get("domain", "general")),
+                lang_pair=str((p_data.get("transcription_context") or {}).get("lang_pair", "")),
             ).normalized(),
             schema_version=max(2, int(p_data.get("schema_version", 1)))
         )
