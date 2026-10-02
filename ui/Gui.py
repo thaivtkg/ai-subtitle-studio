@@ -1044,6 +1044,12 @@ class MainWindow(QMainWindow):
         # Scrub video based on which edge is being dragged
         # EditMode Enum is not directly available, but it is passed as an object.
         # We can use its name.
+        import time
+        now = time.time()
+        if hasattr(self, '_last_scrub_time') and now - self._last_scrub_time < 0.05:
+            return  # Throttle to ~20fps to prevent QMediaPlayer freeze
+        self._last_scrub_time = now
+
         if hasattr(edit_mode, 'name'):
             mode_name = edit_mode.name
         else:
@@ -1174,9 +1180,11 @@ class MainWindow(QMainWindow):
         matches = self.tm_manager.find_matches(original_text)
         self.tm_matches_panel.update_matches(matches)
 
-    def _on_commit_segment(self, original, translated, prev_orig, next_orig):
+    def _on_commit_segment(self, original, translated, prev_orig, next_orig, qc_flags=None):
         if not hasattr(self, 'tm_manager'): return
         if not original or original == "[Unknown Source]": return
+        if qc_flags and any(flag in ["format_injection", "missing_term"] for flag in qc_flags): return
+        
         self.tm_manager.add_segment(
             source_text=original,
             target_text=translated,

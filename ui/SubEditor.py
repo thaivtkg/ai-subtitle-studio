@@ -179,7 +179,7 @@ class SubtitleEditorWidget(QWidget):
     COL_TRANSLATION = 5
 
     request_tm_suggestion = Signal(str)  # original_text
-    commit_segment = Signal(str, str, str, str)  # original, translated, prev_orig, next_orig
+    commit_segment = Signal(str, str, str, str, list)  # original, translated, prev, next, qc_flags
     request_ai_translate = Signal(list) # selected indices
 
     seek_requested = Signal(int)
@@ -644,7 +644,8 @@ class SubtitleEditorWidget(QWidget):
             if orig and orig != "[Unknown Source]":
                 prev_orig = self.all_segments[abs_idx - 1].get("original_text", "") if abs_idx > 0 else ""
                 next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
-                self.commit_segment.emit(orig, raw_text, prev_orig, next_orig)
+                qc_flags = segment.get("metadata", {}).get("qc_flags", [])
+                self.commit_segment.emit(orig, raw_text, prev_orig, next_orig, qc_flags)
 
 
     def _on_row_selected(self, row, _column):
@@ -789,7 +790,8 @@ class SubtitleEditorWidget(QWidget):
         if orig and orig != "[Unknown Source]":
             prev_orig = self.all_segments[abs_idx - 1].get("original_text", "") if abs_idx > 0 else ""
             next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
-            self.commit_segment.emit(orig, values["text"], prev_orig, next_orig)
+            qc_flags = segment.get("metadata", {}).get("qc_flags", [])
+            self.commit_segment.emit(orig, values["text"], prev_orig, next_orig, qc_flags)
 
 
     @staticmethod

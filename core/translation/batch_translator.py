@@ -125,16 +125,27 @@ class TranslationBatchWorker(QRunnable):
                         base_delay = 2.0
                         jitter = random.uniform(0.1, 1.0)
                         backoff = (base_delay * (2 ** (retries - 1))) + jitter
+                        import time
                         time.sleep(backoff)
                         
-                    result = self.service.translate_batch(
-                        source_text=source_srt,
-                        source_lang=self.source_lang,
-                        target_lang=self.target_lang,
-                        glossary=glossary_list,
-                        tm_matches=tm_matches,
-                        previous_context=previous_context
-                    )
+                    try:
+                        result = self.service.translate_batch(
+                            source_text=source_srt,
+                            source_lang=self.source_lang,
+                            target_lang=self.target_lang,
+                            glossary=glossary_list,
+                            tm_matches=tm_matches,
+                            previous_context=previous_context
+                        )
+                    except Exception as loop_e:
+                        err_str = str(loop_e).lower()
+                        if "network" in err_str or "transient" in err_str or "timeout" in err_str or "connection" in err_str:
+                            retries += 1
+                            last_error = str(loop_e)
+                            continue
+                        else:
+                            self.signals.error.emit(f"Chunk {chunk_idx + 1} Failed: {loop_e}")
+                            return
                     
                     if result.error:
                         if getattr(result, "is_transient_error", False):
