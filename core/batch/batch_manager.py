@@ -120,8 +120,11 @@ class BatchWorker(QRunnable):
                         
                     # Write output to new Artifact file
                     video_name = os.path.splitext(os.path.basename(job.input_file))[0]
-                    trans_file_path = f"/tmp/{video_name}_translated.srt"
-                    os.makedirs("/tmp", exist_ok=True)
+                    
+                    # Fix: Lưu vào cùng thư mục với video gốc (hoặc thư mục batch) thay vì /tmp/
+                    video_dir = os.path.dirname(job.input_file)
+                    trans_file_path = os.path.join(video_dir, f"{video_name}_translated.srt")
+                    
                     with open(trans_file_path, 'w', encoding='utf-8') as f:
                         for s in translated_segments:
                             start_str = self._ms_to_srt(s.get("start", 0))
