@@ -1051,8 +1051,16 @@ class MainWindow(QMainWindow):
             
         if hasattr(self, 'video_player') and self.video_player:
             self.video_player.set_position(target_ms)
+            self.video_player._segment_bounds = (start_ms, end_ms)
             
     def _on_global_selection_changed(self, index, segment_id, source):
+        if index < 0 or index >= len(self.sub_editor.all_segments):
+            if hasattr(self, 'video_player') and self.video_player:
+                self.video_player.clear_segment_focus()
+            if hasattr(self, 'timeline_widget') and self.timeline_widget:
+                self.timeline_widget.container.waveform.clear_selected_range()
+            return
+            
         if index >= 0 and index < len(self.sub_editor.all_segments):
             seg = self.sub_editor.all_segments[index]
             from core.export.subtitle_parser import time_str_to_ms

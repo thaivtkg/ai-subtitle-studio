@@ -299,13 +299,20 @@ class VideoPlayerWidget(QWidget):
         self.cancel_segment_playback(pause=True)
         self.set_position(start_ms)
         self._segment_bounds = (start_ms, end_ms)
+        self._segment_playback_active = True
         self.player.play()
 
     def cancel_segment_playback(self, *, pause=False):
         active = getattr(self, "_segment_bounds", None) is not None
-        self._segment_bounds = None
+        # Do not clear bounds here so that the time label stays local until explicitly cleared
+        self._segment_playback_active = False 
         if active and pause:
             self.player.pause()
+            
+    def clear_segment_focus(self):
+        self._segment_bounds = None
+        self._segment_playback_active = False
+        self.update_time_label()
 
     def _on_playing_changed(self, playing):
         if not playing:
@@ -331,7 +338,8 @@ class VideoPlayerWidget(QWidget):
 
     def position_changed(self, position):
         bounds = getattr(self, "_segment_bounds", None)
-        if bounds:
+        playback_active = getattr(self, "_segment_playback_active", False)
+        if bounds and playback_active:
             if position >= bounds[1]:
                 self.cancel_segment_playback(pause=True)
             elif position < bounds[0]:
@@ -446,9 +454,25 @@ class VideoPlayerWidget(QWidget):
         self.slider_volume.setToolTip(f"Volume: {volume}%")
 
     def update_time_label(self):
-        pos_str = self.format_time(self.player.position())
-        dur_str = self.format_time(self.player.duration())
-        self.lbl_time.setText(f"{pos_str} / {dur_str}")
+        position = self.player.position()
+        bounds = getattr(self, "_segment_bounds", None)
+        
+        if bounds:
+            start_ms, end_ms = bounds
+            local_position = max(0, position - start_ms)
+            local_duration = max(0, end_ms - start_ms)
+            local_position = min(local_position, local_duration)
+            
+            pos_str = self.format_time(local_position)
+            dur_str = self.format_time(local_duration)
+            self.lbl_time.setText(f"{pos_str} / {dur_str}")
+            from ui.theme import Theme
+            self.lbl_time.setStyleSheet(f"color: {Theme.CYAN};")
+        else:
+            pos_str = self.format_time(position)
+            dur_str = self.format_time(self.player.duration())
+            self.lbl_time.setText(f"{pos_str} / {dur_str}")
+            self.lbl_time.setStyleSheet("")
 
     def format_time(self, ms):
         s = ms // 1000
