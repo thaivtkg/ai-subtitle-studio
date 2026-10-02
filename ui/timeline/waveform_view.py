@@ -124,23 +124,23 @@ class WaveformView(QWidget):
         # Slicing mảng numpy để lấy đúng khúc cần vẽ
         visible_chunks = self.waveform_data[start_idx:end_idx + 1]
 
-        # 2. Bắt đầu vòng lặp vẽ
-        last_x = -1
+        # --- DECIMATION LOD LOGIC ---
+        # Nhóm các mẫu âm thanh cùng rơi vào 1 pixel (x) để lấy min/max tuyệt đối
+        # Giúp waveform không bị mất các peak lớn khi zoom out xa.
+        pixel_peaks = {}
         for i, (min_peak, max_peak) in enumerate(visible_chunks):
             chunk_idx = start_idx + i
-            
-            # Tính tọa độ X trên UI
             x = self._ms_to_x(chunk_idx * self.chunk_ms)
             
-            # Khử Overdraw: Nếu tọa độ x trùng với x trước đó (do Zoom quá nhỏ), bỏ qua vẽ đè
-            if x == last_x:
-                continue
-            last_x = x
+            if x not in pixel_peaks:
+                pixel_peaks[x] = [min_peak, max_peak]
+            else:
+                if min_peak < pixel_peaks[x][0]: pixel_peaks[x][0] = min_peak
+                if max_peak > pixel_peaks[x][1]: pixel_peaks[x][1] = max_peak
 
-            # Tính tọa độ Y: Map giá trị float [-1.0, 1.0] sang tọa độ pixel
+        for x, (min_peak, max_peak) in pixel_peaks.items():
             y_min = int(center_y - (min_peak * half_height))
             y_max = int(center_y - (max_peak * half_height))
-            
             painter.drawLine(x, y_min, x, y_max)
 
         selected_rect = self._selected_range_rect()

@@ -139,6 +139,8 @@ class SubtitleTrack(QWidget):
                 self.drag_start_x = event.pos().x()
                 self.current_delta_ms = 0
                 self.segment_clicked.emit(seg.segment_id, is_ctrl)
+                if mode == EditMode.MOVE:
+                    self.setCursor(Qt.ClosedHandCursor)
             else:
                 self.selected_ids.clear()
                 self.update()
@@ -152,10 +154,8 @@ class SubtitleTrack(QWidget):
             delta_x = x - self.drag_start_x
             raw_delta_ms = int((delta_x / self.pixels_per_second) * 1000.0)
             self.current_delta_ms = raw_delta_ms
-
-            if self.snap_enabled:
-                seg = next((s for s in self.segments if s.segment_id == self.drag_segment_id), None)
-                if seg:
+            seg = next((s for s in self.segments if s.segment_id == self.drag_segment_id), None)
+            if seg and self.snap_enabled:
                     snap_threshold_ms = (self.snap_threshold_px / self.pixels_per_second) * 1000.0
                     proposed_start = seg.start_ms + raw_delta_ms
                     proposed_end = seg.end_ms + raw_delta_ms
@@ -168,12 +168,34 @@ class SubtitleTrack(QWidget):
                         if abs(proposed_end - self.playhead_ms) <= snap_threshold_ms:
                             self.current_delta_ms = self.playhead_ms - seg.end_ms
 
+
+            # Hard Clamp Constraints (Applied after snapping to ensure no overlaps)
+            idx = self.segments.index(seg)
+            prev_end = self.segments[idx-1].end_ms if idx > 0 else 0
+            next_start = self.segments[idx+1].start_ms if idx < len(self.segments) - 1 else self.duration_ms
+            min_duration = 100
+
+            if self.edit_mode == EditMode.MOVE:
+                min_delta = prev_end - seg.start_ms
+                max_delta = next_start - seg.end_ms
+                self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
+            elif self.edit_mode == EditMode.RESIZE_LEFT:
+                min_delta = prev_end - seg.start_ms
+                max_delta = (seg.end_ms - min_duration) - seg.start_ms
+                self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
+            elif self.edit_mode == EditMode.RESIZE_RIGHT:
+                min_delta = (seg.start_ms + min_duration) - seg.end_ms
+                max_delta = next_start - seg.end_ms
+                self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
+
             self.update() 
             return
 
         seg, mode = self.get_hit_target(x)
         if mode in (EditMode.RESIZE_LEFT, EditMode.RESIZE_RIGHT):
             self.setCursor(Qt.SizeHorCursor)
+        elif mode == EditMode.MOVE:
+            self.setCursor(Qt.OpenHandCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
 
@@ -277,3 +299,18 @@ class SubtitleTrack(QWidget):
             painter.setPen(QColor(Theme.TEXT_PRIMARY))
             text_rect = seg_rect.adjusted(5, 0, -5, 0)
             painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, painter.fontMetrics().elidedText(seg.text, Qt.ElideRight, text_rect.width()))
+
+            # Real-time Tooltip for Dragging
+            if is_dragging:
+                dur = int(render_end_ms - render_start_ms)
+                tt_text = f"{render_start_ms/1000:.3f}s - {render_end_ms/1000:.3f}s ({dur}ms)"
+                tt_fm = painter.fontMetrics()
+                tt_width = tt_fm.horizontalAdvance(tt_text) + 10
+                tt_rect = QRect(x1, max(0, seg_rect.top() - 20), tt_width, 18)
+                
+                painter.setBrush(QColor(Theme.SURFACE_ELEVATED))
+                painter.setPen(QPen(QColor(Theme.WARNING), 1))
+                painter.drawRoundedRect(tt_rect, 3, 3)
+                painter.setPen(QColor(Theme.TEXT_PRIMARY))
+                painter.drawText(tt_rect, Qt.AlignCenter, tt_text)
+
