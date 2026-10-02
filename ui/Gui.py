@@ -450,14 +450,20 @@ class MainWindow(QMainWindow):
         self.right_splitter.addWidget(self.video_player)
         
         self.tm_matches_panel = TMMatchesPanel()
-        self.right_splitter.addWidget(self.tm_matches_panel)
-        self.right_splitter.setStretchFactor(0, 7)
-        self.right_splitter.setStretchFactor(1, 3)
+        # Removed tm_matches_panel from right_splitter, will add to dock_tabs
         
         self.top_horizontal_splitter.addWidget(self.sub_editor)
         self.top_horizontal_splitter.addWidget(self.right_splitter)
         self.top_horizontal_splitter.setStretchFactor(0, 56)
         self.top_horizontal_splitter.setStretchFactor(1, 44)
+        
+        # Set Collapsible for DAW Layout
+        self.workspace_vertical_splitter.setCollapsible(0, True)
+        self.workspace_vertical_splitter.setCollapsible(1, True)
+        self.top_horizontal_splitter.setCollapsible(0, True)
+        self.top_horizontal_splitter.setCollapsible(1, True)
+        self.right_splitter.setCollapsible(0, True)
+        self.right_splitter.setCollapsible(1, True)
         self.top_horizontal_splitter.setSizes([560, 440])
 
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
@@ -572,6 +578,7 @@ class MainWindow(QMainWindow):
             }}
         """)
         dock_tabs.addTab(self.generation_panel, "✨ Generate")
+        dock_tabs.addTab(self.tm_matches_panel, "🧠 TM Matches")
         self.context_panel = TranscriptionContextPanel(self)
         self.context_panel.context_committed.connect(
             self.on_transcription_context_committed
@@ -1380,22 +1387,20 @@ class MainWindow(QMainWindow):
 
     def switch_page(self, original_index):
         self._active_nav_index = original_index
-        if original_index == 7 and hasattr(self, "page_help"):
+        if original_index == 6 and hasattr(self, "page_help"):
             self.page_help.refresh()
-        is_editor_workspace = original_index in (1, 2)
+            
+        self.stack.setCurrentIndex(original_index)
         
-        # Hướng trang 1 & 2 vào chung Workspace (Index 1)
-        target_stack_idx = 1 if is_editor_workspace else (original_index - 1 if original_index > 2 else original_index)
-        self.stack.setCurrentIndex(target_stack_idx)
-        if original_index == 6:
+        if original_index == 5:
             self._sync_debug_logging_controls()
 
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
-            self.bottom_frame.setVisible(not is_editor_workspace)
+            self.bottom_frame.setVisible(original_index != 1)
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
-        if original_index == 4:
+        if original_index == 3:
             default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
