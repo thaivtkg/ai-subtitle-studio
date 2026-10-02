@@ -1063,8 +1063,8 @@ class MainWindow(QMainWindow):
             target_ms = start_ms  # Default for MOVE
             
         if hasattr(self, 'video_player') and self.video_player:
-            self.video_player.set_position(target_ms)
             self.video_player._segment_bounds = (start_ms, end_ms)
+            self.video_player.set_position(target_ms)
             
     def _on_global_selection_changed(self, index, segment_id, source):
         if index < 0 or index >= len(self.sub_editor.all_segments):
