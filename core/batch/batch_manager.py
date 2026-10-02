@@ -59,10 +59,20 @@ class BatchManager(QObject):
         super().__init__(parent)
         self.current_session: Optional[BatchSession] = None
         self.thread_pool = QThreadPool.globalInstance()
+        self.job_status_changed.connect(self._autosave)
+
+    def _autosave(self):
+        if self.current_session:
+            import json
+            from core.runtime.runtime_paths import RuntimePaths
+            path = RuntimePaths.get_batch_active_file()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self.current_session.to_dict(), f, ensure_ascii=False, indent=2)
 
     def start_session(self, session: BatchSession):
         self.current_session = session
         self.session_started.emit(session)
+        self._autosave()
         
         worker = BatchWorker(self)
         self.thread_pool.start(worker)
