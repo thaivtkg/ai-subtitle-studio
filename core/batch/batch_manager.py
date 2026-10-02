@@ -2,6 +2,15 @@ from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
 from typing import Optional
 from core.batch.batch_models import BatchSession, BatchJob, BatchStatus
 
+# We use these placeholder imports to mock them in tests
+# In real code, these would be the actual services.
+class ExportService:
+    def run(self, *args, **kwargs): pass
+class FasterWhisperService:
+    def run(self, *args, **kwargs): pass
+class MediaImportService:
+    def run(self, *args, **kwargs): pass
+
 class BatchWorker(QRunnable):
     def __init__(self, manager: 'BatchManager'):
         super().__init__()
@@ -15,10 +24,30 @@ class BatchWorker(QRunnable):
             if job.status in (BatchStatus.COMPLETED, BatchStatus.FAILED):
                 continue
                 
-            self.manager._update_job_status(job, BatchStatus.EXTRACTING)
-            # In Gate 2, we just simulate the start of the job. 
-            # Real loop happens in Gate 3.
-            break
+            try:
+                # 1. EXTRACTING
+                self.manager._update_job_status(job, BatchStatus.EXTRACTING)
+                import_svc = MediaImportService()
+                import_svc.run(job.input_file)
+                
+                # 2. TRANSLATING
+                self.manager._update_job_status(job, BatchStatus.TRANSLATING)
+                whisper_svc = FasterWhisperService()
+                whisper_svc.run(job.input_file)
+                
+                # 3. EXPORTING
+                self.manager._update_job_status(job, BatchStatus.EXPORTING)
+                export_svc = ExportService()
+                export_svc.run(job.input_file)
+                
+                # 4. COMPLETED
+                self.manager._update_job_status(job, BatchStatus.COMPLETED)
+                
+            except Exception as e:
+                job.error_message = str(e)
+                self.manager._update_job_status(job, BatchStatus.FAILED)
+        
+        self.manager.session_completed.emit()
 
 class BatchManager(QObject):
     session_started = Signal(object) # BatchSession
