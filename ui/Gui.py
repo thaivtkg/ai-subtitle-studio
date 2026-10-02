@@ -1263,14 +1263,30 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(Theme.get_global_stylesheet())
         urls = event.mimeData().urls()
         valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
+        valid_files = [u.toLocalFile() for u in urls if u.toLocalFile().lower().endswith(valid_exts)]
+
+        if len(valid_files) > 1:
+            self._start_batch_flow(valid_files)
+            return
+
         added = []
-        for u in urls:
-            f = u.toLocalFile()
-            if f.lower().endswith(valid_exts) and self.queue_mgr.add_video(f):
+        for f in valid_files:
+            if self.queue_mgr.add_video(f):
                 added.append(f)
         if added:
             self._start_metadata_worker(added)
             self.on_queue_item_clicked(added[-1], fresh_project=True)
+
+    def _start_batch_flow(self, file_paths: list):
+        from ui.batch.batch_setup_dialog import BatchSetupDialog
+        dialog = BatchSetupDialog(file_paths, parent=self)
+        if dialog.exec() and dialog.result_session:
+            from ui.batch.batch_progress_dashboard import BatchProgressDashboard
+            from core.batch.batch_manager import BatchManager
+            self._batch_manager = BatchManager(parent=self)
+            dashboard = BatchProgressDashboard(dialog.result_session, self._batch_manager, parent=self)
+            self.setCentralWidget(dashboard)
+            self._batch_manager.start_session(dialog.result_session)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
