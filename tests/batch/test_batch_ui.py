@@ -56,7 +56,7 @@ class TestBatchProgressDashboard(unittest.TestCase):
         # Simulate status change
         dashboard._on_status_changed("j1", BatchStatus.TRANSLATING)
         row = dashboard.job_rows["j1"]
-        self.assertEqual(row.status_label.text(), "TRANSLATING")
+        self.assertEqual(row.status_label.text(), "Đang dịch thuật AI...")
         
         # Simulate progress
         dashboard._on_progress_updated("j1", 75)
@@ -73,7 +73,7 @@ class TestBatchJobRow(unittest.TestCase):
     def test_row_status_colors(self):
         row = BatchJobRow("test", "file.mp4")
         row.update_status(BatchStatus.EXTRACTING)
-        self.assertEqual(row.status_label.text(), "EXTRACTING")
+        self.assertEqual(row.status_label.text(), "Đang trích xuất...")
         
         row.update_status(BatchStatus.FAILED)
         self.assertEqual(row.status_label.text(), "FAILED")

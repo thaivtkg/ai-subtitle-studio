@@ -38,6 +38,7 @@ class BatchSession:
     target_lang: str
     output_format: str
     jobs: List[BatchJob] = field(default_factory=list)
+    translation_config: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         data = asdict(self)

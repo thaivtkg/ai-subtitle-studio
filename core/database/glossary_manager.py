@@ -182,6 +182,18 @@ class GlossaryManager:
             if not self._is_memory:
                 conn.close()
 
+    def get_domains(self) -> List[str]:
+        """Returns a list of all unique domains."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT domain FROM glossary_entries ORDER BY domain ASC")
+            rows = cursor.fetchall()
+            return [r[0] for r in rows if r[0]]
+        finally:
+            if not self._is_memory:
+                conn.close()
+
     def get_term_mappings(
         self,
         domain: Optional[str] = None,

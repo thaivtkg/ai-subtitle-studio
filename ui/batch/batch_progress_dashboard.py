@@ -47,7 +47,15 @@ class BatchJobRow(QWidget):
     }
 
     def update_status(self, status: BatchStatus):
-        self.status_label.setText(status.value)
+        if status == BatchStatus.TRANSLATING:
+            self.status_label.setText("Đang dịch thuật AI...")
+            self.progress_bar.setValue(0)
+        elif status == BatchStatus.EXTRACTING:
+            self.status_label.setText("Đang trích xuất...")
+            self.progress_bar.setValue(0)
+        else:
+            self.status_label.setText(status.value)
+            
         color = self._STATUS_COLORS.get(status, Theme.TEXT_MUTED)
         self.status_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
         if status == BatchStatus.COMPLETED:

@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from ui.theme import Theme
+from PySide6.QtWidgets import QCheckBox, QFrame
+from core.database.glossary_manager import GlossaryManager
 from core.batch.batch_models import BatchJob, BatchSession
 import uuid
 import os
@@ -70,6 +72,50 @@ class BatchSetupDialog(QDialog):
         config_layout.addStretch()
         layout.addLayout(config_layout)
 
+        # AI Translation Section
+        translation_frame = QFrame()
+        translation_frame.setStyleSheet(f"""
+            QFrame {{ background-color: {Theme.SURFACE}; border: 1px solid {Theme.BORDER}; border-radius: 8px; }}
+            QCheckBox {{ color: {Theme.TEXT_PRIMARY}; font-weight: bold; spacing: 8px; }}
+        """)
+        trans_layout = QVBoxLayout(translation_frame)
+        trans_layout.setContentsMargins(16, 16, 16, 16)
+        
+        self.chk_enable_translation = QCheckBox("Bật Dịch thuật AI (Agentic Translation)")
+        trans_layout.addWidget(self.chk_enable_translation)
+        
+        trans_opts_layout = QHBoxLayout()
+        trans_opts_layout.addWidget(QLabel("Target Lang:"))
+        self.combo_target_lang = QComboBox()
+        self.combo_target_lang.addItems(["Vietnamese", "English", "Japanese", "Korean", "Chinese"])
+        trans_opts_layout.addWidget(self.combo_target_lang)
+        
+        trans_opts_layout.addWidget(QLabel("Domain:"))
+        self.combo_domain = QComboBox()
+        try:
+            gm = GlossaryManager()
+            domains = gm.get_domains()
+            if not domains:
+                domains = ["general"]
+            if "general" not in domains:
+                domains.insert(0, "general")
+            self.combo_domain.addItems(domains)
+        except Exception:
+            self.combo_domain.addItems(["general", "IT", "Anime", "Movie", "Gaming"])
+        trans_opts_layout.addWidget(self.combo_domain)
+        trans_opts_layout.addStretch()
+        
+        trans_layout.addLayout(trans_opts_layout)
+        layout.addWidget(translation_frame)
+        
+        def _toggle_trans(state):
+            is_checked = (state == Qt.Checked.value) if hasattr(Qt.Checked, 'value') else (state == 2)
+            self.combo_target_lang.setEnabled(is_checked)
+            self.combo_domain.setEnabled(is_checked)
+            
+        self.chk_enable_translation.stateChanged.connect(_toggle_trans)
+        _toggle_trans(0)
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -96,6 +142,11 @@ class BatchSetupDialog(QDialog):
             model_size=self.model_combo.currentText(),
             target_lang=self.lang_combo.currentText(),
             output_format=self.format_combo.currentText(),
-            jobs=jobs
+            jobs=jobs,
+            translation_config={
+                "enabled": self.chk_enable_translation.isChecked(),
+                "target_lang": self.combo_target_lang.currentText(),
+                "domain": self.combo_domain.currentText()
+            }
         )
         self.accept()
