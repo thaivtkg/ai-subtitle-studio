@@ -336,8 +336,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(QLabel("WORKFLOW SURFACES", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 8px;"))
         self.nav_btns = {}
         sidebar_layout.addWidget(self.create_nav_button("📊  Dashboard", 0))
-        sidebar_layout.addWidget(self.create_nav_button("🎬  Video Workspace", 1))
-        sidebar_layout.addWidget(self.create_nav_button("📝  Subtitle Editor", 2))
+        sidebar_layout.addWidget(self.create_nav_button("🎬  Studio Workspace", 1))
+
         sidebar_layout.addWidget(self.create_nav_button("📋  Queue & Output", 3))
         sidebar_layout.addWidget(self.create_nav_button("📦  Draft Center", 4))
         sidebar_layout.addWidget(self.create_nav_button("🚀  Export Center", 5))

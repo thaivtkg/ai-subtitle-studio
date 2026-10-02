@@ -250,11 +250,13 @@ class SubtitleEditorWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Bản gốc", "Bản dịch"])
-        self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 95)
-        self.table.setColumnWidth(2, 95)
-        self.table.setColumnWidth(3, 85)
-        self.table.setColumnWidth(self.COL_ORIGINAL, 250)
+        from PySide6.QtWidgets import QHeaderView
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_STT, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_START, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_END, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_DUR, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_ORIGINAL, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_TRANSLATION, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
