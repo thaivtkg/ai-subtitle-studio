@@ -5,6 +5,7 @@ class ArtifactType(Enum):
     TIMING = "timing"
     DRAFT = "draft"
     SUBTITLE = "subtitle"
+    TRANSLATION = "translation"
     EXPORT = "export"
     HARDSUB = "hardsub"
 
