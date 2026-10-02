@@ -440,6 +440,7 @@ class MainWindow(QMainWindow):
         self.sub_editor.undo_manager = self.undo_manager
         self.sub_editor.selection_controller = self.selection_controller
         self.selection_controller.selection_changed.connect(self.sub_editor.sync_selection)
+        self.selection_controller.selection_changed.connect(self._on_global_selection_changed)
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
@@ -469,6 +470,7 @@ class MainWindow(QMainWindow):
         # TM Signals
         self.sub_editor.request_tm_suggestion.connect(self._on_request_tm_suggestion)
         self.sub_editor.request_ai_translate.connect(self._on_ai_translate_requested)
+        self.sub_editor.segment_focused.connect(self._on_segment_focused)
         self.sub_editor.commit_segment.connect(self._on_commit_segment)
         self.tm_matches_panel.match_applied.connect(self._on_tm_match_applied)
         self.sub_editor.live_edit_applied.connect(
@@ -1029,6 +1031,20 @@ class MainWindow(QMainWindow):
             self.video_player.toggle_playback()
 
 
+    def _on_global_selection_changed(self, index, segment_id, source):
+        if index >= 0 and index < len(self.sub_editor.all_segments):
+            seg = self.sub_editor.all_segments[index]
+            from core.export.subtitle_parser import time_str_to_ms
+            start_ms = time_str_to_ms(seg['start']) if 'start' in seg else seg.get('start_ms', 0)
+            end_ms = time_str_to_ms(seg['end']) if 'end' in seg else seg.get('end_ms', 0)
+            self._on_segment_focused(start_ms, end_ms)
+
+    def _on_segment_focused(self, start_ms, end_ms):
+        if hasattr(self, 'video_player') and self.video_player:
+            self.video_player.play_segment(start_ms, end_ms)
+        if hasattr(self, 'timeline_widget') and self.timeline_widget:
+            self.timeline_widget.container.waveform.set_selected_range(start_ms, end_ms)
+            
     def _on_ai_translate_requested(self, selected_indices):
         from core.translation.agentic_prompt_builder import AgenticPromptBuilder
         from core.transcription.token_counter import ApproximateTokenCounter

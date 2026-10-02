@@ -173,6 +173,7 @@ class SubtitleEditorWidget(QWidget):
     request_ai_translate = Signal(list) # selected indices
 
     seek_requested = Signal(int)
+    segment_focused = Signal(int, int)
     srt_saved = Signal(str)
     live_edit_applied = Signal(list)
     save_requested = Signal(str)
@@ -957,10 +958,12 @@ class SubtitleEditorWidget(QWidget):
 
     def on_row_double_clicked(self, row, column):
         start_item = self.table.item(row, 1)
-        if start_item:
+        end_item = self.table.item(row, 2)
+        if start_item and end_item:
             try:
-                ms = self.time_str_to_ms(start_item.text())
-                self.seek_requested.emit(ms)
+                start_ms = self.time_str_to_ms(start_item.text())
+                end_ms = self.time_str_to_ms(end_item.text())
+                self.segment_focused.emit(start_ms, end_ms)
             except ValueError:
                 pass
 

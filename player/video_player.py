@@ -292,22 +292,18 @@ class VideoPlayerWidget(QWidget):
         else:
             self.player.play()
 
-    def play_segment(self, range_provider):
-        """Play the currently selected range; bounds stay derived from selection."""
-        bounds = range_provider()
-        if bounds is None:
-            return
-        start_ms, end_ms = bounds
-        if not 0 <= start_ms < end_ms <= self.get_video_duration_ms():
+    def play_segment(self, start_ms: int, end_ms: int):
+        """Play a specific segment from start_ms to end_ms and pause automatically."""
+        if not 0 <= start_ms < end_ms:
             return
         self.cancel_segment_playback(pause=True)
         self.set_position(start_ms)
-        self._segment_range_provider = range_provider
+        self._segment_bounds = (start_ms, end_ms)
         self.player.play()
 
     def cancel_segment_playback(self, *, pause=False):
-        active = getattr(self, "_segment_range_provider", None) is not None
-        self._segment_range_provider = None
+        active = getattr(self, "_segment_bounds", None) is not None
+        self._segment_bounds = None
         if active and pause:
             self.player.pause()
 
@@ -318,7 +314,7 @@ class VideoPlayerWidget(QWidget):
     def _sync_subtitle_position(self, position):
         # Explicit segment playback keeps user selection stable, including at
         # a touching next-subtitle boundary, before position_changed pauses.
-        if getattr(self, "_segment_range_provider", None) is None:
+        if getattr(self, "_segment_bounds", None) is None:
             self.sub_controller.sync_position(position)
 
     def get_current_time_ms(self):
@@ -334,10 +330,9 @@ class VideoPlayerWidget(QWidget):
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
 
     def position_changed(self, position):
-        range_provider = getattr(self, "_segment_range_provider", None)
-        if range_provider:
-            bounds = range_provider()
-            if bounds is None or position >= bounds[1]:
+        bounds = getattr(self, "_segment_bounds", None)
+        if bounds:
+            if position >= bounds[1]:
                 self.cancel_segment_playback(pause=True)
             elif position < bounds[0]:
                 self.cancel_segment_playback()

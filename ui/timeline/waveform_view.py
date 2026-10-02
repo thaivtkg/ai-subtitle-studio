@@ -145,6 +145,19 @@ class WaveformView(QWidget):
 
         selected_rect = self._selected_range_rect()
         if selected_rect is not None:
+            # Dim the outside region
+            dim_color = QColor(Theme.BG_APP)
+            dim_color.setAlpha(180)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dim_color)
+            
+            # Left dim
+            if selected_rect.left() > 0:
+                painter.drawRect(0, 0, selected_rect.left(), self.height())
+            # Right dim
+            if selected_rect.right() < self.width():
+                painter.drawRect(selected_rect.right(), 0, self.width() - selected_rect.right(), self.height())
+            
             selection_fill = QColor(Theme.CYAN)
             selection_fill.setAlpha(30)
             painter.setRenderHint(QPainter.Antialiasing, True)
