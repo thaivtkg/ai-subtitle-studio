@@ -170,6 +170,7 @@ class SubtitleEditorWidget(QWidget):
 
     request_tm_suggestion = Signal(str)  # original_text
     commit_segment = Signal(str, str, str, str)  # original, translated, prev_orig, next_orig
+    request_ai_translate = Signal(list) # selected indices
 
     seek_requested = Signal(int)
     srt_saved = Signal(str)
@@ -308,6 +309,10 @@ class SubtitleEditorWidget(QWidget):
         # --- CỤM NÚT LƯU & DUYỆT BÊN DƯỚI ---
         btn_layout = QHBoxLayout()
         
+        self.ai_translate_btn = QPushButton("🪄 AI Translate")
+        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PURPLE}; color: white; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
+        self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
+        
         self.approve_btn = QPushButton("✅ Chốt Timing")
         self.approve_btn.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
         self.approve_btn.clicked.connect(self.approve_timing)
@@ -323,6 +328,7 @@ class SubtitleEditorWidget(QWidget):
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
         
+        btn_layout.addWidget(self.ai_translate_btn)
         btn_layout.addWidget(self.approve_btn)
         btn_layout.addWidget(self.save_draft_btn)
         btn_layout.addWidget(self.save_btn)
@@ -331,6 +337,31 @@ class SubtitleEditorWidget(QWidget):
         splitter.addWidget(left_panel)
         
         main_layout.addWidget(splitter)
+
+    def _on_ai_translate_clicked(self):
+        # Identify selected segments
+        selected_ranges = self.table.selectedRanges()
+        if not selected_ranges:
+            # If nothing selected, default to all segments
+            indices = list(range(len(self.all_segments)))
+        else:
+            indices = set()
+            for r in selected_ranges:
+                for i in range(r.topRow(), r.bottomRow() + 1):
+                    # Convert visual row to actual index
+                    if self.group_size > 0:
+                        actual_idx = self.current_page * self.group_size + i
+                    else:
+                        actual_idx = i
+                    if 0 <= actual_idx < len(self.all_segments):
+                        indices.add(actual_idx)
+            indices = sorted(list(indices))
+            
+        if not indices:
+            return
+            
+        # Emit signal to Gui.py to handle translation
+        self.request_ai_translate.emit(indices)
 
     # ================= LOGIC ĐIỀU HƯỚNG PHÂN TRANG =================
     def update_empty_state(self):
@@ -441,6 +472,16 @@ class SubtitleEditorWidget(QWidget):
                 font.setItalic(True)
                 text_item.setFont(font)
                 
+            # --- GATE 3 & 4: Render Auto-QC Flags ---
+            qc_flags = seg.get('metadata', {}).get('qc_flags', [])
+            if qc_flags:
+                if 'alignment_failed_fallback' in qc_flags:
+                    text_item.setBackground(QColor('#5c1a1a')) # Dark red
+                    text_item.setToolTip('Lỗi gộp dòng: Hệ thống tự động trả về câu gốc để tránh gãy cấu trúc.')
+                else:
+                    text_item.setBackground(QColor('#5c4a1a')) # Dark yellow/orange
+                    text_item.setToolTip('Cảnh báo Auto-QC:\n' + '\n'.join(f'- {f}' for f in qc_flags))
+                    
             self.table.setItem(row, self.COL_TRANSLATION, text_item)
 
         self.table.blockSignals(False)

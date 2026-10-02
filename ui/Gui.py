@@ -468,6 +468,7 @@ class MainWindow(QMainWindow):
         
         # TM Signals
         self.sub_editor.request_tm_suggestion.connect(self._on_request_tm_suggestion)
+        self.sub_editor.request_ai_translate.connect(self._on_ai_translate_requested)
         self.sub_editor.commit_segment.connect(self._on_commit_segment)
         self.tm_matches_panel.match_applied.connect(self._on_tm_match_applied)
         self.sub_editor.live_edit_applied.connect(
@@ -1026,6 +1027,95 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self.video_player, "toggle_playback"):
             self.video_player.toggle_playback()
+
+
+    def _on_ai_translate_requested(self, selected_indices):
+        from core.translation.agentic_prompt_builder import AgenticPromptBuilder
+        from core.transcription.token_counter import ApproximateTokenCounter
+        from core.translation.llm_translation_service import LLMTranslationService, GeminiRESTProvider
+        from core.database.glossary_manager import GlossaryManager
+        from core.translation.batch_translator import TranslationBatchWorker
+        from PySide6.QtCore import QThreadPool
+        from PySide6.QtWidgets import QProgressDialog
+        from ui.toast import Toast
+        import os
+        
+        # We need an API Key, here we use environment variable or hardcoded dummy for testing (will fail if none)
+        # Assuming user inputs API key elsewhere, we can retrieve from settings
+        # For now, we will simulate or require a key in ENV
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            Toast.show_error(self, "Thiếu GEMINI_API_KEY trong Environment variables.")
+            return
+
+        provider = GeminiRESTProvider(api_key=api_key)
+        counter = ApproximateTokenCounter()
+        builder = AgenticPromptBuilder(counter)
+        service = LLMTranslationService(provider, builder)
+        
+        if not hasattr(self, 'glossary_manager'):
+            self.glossary_manager = GlossaryManager()
+            
+        # Get segments to translate
+        all_segs = self.sub_editor.all_segments
+        segments_to_translate = [all_segs[i] for i in selected_indices if i < len(all_segs)]
+        
+        worker = TranslationBatchWorker(
+            service=service,
+            tm_manager=self.tm_manager,
+            glossary_manager=self.glossary_manager,
+            segments=segments_to_translate,
+            source_lang="English",
+            target_lang="Vietnamese",
+            chunk_size=30,
+            max_retries=3
+        )
+        
+        progress = QProgressDialog("Đang dịch bằng AI...", "Hủy", 0, 100, self)
+        progress.setWindowTitle("AI Translate")
+        progress.setWindowModality(Qt.WindowModal)
+        
+        def on_progress(current, total):
+            progress.setMaximum(total)
+            progress.setValue(current)
+            if progress.wasCanceled():
+                worker.cancel()
+                
+        def on_chunk_completed(chunk_idx, translated_segments):
+            # Update the original segments with translated text and qc_flags
+            # translated_segments correspond to a chunk of segments_to_translate
+            # The worker returns the segments in order
+            
+            # Since the worker returns deep copies or modifies in place, 
+            # we need to map them back to all_segments using STT or original index
+            for t_seg in translated_segments:
+                # Find corresponding in all_segments
+                target = next((s for s in all_segs if str(s.get('stt')) == str(t_seg.get('stt'))), None)
+                if target:
+                    target['text'] = t_seg.get('text', '')
+                    target['metadata'] = t_seg.get('metadata', {})
+            
+            # Refresh UI incrementally if needed
+            self.sub_editor.render_page()
+            
+        def on_error(err_str):
+            Toast.show_error(self, f"Lỗi dịch thuật: {err_str}")
+            progress.close()
+            
+        def on_finished():
+            progress.setValue(progress.maximum())
+            Toast.show_success(self, "Dịch AI hoàn tất!")
+            self.sub_editor.render_page()
+            # Mark dirty
+            self.revision_tracker.mark_dirty()
+
+        worker.signals.progress.connect(on_progress)
+        worker.signals.chunk_completed.connect(on_chunk_completed)
+        worker.signals.error.connect(on_error)
+        worker.signals.finished.connect(on_finished)
+        
+        QThreadPool.globalInstance().start(worker)
+        progress.show()
 
     def _on_request_tm_suggestion(self, original_text):
         if not hasattr(self, 'tm_manager'): return
