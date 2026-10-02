@@ -107,6 +107,10 @@ class RuntimePaths:
     def get_recovery_quarantine_dir() -> Path:
         return RuntimePaths.get_recovery_dir() / "quarantine"
 
+    @staticmethod
+    def get_batch_active_file() -> Path:
+        return RuntimePaths.get_user_data_dir() / "batch_active.json"
+
     @classmethod
     def ensure_user_data_dirs(cls) -> None:
         """Prepare app-root and recovery directories needed during startup."""

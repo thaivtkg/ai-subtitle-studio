@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 class RecoveryManager(QObject):
     """Own recovery-session files without touching canonical project files."""
 
+    def has_active_batch_session(self) -> bool:
+        from core.runtime.runtime_paths import RuntimePaths
+        return RuntimePaths.get_batch_active_file().exists()
+        
+    def load_active_batch_session(self) -> dict:
+        import json
+        from core.runtime.runtime_paths import RuntimePaths
+        path = RuntimePaths.get_batch_active_file()
+        if not path.exists():
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
     _SLOTS = ("current", "previous", "older")
     _TEMP_ARTIFACTS = (
         "manifest.tmp",
