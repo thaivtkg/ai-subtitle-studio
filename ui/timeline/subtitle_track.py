@@ -16,7 +16,7 @@ class SubtitleTrack(QWidget):
     selection_cleared = Signal()
     gap_clicked = Signal(object)
     edit_committed = Signal(str, EditMode, int)
-    live_edit_updated = Signal(int, int)
+    live_edit_updated = Signal(str, int, int, object)
     
     action_split_requested = Signal(str)
     action_merge_requested = Signal(set)
@@ -198,7 +198,7 @@ class SubtitleTrack(QWidget):
                 c_start += self.current_delta_ms
             elif self.edit_mode == EditMode.RESIZE_RIGHT:
                 c_end += self.current_delta_ms
-            self.live_edit_updated.emit(c_start, c_end)
+            self.live_edit_updated.emit(self.drag_segment_id, c_start, c_end, self.edit_mode)
 
             self.update() 
             return

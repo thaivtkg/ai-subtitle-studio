@@ -119,6 +119,16 @@ class CurrentSubtitleEditor(QWidget):
         self.text_edit.textChanged.connect(self._schedule_emit)
         self._debounce.timeout.connect(self._emit_changed)
 
+    def set_time(self, start_ms, end_ms):
+        from core.export.subtitle_parser import ms_to_time_str
+        start = ms_to_time_str(start_ms)
+        end = ms_to_time_str(end_ms)
+        for widget, value in ((self.start_edit, start), (self.end_edit, end)):
+            widget.blockSignals(True)
+            widget.setText(value)
+            widget.blockSignals(False)
+        self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
+
     def set_values(self, start, end, text, original_text=""):
         start = ms_to_time_str(start) if isinstance(start, (int, float)) else str(start)
         end = ms_to_time_str(end) if isinstance(end, (int, float)) else str(end)
@@ -400,6 +410,46 @@ class SubtitleEditorWidget(QWidget):
         if self.current_page < max_page:
             self.current_page += 1
             self.render_page()
+
+    def _get_row_by_id(self, segment_id: str) -> int:
+        for idx, seg in enumerate(self.all_segments):
+            if seg.get("id") == segment_id:
+                if self.group_size > 0:
+                    page = idx // self.group_size
+                    if page == self.current_page:
+                        return idx % self.group_size
+                else:
+                    return idx
+        return -1
+
+    def _set_table_item(self, row: int, col: int, text: str):
+        item = self.table.item(row, col)
+        if item:
+            item.setText(text)
+
+    def on_timeline_live_edit(self, segment_id: str, new_start_ms: int, new_end_ms: int, *args):
+        """Cập nhật UI thời gian thực khi người dùng đang kéo thả trên Timeline, KHÔNG trigger lưu data."""
+        if not self.all_segments:
+            return
+            
+        current_seg_id = None
+        if 0 <= self.current_index < len(self.all_segments):
+            current_seg_id = self.all_segments[self.current_index].get("id")
+            
+        # 1. Cập nhật bảng CurrentSubtitleEditor
+        if current_seg_id == segment_id:
+            blocker = self.current_editor.blockSignals(True)
+            self.current_editor.set_time(new_start_ms, new_end_ms)
+            self.current_editor.blockSignals(False)
+
+        # 2. Cập nhật nhãn (Label) trên QTableWidget
+        row = self._get_row_by_id(segment_id)
+        if row >= 0:
+            from core.export.subtitle_parser import ms_to_time_str
+            self._set_table_item(row, self.COL_START, ms_to_time_str(new_start_ms))
+            self._set_table_item(row, self.COL_END, ms_to_time_str(new_end_ms))
+            dur_ms = max(0, new_end_ms - new_start_ms)
+            self._set_table_item(row, self.COL_DUR, f"{dur_ms / 1000:.3f} s")
 
     def render_page(self):
         self.is_rendering = True

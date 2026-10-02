@@ -150,7 +150,7 @@ class TimelineWidget(QScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self._on_user_scroll)
         self.container.track.gap_clicked.connect(self.select_gap)
         self.container.track.segment_clicked.connect(lambda *_: self.clear_gap_selection())
-        self.container.track.live_edit_updated.connect(self.container.waveform.set_selected_range)
+        self.container.track.live_edit_updated.connect(lambda seg_id, s, e, mode: self.container.waveform.set_selected_range(s, e))
         self.container.start_range_edit.editingFinished.connect(self._on_manual_range_changed)
         self.container.end_range_edit.editingFinished.connect(self._on_manual_range_changed)
         self.container.generate_gap_button.clicked.connect(self._emit_range_generation)

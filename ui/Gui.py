@@ -643,6 +643,8 @@ class MainWindow(QMainWindow):
         from ui.timeline.timeline_widget import TimelineWidget
 
         self.timeline_widget = TimelineWidget()
+        self.timeline_widget.container.track.live_edit_updated.connect(self._on_timeline_live_edit_video_scrub)
+        self.timeline_widget.container.track.live_edit_updated.connect(self.sub_editor.on_timeline_live_edit)
         self.timeline_widget.range_generation_requested.connect(
             self._start_range_generation
         )
@@ -1031,6 +1033,25 @@ class MainWindow(QMainWindow):
             self.video_player.toggle_playback()
 
 
+    def _on_timeline_live_edit_video_scrub(self, segment_id, start_ms, end_ms, edit_mode):
+        # Scrub video based on which edge is being dragged
+        # EditMode Enum is not directly available, but it is passed as an object.
+        # We can use its name.
+        if hasattr(edit_mode, 'name'):
+            mode_name = edit_mode.name
+        else:
+            mode_name = str(edit_mode)
+            
+        if "RESIZE_LEFT" in mode_name:
+            target_ms = start_ms
+        elif "RESIZE_RIGHT" in mode_name:
+            target_ms = end_ms
+        else:
+            target_ms = start_ms  # Default for MOVE
+            
+        if hasattr(self, 'video_player') and self.video_player:
+            self.video_player.set_position(target_ms)
+            
     def _on_global_selection_changed(self, index, segment_id, source):
         if index >= 0 and index < len(self.sub_editor.all_segments):
             seg = self.sub_editor.all_segments[index]
