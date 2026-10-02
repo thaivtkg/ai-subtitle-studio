@@ -1,3 +1,4 @@
+import xml.sax.saxutils as saxutils
 from dataclasses import dataclass
 from core.database.tm_manager import TMMatch
 from core.transcription.token_counter import TokenCounterProtocol
@@ -17,9 +18,15 @@ class AgenticPromptBuilder:
     def __init__(self, token_counter: TokenCounterProtocol):
         self._token_counter = token_counter
 
+    def escape_xml(self, text: str) -> str:
+        return saxutils.escape(text, entities={
+            "'": "&apos;",
+            "\"": "&quot;"
+        })
+
     def _format_system(self, source_lang: str, target_lang: str) -> str:
-        s_lang = source_lang or "Original Language"
-        t_lang = target_lang or "Target Language"
+        s_lang = self.escape_xml(source_lang or "Original Language")
+        t_lang = self.escape_xml(target_lang or "Target Language")
         return f"""<system>
 You are an expert subtitle translator. Translate the following subtitles from {s_lang} to {t_lang}.
 Maintain the exact numbering and timing. Do not add any extra commentary or notes.
@@ -34,20 +41,17 @@ Only output the translated subtitles in standard SRT format.
 {content}
 </glossary>"""
 
-    def _format_tm_matches(self, tm_matches: list[TMMatch]) -> str:
+    def _format_tm_matches(self, tm_matches: list[str]) -> str:
         if not tm_matches:
             return ""
-        lines = []
-        for match in tm_matches:
-            lines.append(f'Source: "{match.source_text}" -> Target: "{match.target_text}"')
-        content = "\n".join(lines)
+        content = "\n".join(tm_matches)
         return f"""<tm_matches>
 {content}
 </tm_matches>"""
 
     def _format_source(self, source_text: str) -> str:
         return f"""<source_text>
-{source_text}
+{self.escape_xml(source_text)}
 </source_text>"""
 
     def build(
@@ -70,39 +74,45 @@ Only output the translated subtitles in standard SRT format.
         base_tokens = self._token_counter.count(base_prompt)
         
         if base_tokens > max_tokens:
-            # Source text itself is too large (should be handled by batching earlier)
             return AgenticPromptContext(base_prompt, base_tokens, max_tokens, 0, 0, True)
 
         remaining_budget = max_tokens - base_tokens
         
-        # 1. Inject Glossary (Highest Priority for context)
+        # 1. Inject Glossary O(N)
         accepted_glossary = []
-        for term in glossary:
-            candidate_glossary = accepted_glossary + [term]
-            glossary_block = self._format_glossary(candidate_glossary)
-            # Rough cost: add the new term cost, plus overhead if it's the first term
-            glossary_tokens = self._token_counter.count(glossary_block)
+        if glossary:
+            wrapper_cost = self._token_counter.count("<glossary>\n\n</glossary>")
+            remaining_budget -= wrapper_cost
             
-            if glossary_tokens <= remaining_budget:
-                accepted_glossary.append(term)
-            else:
-                break
-                
+            for term in glossary:
+                escaped_term = self.escape_xml(term)
+                term_cost = self._token_counter.count(escaped_term + "\n")
+                if term_cost <= remaining_budget:
+                    accepted_glossary.append(escaped_term)
+                    remaining_budget -= term_cost
+                else:
+                    break
+        
         glossary_final = self._format_glossary(accepted_glossary)
-        remaining_budget -= self._token_counter.count(glossary_final) if accepted_glossary else 0
 
-        # 2. Inject TM Matches (Medium Priority)
+        # 2. Inject TM Matches O(N)
         accepted_tm = []
-        for match in tm_matches:
-            candidate_tm = accepted_tm + [match]
-            tm_block = self._format_tm_matches(candidate_tm)
-            tm_tokens = self._token_counter.count(tm_block)
+        if tm_matches and remaining_budget > 0:
+            wrapper_cost = self._token_counter.count("<tm_matches>\n\n</tm_matches>")
+            remaining_budget -= wrapper_cost
             
-            if tm_tokens <= remaining_budget:
-                accepted_tm.append(match)
-            else:
-                break
+            for match in tm_matches:
+                escaped_src = self.escape_xml(match.source_text)
+                escaped_tgt = self.escape_xml(match.target_text)
+                line = f'Source: "{escaped_src}" -> Target: "{escaped_tgt}"'
                 
+                match_cost = self._token_counter.count(line + "\n")
+                if match_cost <= remaining_budget:
+                    accepted_tm.append(line)
+                    remaining_budget -= match_cost
+                else:
+                    break
+                    
         tm_final = self._format_tm_matches(accepted_tm)
         
         # Assemble final prompt
