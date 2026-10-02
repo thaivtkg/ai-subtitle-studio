@@ -115,6 +115,10 @@ class RuntimePaths:
     def get_glossary_db_file() -> Path:
         return RuntimePaths.get_user_data_dir() / "glossary.db"
 
+    @staticmethod
+    def get_tm_db_file() -> Path:
+        return RuntimePaths.get_user_data_dir() / "tm.db"
+
     @classmethod
     def ensure_user_data_dirs(cls) -> None:
         """Prepare app-root and recovery directories needed during startup."""
