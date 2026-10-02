@@ -24,10 +24,14 @@ class SplitCommand(SubtitleCommand):
         text1, text2 = self._split_text_at_midpoint(self.original_seg["text"])
         self.data_provider[self.segment_index]["end"] = self.split_time_ms
         self.data_provider[self.segment_index]["text"] = text1
+        self.data_provider[self.segment_index]["original_text"] = ""
+        
         if self.new_segment is None:
             self.new_segment = SubtitleSegmentFactory.create_segment(
                 self.split_time_ms, self.original_seg["end"], text2
             )
+            # new_segment already has "" for original_text due to factory
+            
         self.data_provider.insert(self.segment_index + 1, self.new_segment)
         self._renumber_stt()
 

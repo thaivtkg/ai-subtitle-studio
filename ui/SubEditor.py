@@ -72,6 +72,7 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_title = QLabel("Current Subtitle: None")
         self.lbl_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.lbl_title)
+        
         times = QHBoxLayout()
         times.addWidget(QLabel("Start:"))
         self.start_edit = QLineEdit()
@@ -83,10 +84,23 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_duration = QLabel("0.000 s")
         times.addWidget(self.lbl_duration)
         layout.addLayout(times)
+        
+        texts_layout = QHBoxLayout()
+        
+        self.text_original = QTextEdit()
+        self.text_original.setReadOnly(True)
+        self.text_original.setStyleSheet("background-color: transparent;")
+        self.text_original.setPlaceholderText("Bản gốc...")
+        self.text_original.setMaximumHeight(70)
+        texts_layout.addWidget(self.text_original)
+
         self.text_edit = QTextEdit()
-        self.text_edit.setPlaceholderText("Nội dung phụ đề hiện tại...")
+        self.text_edit.setPlaceholderText("Bản dịch...")
         self.text_edit.setMaximumHeight(70)
-        layout.addWidget(self.text_edit)
+        texts_layout.addWidget(self.text_edit)
+        
+        layout.addLayout(texts_layout)
+        
         nav = QHBoxLayout()
         self.btn_prev = QPushButton("◀ Previous")
         self.btn_next = QPushButton("Next ▶")
@@ -96,6 +110,7 @@ class CurrentSubtitleEditor(QWidget):
         nav.addStretch()
         nav.addWidget(self.btn_next)
         layout.addLayout(nav)
+        
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -104,16 +119,22 @@ class CurrentSubtitleEditor(QWidget):
         self.text_edit.textChanged.connect(self._schedule_emit)
         self._debounce.timeout.connect(self._emit_changed)
 
-    def set_values(self, start, end, text):
+    def set_values(self, start, end, text, original_text=""):
         start = ms_to_time_str(start) if isinstance(start, (int, float)) else str(start)
         end = ms_to_time_str(end) if isinstance(end, (int, float)) else str(end)
         for widget, value in ((self.start_edit, start), (self.end_edit, end)):
             widget.blockSignals(True)
             widget.setText(value)
             widget.blockSignals(False)
+            
+        self.text_original.blockSignals(True)
+        self.text_original.setPlainText(original_text)
+        self.text_original.blockSignals(False)
+        
         self.text_edit.blockSignals(True)
         self.text_edit.setPlainText(text)
         self.text_edit.blockSignals(False)
+        
         start_ms = time_str_to_ms(start)
         end_ms = time_str_to_ms(end)
         self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
@@ -140,6 +161,16 @@ class CurrentSubtitleEditor(QWidget):
 
 
 class SubtitleEditorWidget(QWidget):
+    COL_STT = 0
+    COL_START = 1
+    COL_END = 2
+    COL_DUR = 3
+    COL_ORIGINAL = 4
+    COL_TRANSLATION = 5
+
+    request_tm_suggestion = Signal(str)  # original_text
+    commit_segment = Signal(str, str, str, str)  # original, translated, prev_orig, next_orig
+
     seek_requested = Signal(int)
     srt_saved = Signal(str)
     live_edit_applied = Signal(list)
@@ -158,6 +189,12 @@ class SubtitleEditorWidget(QWidget):
         self.group_size = 0     
         self.is_rendering = False
         self._is_syncing_ui = False
+        
+        self._tm_debounce = QTimer(self)
+        self._tm_debounce.setSingleShot(True)
+        self._tm_debounce.setInterval(300)
+        self._tm_debounce.timeout.connect(self._emit_tm_suggestion)
+
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -199,12 +236,13 @@ class SubtitleEditorWidget(QWidget):
         
         # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN) ---
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Nội dung"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Bản gốc", "Bản dịch"])
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(1, 95)
         self.table.setColumnWidth(2, 95)
         self.table.setColumnWidth(3, 85)
+        self.table.setColumnWidth(self.COL_ORIGINAL, 250)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
@@ -376,15 +414,23 @@ class SubtitleEditorWidget(QWidget):
                 has_error = any(issue.severity is Severity.ERROR for issue in issues)
                 item_id.setText(f"{'❌' if has_error else '⚠'} {item_id.text()}")
                 item_id.setToolTip("\n".join(f"- {issue.message}" for issue in issues))
-            self.table.setItem(row, 0, item_id)
-            self._set_table_item(row, 1, start_text)
-            self._set_table_item(row, 2, end_text)
+            self.table.setItem(row, self.COL_STT, item_id)
+            self._set_table_item(row, self.COL_START, start_text)
+            self._set_table_item(row, self.COL_END, end_text)
             try:
                 duration_ms = self.time_str_to_ms(seg['end']) - self.time_str_to_ms(seg['start'])
                 duration_text = f"{max(0, duration_ms) / 1000:.3f} s"
             except ValueError:
                 duration_text = "--"
-            self._set_table_item(row, 3, duration_text, readonly=True)
+            self._set_table_item(row, self.COL_DUR, duration_text, readonly=True)
+            
+            orig_text = seg.get('original_text', '')
+            if not orig_text.strip():
+                orig_text = "[Unknown Source]"
+            orig_item = QTableWidgetItem(orig_text)
+            orig_item.setFlags(orig_item.flags() & ~Qt.ItemIsEditable)
+            orig_item.setForeground(QColor(Theme.TEXT_MUTED))
+            self.table.setItem(row, self.COL_ORIGINAL, orig_item)
             
             display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
@@ -395,7 +441,7 @@ class SubtitleEditorWidget(QWidget):
                 font.setItalic(True)
                 text_item.setFont(font)
                 
-            self.table.setItem(row, 4, text_item)
+            self.table.setItem(row, self.COL_TRANSLATION, text_item)
 
         self.table.blockSignals(False)
         self.update_empty_state()
@@ -422,9 +468,9 @@ class SubtitleEditorWidget(QWidget):
 
     def _set_table_item(self, row, col, text, readonly=False):
         item = QTableWidgetItem(str(text))
-        if readonly or col in (0, 3):
+        if readonly or col in (self.COL_STT, self.COL_DUR, self.COL_ORIGINAL):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-        if col in (0, 1, 2, 3):
+        if col in (self.COL_STT, self.COL_START, self.COL_END, self.COL_DUR):
             item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, col, item)
 
@@ -462,10 +508,10 @@ class SubtitleEditorWidget(QWidget):
         old_start = segment['start']
         old_end = segment['end']
 
-        it_stt = self.table.item(row, 0)
-        it_start = self.table.item(row, 1)
-        it_end = self.table.item(row, 2)
-        it_text = self.table.item(row, 4)
+        it_stt = self.table.item(row, self.COL_STT)
+        it_start = self.table.item(row, self.COL_START)
+        it_end = self.table.item(row, self.COL_END)
+        it_text = self.table.item(row, self.COL_TRANSLATION)
 
         if it_stt and it_start and it_end and it_text:
             try:
@@ -498,6 +544,14 @@ class SubtitleEditorWidget(QWidget):
                 self.undo_manager.push(
                     EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments)
                 )
+                
+            # Emit TM commit
+            orig = segment.get("original_text", "").strip()
+            if orig and orig != "[Unknown Source]":
+                prev_orig = self.all_segments[abs_idx - 1].get("original_text", "") if abs_idx > 0 else ""
+                next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
+                self.commit_segment.emit(orig, raw_text, prev_orig, next_orig)
+
 
     def _on_row_selected(self, row, _column):
         abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
@@ -572,12 +626,26 @@ class SubtitleEditorWidget(QWidget):
         self.update_empty_state()
         self._is_syncing_ui = False
 
+
+    def _emit_tm_suggestion(self):
+        if 0 <= self.current_index < len(self.all_segments):
+            seg = self.all_segments[self.current_index]
+            orig = seg.get("original_text", "").strip()
+            if orig and orig != "[Unknown Source]":
+                self.request_tm_suggestion.emit(orig)
+
     def _load_current_editor(self):
         if 0 <= self.current_index < len(self.all_segments):
             seg = self.all_segments[self.current_index]
             self.current_editor.setEnabled(True)
             self.current_editor.setTitle(f"Current Subtitle: #{self.current_index + 1}")
-            self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
+            self.current_editor.set_values(
+                seg["start"], 
+                seg["end"], 
+                seg["text"], 
+                original_text=seg.get("original_text", "")
+            )
+            self._tm_debounce.start()
 
     def _apply_current_editor(self, values=None):
         if self._is_syncing_ui or self.current_index < 0 or self.undo_manager is None:
@@ -621,6 +689,14 @@ class SubtitleEditorWidget(QWidget):
             self.undo_manager.push(
                 EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments)
             )
+            
+        # Emit TM commit
+        orig = segment.get("original_text", "").strip()
+        if orig and orig != "[Unknown Source]":
+            prev_orig = self.all_segments[abs_idx - 1].get("original_text", "") if abs_idx > 0 else ""
+            next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
+            self.commit_segment.emit(orig, values["text"], prev_orig, next_orig)
+
 
     @staticmethod
     def _coerce_time_value(old_value, value):

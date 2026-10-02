@@ -17,6 +17,7 @@ class SubtitleSegmentFactory:
             "stt": "",
             "start": start_ms,
             "end": end_ms,
+            "original_text": "",
             "text": text,
             "status": "draft",
             "metadata": {"type": "normal"},

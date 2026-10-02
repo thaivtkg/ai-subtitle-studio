@@ -104,6 +104,10 @@ from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
+from core.database.tm_manager import TranslationMemoryManager
+from ui.components.tm_matches_panel import TMMatchesPanel
+from core.subtitle_editing.hydration import hydrate_original_text
+
 from ui.theme import Theme
 from ui.toast import Toast
 from core.utils.settings_utils import load_settings, save_settings
@@ -193,6 +197,7 @@ class MainWindow(QMainWindow):
             self,
         )
         self.workspace_service = WorkspaceService(self, self.project_service)
+        self.tm_manager = TranslationMemoryManager()
         self.revision_tracker.dirty_changed.connect(self._update_window_title_dirty_marker)
         self.revision_tracker.clean_point_reached.connect(
             self.recovery_manager.invalidate_snapshot_at_clean_point
@@ -439,8 +444,17 @@ class MainWindow(QMainWindow):
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
+        
+        self.right_splitter = QSplitter(Qt.Vertical)
+        self.right_splitter.addWidget(self.video_player)
+        
+        self.tm_matches_panel = TMMatchesPanel()
+        self.right_splitter.addWidget(self.tm_matches_panel)
+        self.right_splitter.setStretchFactor(0, 7)
+        self.right_splitter.setStretchFactor(1, 3)
+        
         self.top_horizontal_splitter.addWidget(self.sub_editor)
-        self.top_horizontal_splitter.addWidget(self.video_player)
+        self.top_horizontal_splitter.addWidget(self.right_splitter)
         self.top_horizontal_splitter.setStretchFactor(0, 56)
         self.top_horizontal_splitter.setStretchFactor(1, 44)
         self.top_horizontal_splitter.setSizes([560, 440])
@@ -451,6 +465,11 @@ class MainWindow(QMainWindow):
             lambda stt, start, text: self.sub_editor.sync_playback_highlight(int(stt) - 1)
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
+        
+        # TM Signals
+        self.sub_editor.request_tm_suggestion.connect(self._on_request_tm_suggestion)
+        self.sub_editor.commit_segment.connect(self._on_commit_segment)
+        self.tm_matches_panel.match_applied.connect(self._on_tm_match_applied)
         self.sub_editor.live_edit_applied.connect(
             lambda *args: self.project_service.mark_dirty()
             if getattr(self, 'project_service', None) and not self.sub_editor.is_rendering
@@ -1007,6 +1026,25 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self.video_player, "toggle_playback"):
             self.video_player.toggle_playback()
+
+    def _on_request_tm_suggestion(self, original_text):
+        if not hasattr(self, 'tm_manager'): return
+        matches = self.tm_manager.find_matches(original_text)
+        self.tm_matches_panel.update_matches(matches)
+
+    def _on_commit_segment(self, original, translated, prev_orig, next_orig):
+        if not hasattr(self, 'tm_manager'): return
+        if not original or original == "[Unknown Source]": return
+        self.tm_manager.add_segment(
+            source_text=original,
+            target_text=translated,
+            prev_source_text=prev_orig,
+            next_source_text=next_orig
+        )
+
+    def _on_tm_match_applied(self, target_text):
+        self.sub_editor.current_editor.text_edit.setPlainText(target_text)
+        self.sub_editor.current_editor._schedule_emit()
 
     def _setup_global_shortcuts(self):
         self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
@@ -2447,13 +2485,41 @@ class MainWindow(QMainWindow):
             shadow = artifact.path.replace(".sub.json", "_shadow.srt")
             if os.path.normcase(os.path.abspath(subtitle_path)) == os.path.normcase(os.path.abspath(artifact.path)):
                 shadow = self._on_generation_batch_sync(artifact=artifact)
-                if shadow is None:
-                    raise RuntimeError("Cannot render the canonical subtitle artifact as Shadow SRT.")
+            if shadow is None:
+                raise RuntimeError("Cannot render the canonical subtitle artifact as Shadow SRT.")
+            
+            # [HYDRATION]
+            if shadow and os.path.exists(shadow):
+                try:
+                    from core.export.subtitle_parser import parse_srt_content
+                    from core.subtitle_editing.hydration import hydrate_original_text
+                    with open(shadow, "r", encoding="utf-8") as hf:
+                        shadow_segs = parse_srt_content(hf.read())
+                        hydrate_original_text(data["segments"], shadow_segs)
+                except Exception as e:
+                    print(f"Hydration failed: {e}")
+            
             self.sub_editor.load_canonical_segments(data["segments"], shadow)
+
             self.video_player.sub_controller.load_srt(shadow)
         elif subtitle_path and os.path.exists(subtitle_path):
             if subtitle_path.endswith(".ai-subtitle-draft"):
                 self.sub_editor.load_draft_file(subtitle_path)
+                
+                # [HYDRATION FOR DRAFT]
+                try:
+                    if project and project.state.subtitle_artifact_id:
+                        candidate = self.project_service.artifact_store.get(project.state.subtitle_artifact_id)
+                        if candidate:
+                            shadow = candidate.path.replace(".sub.json", "_shadow.srt")
+                            if os.path.exists(shadow):
+                                from core.export.subtitle_parser import parse_srt_content
+                                from core.subtitle_editing.hydration import hydrate_original_text
+                                with open(shadow, "r", encoding="utf-8") as hf:
+                                    shadow_segs = parse_srt_content(hf.read())
+                                    hydrate_original_text(self.sub_editor.all_segments, shadow_segs)
+                except Exception:
+                    pass
             else:
                 self.sub_editor.load_srt_file(subtitle_path)
             self.video_player.sub_controller.load_srt(subtitle_path)
