@@ -168,3 +168,33 @@ class WaveformView(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor(Theme.CYAN), 2))
             painter.drawRoundedRect(selected_rect, 3, 3)
+            
+            # Draw Floating Tooltip for Waveform
+            start_ms, end_ms = self._selected_range_ms
+            dur = int(end_ms - start_ms)
+            tt_text = f"{start_ms/1000:.3f}s - {end_ms/1000:.3f}s ({dur}ms)"
+            from PySide6.QtGui import QFont
+            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            tt_fm = painter.fontMetrics()
+            tt_width = tt_fm.horizontalAdvance(tt_text) + 12
+            
+            # Position at top-left of the selected range, inside the view
+            tt_x = selected_rect.left()
+            tt_y = 5
+            
+            # Adjust if tooltip goes out of bounds
+            if tt_x + tt_width > self.width():
+                tt_x = self.width() - tt_width
+            if tt_x < 0:
+                tt_x = 0
+                
+            tt_rect = QRect(tt_x, tt_y, tt_width, 18)
+            
+            # Draw Badge
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(Theme.SURFACE_ELEVATED))
+            painter.drawRoundedRect(tt_rect, 4, 4)
+            
+            painter.setPen(QColor(Theme.CYAN))
+            painter.drawText(tt_rect, Qt.AlignCenter, tt_text)

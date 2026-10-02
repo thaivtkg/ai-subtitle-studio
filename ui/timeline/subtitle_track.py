@@ -16,6 +16,7 @@ class SubtitleTrack(QWidget):
     selection_cleared = Signal()
     gap_clicked = Signal(object)
     edit_committed = Signal(str, EditMode, int)
+    live_edit_updated = Signal(int, int)
     
     action_split_requested = Signal(str)
     action_merge_requested = Signal(set)
@@ -187,6 +188,17 @@ class SubtitleTrack(QWidget):
                 min_delta = (seg.start_ms + min_duration) - seg.end_ms
                 max_delta = next_start - seg.end_ms
                 self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
+
+            c_start = seg.start_ms
+            c_end = seg.end_ms
+            if self.edit_mode == EditMode.MOVE:
+                c_start += self.current_delta_ms
+                c_end += self.current_delta_ms
+            elif self.edit_mode == EditMode.RESIZE_LEFT:
+                c_start += self.current_delta_ms
+            elif self.edit_mode == EditMode.RESIZE_RIGHT:
+                c_end += self.current_delta_ms
+            self.live_edit_updated.emit(c_start, c_end)
 
             self.update() 
             return
