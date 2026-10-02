@@ -341,8 +341,9 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;"))
         sidebar_layout.addWidget(self.create_nav_button("⚙  Settings Center", 6))
         sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 7))
-        # Thêm nút Model Manager
+        # Thêm nút Model Manager & Glossary Manager
         sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
+        sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
 
         root_layout.addWidget(self.sidebar)
 
@@ -3445,6 +3446,11 @@ class MainWindow(QMainWindow):
     def action_open_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog
         dialog = ModelManagerDialog(self)
+        dialog.exec()
+
+    def action_open_glossary_manager(self):
+        from ui.glossary.glossary_manager_dialog import GlossaryManagerDialog
+        dialog = GlossaryManagerDialog(parent=self)
         dialog.exec()
 
     def _register_artifact(
