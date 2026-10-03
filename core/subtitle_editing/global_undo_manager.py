@@ -14,7 +14,13 @@ class GlobalUndoManager(QObject):
         super().__init__(parent)
         self._transitioning = False
         self.undo_stack = QUndoStack(self)
-        self.undo_stack.cleanChanged.connect(self.clean_changed.emit)
+        self.undo_stack.cleanChanged.connect(self._on_clean_changed)
+
+    def _on_clean_changed(self, is_clean: bool):
+        try:
+            self.clean_changed.emit(is_clean)
+        except RuntimeError:
+            pass
 
     def push(self, command: SubtitleCommand):
         self._transitioning = True

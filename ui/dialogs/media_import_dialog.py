@@ -72,7 +72,7 @@ def translate_error(error: MediaImportError) -> str:
 class MediaImportDialog(QDialog):
     def __init__(self, service, parent=None, mode=MODE_NEW_PROJECT):
         super().__init__(parent)
-        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY}; }} QPushButton {{ font-weight: 600; }}")
+        self.setStyleSheet(f"background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY};")
         if mode not in {MODE_NEW_PROJECT, MODE_QUEUE}:
             raise ValueError(f"Unsupported media import mode: {mode}")
         self.service = service
@@ -89,7 +89,6 @@ class MediaImportDialog(QDialog):
     def _setup_ui(self):
         self.setWindowTitle("Import Media")
         self.setMinimumWidth(500)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         layout = QVBoxLayout(self)
         url_layout = QHBoxLayout()
         url_layout.addWidget(QLabel("URL:"))
@@ -107,6 +106,7 @@ class MediaImportDialog(QDialog):
         location_layout.setContentsMargins(0, 0, 0, 0)
         self.location_input = QLineEdit(str(RuntimePaths.get_user_data_dir() / "projects"))
         self.browse_location_btn = QPushButton("Browse...")
+        self.browse_location_btn.setObjectName("btn_secondary")
         self.browse_location_btn.clicked.connect(self._on_browse_location)
         location_layout.addWidget(self.location_input, stretch=1)
         location_layout.addWidget(self.browse_location_btn)
@@ -121,8 +121,10 @@ class MediaImportDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch()
         self.import_btn = QPushButton("Import")
+        self.import_btn.setObjectName("btn_primary")
         self.import_btn.clicked.connect(self._on_import_clicked)
         self.cancel_btn = QPushButton("Close")
+        self.cancel_btn.setObjectName("btn_secondary")
         self.cancel_btn.clicked.connect(self._on_cancel_clicked)
         buttons.addWidget(self.import_btn)
         buttons.addWidget(self.cancel_btn)

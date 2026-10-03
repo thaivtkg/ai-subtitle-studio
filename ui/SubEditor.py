@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -68,48 +69,69 @@ class CurrentSubtitleEditor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        self.lbl_title = QLabel("Current Subtitle: None")
-        self.lbl_title.setStyleSheet("font-weight: bold;")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(6)
+
+        self.lbl_title = QLabel("#--")
+        self.lbl_title.setStyleSheet(f"font-weight: bold; color: {Theme.CYAN}; min-width: 32px;")
         layout.addWidget(self.lbl_title)
         
-        times = QHBoxLayout()
-        times.addWidget(QLabel("Start:"))
         self.start_edit = QLineEdit()
-        times.addWidget(self.start_edit)
-        times.addWidget(QLabel("End:"))
+        self.start_edit.setFixedWidth(95)
+        self.start_edit.setAlignment(Qt.AlignCenter)
+        self.start_edit.setPlaceholderText("00:00:00,000")
+        layout.addWidget(self.start_edit)
+
+        arrow_lbl = QLabel("→")
+        arrow_lbl.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold;")
+        layout.addWidget(arrow_lbl)
+
         self.end_edit = QLineEdit()
-        times.addWidget(self.end_edit)
-        times.addWidget(QLabel("Duration:"))
-        self.lbl_duration = QLabel("0.000 s")
-        times.addWidget(self.lbl_duration)
-        layout.addLayout(times)
-        
-        texts_layout = QHBoxLayout()
-        
-        self.text_original = QTextEdit()
-        self.text_original.setReadOnly(True)
-        self.text_original.setStyleSheet("background-color: transparent;")
-        self.text_original.setPlaceholderText("Bản gốc...")
-        self.text_original.setMaximumHeight(70)
-        texts_layout.addWidget(self.text_original)
+        self.end_edit.setFixedWidth(95)
+        self.end_edit.setAlignment(Qt.AlignCenter)
+        self.end_edit.setPlaceholderText("00:00:00,000")
+        layout.addWidget(self.end_edit)
+
+        self.lbl_duration = QLabel("0.000s")
+        self.lbl_duration.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; min-width: 42px;")
+        layout.addWidget(self.lbl_duration)
 
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("Bản dịch...")
-        self.text_edit.setMaximumHeight(70)
-        texts_layout.addWidget(self.text_edit)
-        
-        layout.addLayout(texts_layout)
-        
-        nav = QHBoxLayout()
-        self.btn_prev = QPushButton("◀ Previous")
-        self.btn_next = QPushButton("Next ▶")
+        self.text_edit.setFixedHeight(30)
+        self.text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 13px;
+            }}
+            QTextEdit:focus {{
+                border-color: {Theme.CYAN};
+            }}
+        """)
+        layout.addWidget(self.text_edit, stretch=1)
+
+        # Hidden text_original for backward compatibility
+        self.text_original = QTextEdit(self)
+        self.text_original.hide()
+
+        self.btn_prev = QPushButton("<")
+        self.btn_prev.setFixedSize(26, 26)
+        self.btn_prev.setObjectName("btn_secondary")
+        self.btn_prev.setToolTip("Dòng trước (Alt+Left)")
         self.btn_prev.clicked.connect(self._previous_requested)
+        layout.addWidget(self.btn_prev)
+
+        self.btn_next = QPushButton(">")
+        self.btn_next.setFixedSize(26, 26)
+        self.btn_next.setObjectName("btn_secondary")
+        self.btn_next.setToolTip("Dòng sau (Alt+Right)")
         self.btn_next.clicked.connect(self._next_requested)
-        nav.addWidget(self.btn_prev)
-        nav.addStretch()
-        nav.addWidget(self.btn_next)
-        layout.addLayout(nav)
+        layout.addWidget(self.btn_next)
         
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -120,7 +142,6 @@ class CurrentSubtitleEditor(QWidget):
         self._debounce.timeout.connect(self._emit_changed)
 
     def set_time(self, start_ms, end_ms):
-        from core.export.subtitle_parser import ms_to_time_str
         start = ms_to_time_str(start_ms)
         end = ms_to_time_str(end_ms)
         for widget, value in ((self.start_edit, start), (self.end_edit, end)):
@@ -150,7 +171,11 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
 
     def setTitle(self, title: str):
-        self.lbl_title.setText(title)
+        if ":" in title:
+            val = title.split(":")[-1].strip()
+            self.lbl_title.setText(val if val != "None" else "#--")
+        else:
+            self.lbl_title.setText(title)
 
     def _previous_requested(self):
         self.parent().select_previous() if self.parent() else None
@@ -210,18 +235,17 @@ class SubtitleEditorWidget(QWidget):
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 1px; }}")
+        main_layout.setSpacing(4)
         
         # ================= LỚP 1: LEFT PANEL (EDITOR) =================
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(4)
         
         # --- THANH ĐIỀU HƯỚNG PHÂN TRANG (PAGINATION BAR) ---
         page_layout = QHBoxLayout()
+        page_layout.setContentsMargins(4, 2, 4, 2)
         page_layout.addWidget(QLabel("Hiển thị:", styleSheet=f"font-weight:bold; color:{Theme.TEXT_MUTED};"))
         
         self.group_combo = QComboBox()
@@ -246,7 +270,7 @@ class SubtitleEditorWidget(QWidget):
         
         left_layout.addLayout(page_layout)
         
-        # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN) ---
+        # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN, EDGE-TO-EDGE) ---
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Bản gốc", "Bản dịch"])
@@ -260,38 +284,36 @@ class SubtitleEditorWidget(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
-        # [S6-T5] Lột xác QTableWidget
         self.table.setShowGrid(False)  # Tắt lưới Excel
         self.table.verticalHeader().hide() # Ẩn cột số thứ tự mặc định
-        self.table.verticalHeader().setDefaultSectionSize(40) # Mở rộng chiều cao hàng (Card feel)
+        self.table.verticalHeader().setDefaultSectionSize(36) # Chiều cao hàng vừa vặn
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # Bắt buộc giãn tối đa
         
         self.table.setStyleSheet(f"""
             QTableWidget {{ 
                 background-color: {Theme.SURFACE}; 
                 color: {Theme.TEXT_PRIMARY}; 
-                border: 1px solid {Theme.SURFACE}; /* Tàng hình viền tĩnh */
-                border-radius: 8px; 
+                border: none;
                 outline: none;
             }}
             QTableWidget:focus {{
-                border: 1px solid {Theme.PRIMARY_PURPLE}; /* Kích hoạt viền tím khi tương tác */
-                background-color: {Theme.SURFACE_SOFT}; /* Nền sáng lên nhẹ */
+                border-top: 1px solid {Theme.PRIMARY_PURPLE};
             }}
             QTableWidget::item {{ 
-                border-bottom: 1px solid {Theme.BG_APP}; 
-                padding: 8px 4px; /* Tăng padding dọc tạo không gian thở */
+                border-bottom: 1px solid {Theme.BORDER}; 
+                padding: 4px 6px;
             }}
             QTableWidget::item:selected {{ 
                 background-color: {Theme.SURFACE_ELEVATED}; 
                 color: {Theme.TEXT_PRIMARY}; 
                 font-weight: bold;
-                border-left: 3px solid {Theme.CYAN}; /* Vạch đánh dấu dòng hiện tại */
+                border-left: 3px solid {Theme.CYAN};
             }}
             QHeaderView::section {{ 
-                background-color: transparent; 
+                background-color: {Theme.SURFACE_SOFT}; 
                 color: {Theme.TEXT_MUTED}; 
                 font-weight: bold; 
-                padding: 8px; 
+                padding: 6px 8px; 
                 border: none; 
                 border-bottom: 1px solid {Theme.BORDER}; 
             }}
@@ -299,7 +321,7 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
-        left_layout.addWidget(self.table)
+        left_layout.addWidget(self.table, stretch=1)
 
         self.current_editor = CurrentSubtitleEditor(self)
         self.editor_group = self.current_editor
@@ -323,15 +345,13 @@ class SubtitleEditorWidget(QWidget):
         QShortcut(QKeySequence("Alt+Left"), self).activated.connect(self.select_previous)
         QShortcut(QKeySequence("Alt+Right"), self).activated.connect(self.select_next)
 
-        # --- CỤM NÚT LƯU & DUYỆT BÊN DƯỚI ---
-        btn_layout = QHBoxLayout()
-        
+        # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         self.ai_translate_btn = QPushButton("🪄 AI Translate")
-        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; color: white; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
+        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; color: white; font-weight: bold; border-radius: 4px; padding: 4px 12px; border: none;")
         self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
         
         self.approve_btn = QPushButton("✅ Chốt Timing")
-        self.approve_btn.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: #0D111A; font-weight: bold; border-radius: 6px; padding: 8px 16px; border: none;")
+        self.approve_btn.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: #0D111A; font-weight: bold; border-radius: 4px; padding: 4px 12px; border: none;")
         self.approve_btn.clicked.connect(self.approve_timing)
         
         self.save_draft_btn = QPushButton("📦 Lưu Draft")
@@ -345,15 +365,8 @@ class SubtitleEditorWidget(QWidget):
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
         
-        btn_layout.addWidget(self.ai_translate_btn)
-        btn_layout.addWidget(self.approve_btn)
-        btn_layout.addWidget(self.save_draft_btn)
-        btn_layout.addWidget(self.save_btn)
-        left_layout.addLayout(btn_layout)
-        
-        splitter.addWidget(left_panel)
-        
-        main_layout.addWidget(splitter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout.addWidget(left_panel, stretch=1)
 
     def _on_ai_translate_clicked(self):
         # Identify selected segments

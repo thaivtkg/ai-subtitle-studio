@@ -36,13 +36,21 @@ class TestDrawerUI(unittest.TestCase):
         self.assertGreaterEqual(self.window.btn_minimize.width(), 32)
         self.assertGreaterEqual(self.window.btn_close.width(), 32)
 
+        from PySide6.QtCore import QAbstractAnimation
+
         QTest.mouseClick(button, Qt.LeftButton)
-        QTest.qWait(500)
+        for _ in range(30):
+            if self.window.drawer_anim.state() != QAbstractAnimation.Running:
+                break
+            QTest.qWait(50)
         self.assertFalse(dock.isVisible())
         self.assertFalse(button.icon().isNull())
 
         QTest.mouseClick(button, Qt.LeftButton)
-        QTest.qWait(500)
+        for _ in range(30):
+            if self.window.drawer_anim.state() != QAbstractAnimation.Running:
+                break
+            QTest.qWait(50)
         self.assertTrue(dock.isVisible())
         self.assertFalse(button.icon().isNull())
         self.assertGreaterEqual(

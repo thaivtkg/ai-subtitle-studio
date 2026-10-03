@@ -76,10 +76,10 @@ class TestEditorCommandIntegration(unittest.TestCase):
         self.editor.txt_content.setPlainText("Hello Universe")
         self.editor._apply_current_editor()
         self.assertEqual(self.editor.all_segments[0]["text"], "Hello Universe")
-        self.assertEqual(self.editor.table.item(0, 4).text(), "Hello Universe")
+        self.assertEqual(self.editor.table.item(0, self.editor.COL_TRANSLATION).text(), "Hello Universe")
         self.undo_manager.undo()
         self.assertEqual(self.editor.all_segments[0]["text"], "Hello World")
-        self.assertEqual(self.editor.table.item(0, 4).text(), "Hello World")
+        self.assertEqual(self.editor.table.item(0, self.editor.COL_TRANSLATION).text(), "Hello World")
 
     def test_06_editor_timing_change_pushes_command(self):
         self.editor.select_segment(0)

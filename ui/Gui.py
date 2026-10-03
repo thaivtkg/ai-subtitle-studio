@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QScrollArea,
     QSplitter,
     QStyle,
     QTabWidget,
@@ -266,6 +267,8 @@ class MainWindow(QMainWindow):
         self.setDockOptions(
             QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
         )
+        self.setCorner(Qt.BottomRightCorner, Qt.BottomDockWidgetArea)
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
         self.center_on_screen()
         self.setStyleSheet(Theme.get_global_stylesheet())
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -282,7 +285,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         root_widget = QWidget()
-        root_widget.setMinimumSize(800, 600)
+        root_widget.setMinimumSize(800, 300)
         root_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setCentralWidget(root_widget)
         root_layout = QHBoxLayout(root_widget)
@@ -292,10 +295,22 @@ class MainWindow(QMainWindow):
         # ========================================================
         # 1. SIDEBAR NAVIGATION
         # ========================================================
+        self.sidebar_dock = QDockWidget("Sidebar", self)
+        self.sidebar_dock.setObjectName("SidebarDock")
+        self.sidebar_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        self.sidebar_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+        self.sidebar_dock.setTitleBarWidget(QWidget())
+        
+        self.sidebar_scroll = QScrollArea()
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setFixedWidth(64)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setStyleSheet(f"QScrollArea {{ border: none; border-right: 1px solid {Theme.BORDER}; background-color: {Theme.BG_APP}; }}")
+
         self.sidebar = QFrame()
         self.sidebar.setObjectName("SidebarFrame")
-        self.sidebar.setFixedWidth(64)
-        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.BG_APP}; border: none; border-right: 1px solid {Theme.BORDER}; }}")
+        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: transparent; border: none; }}")
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(4, 14, 4, 14)
         sidebar_layout.setSpacing(10)
@@ -345,7 +360,9 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
         sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
 
-        root_layout.addWidget(self.sidebar)
+        self.sidebar_scroll.setWidget(self.sidebar)
+        self.sidebar_dock.setWidget(self.sidebar_scroll)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar_dock)
 
         self.sidebar_indicator = QFrame(self.sidebar)
         self.sidebar_indicator.setFixedSize(3, 24) 
@@ -438,28 +455,20 @@ class MainWindow(QMainWindow):
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
-        self.video_player.setStyleSheet(f"VideoPlayerWidget {{ background-color: {Theme.SURFACE}; border-radius: 8px; }}")
+        self.video_player.setStyleSheet(f"VideoPlayerWidget {{ background-color: {Theme.BG_APP}; }}")
         self.video_player.setMinimumHeight(200)
         
-        self.right_splitter = QSplitter(Qt.Vertical)
-        self.right_splitter.addWidget(self.video_player)
-        
         self.tm_matches_panel = TMMatchesPanel()
-        # Removed tm_matches_panel from right_splitter, will add to dock_tabs
         
         self.top_horizontal_splitter.addWidget(self.sub_editor)
-        self.top_horizontal_splitter.addWidget(self.right_splitter)
-        self.top_horizontal_splitter.setStretchFactor(0, 56)
-        self.top_horizontal_splitter.setStretchFactor(1, 44)
+        self.top_horizontal_splitter.addWidget(self.video_player)
+        self.top_horizontal_splitter.setStretchFactor(0, 6) # Subtitle Editor (60%)
+        self.top_horizontal_splitter.setStretchFactor(1, 4) # Video Player (40%)
         
-        # Set Collapsible for DAW Layout
-        self.workspace_vertical_splitter.setCollapsible(0, True)
-        self.workspace_vertical_splitter.setCollapsible(1, True)
-        self.top_horizontal_splitter.setCollapsible(0, True)
-        self.top_horizontal_splitter.setCollapsible(1, True)
-        self.right_splitter.setCollapsible(0, True)
-        self.right_splitter.setCollapsible(1, True)
-        self.top_horizontal_splitter.setSizes([560, 440])
+        self.workspace_vertical_splitter.setCollapsible(0, False)
+        self.workspace_vertical_splitter.setCollapsible(1, False)
+        self.top_horizontal_splitter.setCollapsible(0, False)
+        self.top_horizontal_splitter.setCollapsible(1, False)
 
         self.sub_editor.seek_requested.connect(self.video_player.set_position)
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
@@ -651,8 +660,43 @@ class MainWindow(QMainWindow):
         self.timeline_widget.range_generation_requested.connect(
             self._start_range_generation
         )
-        self.timeline_widget.setMinimumHeight(160) # Timeline nay đã nằm dưới cùng, chiếm ưu thế
-        self.workspace_vertical_splitter.addWidget(self.timeline_widget)
+        self.timeline_widget.setMinimumHeight(140)
+
+        # Timeline Toolbar & Container
+        self.timeline_container = QWidget()
+        timeline_container_layout = QVBoxLayout(self.timeline_container)
+        timeline_container_layout.setContentsMargins(0, 0, 0, 0)
+        timeline_container_layout.setSpacing(0)
+
+        timeline_toolbar = QFrame()
+        timeline_toolbar.setFixedHeight(34)
+        timeline_toolbar.setStyleSheet(f"QFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; border-bottom: 1px solid {Theme.BORDER}; }}")
+        tl_tb_layout = QHBoxLayout(timeline_toolbar)
+        tl_tb_layout.setContentsMargins(8, 0, 8, 0)
+        tl_tb_layout.setSpacing(8)
+
+        lbl_tl = QLabel("⏱️ TIMELINE")
+        lbl_tl.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {Theme.CYAN};")
+        tl_tb_layout.addWidget(lbl_tl)
+        tl_tb_layout.addStretch()
+
+        tl_tb_layout.addWidget(self.sub_editor.ai_translate_btn)
+        tl_tb_layout.addWidget(self.sub_editor.approve_btn)
+        tl_tb_layout.addWidget(self.sub_editor.save_draft_btn)
+        tl_tb_layout.addWidget(self.sub_editor.save_btn)
+
+        timeline_container_layout.addWidget(timeline_toolbar)
+        timeline_container_layout.addWidget(self.timeline_widget)
+
+        # --- BOTTOM DOCK: TIMELINE (100% WIDTH EDGE-TO-EDGE) ---
+        self.timeline_dock = QDockWidget("Timeline", self)
+        self.timeline_dock.setObjectName("TimelineDock")
+        self.timeline_dock.setTitleBarWidget(QWidget())
+        self.timeline_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+        self.timeline_dock.setStyleSheet(f"QDockWidget {{ background-color: {Theme.BG_APP}; border: none; }}")
+        self.timeline_dock.setWidget(self.timeline_container)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.timeline_dock)
+        self.timeline_dock.hide()
 
         self.timeline_data_provider = TimelineDataProvider()
         self.timeline_controller = TimelineController(
@@ -667,15 +711,9 @@ class MainWindow(QMainWindow):
         self.timeline_controller.sync_from_editor_segments(self.sub_editor.all_segments)
         self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
-        
-        # Liên kết Cầu đồng bộ (Click Table -> Bôi đen Timeline)
         self.sub_editor.seek_requested.connect(self.timeline_controller.sync_from_editor)
 
-        # Chốt tỷ lệ: top workspace 68% / timeline 32%
-        self.workspace_vertical_splitter.setStretchFactor(0, 68)
-        self.workspace_vertical_splitter.setStretchFactor(1, 32)
-        self.workspace_vertical_splitter.setSizes([680, 320])
-        ws_layout.addWidget(self.workspace_vertical_splitter)
+        ws_layout.addWidget(self.top_horizontal_splitter)
         
         self.stack.addWidget(self.page_workspace)
 
@@ -1282,11 +1320,17 @@ class MainWindow(QMainWindow):
     def _update_drawer_handle_position(self):
         if not hasattr(self, "btn_drawer_toggle"):
             return
-        y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
-        if self.generation_dock.isVisible():
-            x = self.centralWidget().width() - self.btn_drawer_toggle.width()
+        if hasattr(self, "generation_dock") and self.generation_dock.isVisible() and self.generation_dock.parentWidget():
+            try:
+                pos = self.generation_dock.mapTo(self, QPoint(0, 0))
+                x = max(0, pos.x() - self.btn_drawer_toggle.width())
+                y = max(0, pos.y() + (self.generation_dock.height() - self.btn_drawer_toggle.height()) // 2)
+            except Exception:
+                x = self.width() - self.btn_drawer_toggle.width()
+                y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 3)
         else:
             x = self.width() - self.btn_drawer_toggle.width()
+            y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 3)
         self.btn_drawer_toggle.move(max(0, x), y)
         self.btn_drawer_toggle.raise_()
 
@@ -1410,6 +1454,10 @@ class MainWindow(QMainWindow):
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
             self.bottom_frame.setVisible(original_index == 2)
+
+        # Quản lý Ẩn/Hiện Timeline Dock (chỉ hiện ở Studio Workspace)
+        if hasattr(self, 'timeline_dock'):
+            self.timeline_dock.setVisible(original_index == 1)
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 3:

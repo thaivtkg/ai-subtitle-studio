@@ -131,16 +131,29 @@ class Theme:
             color: {cls.TEXT_PRIMARY};
             spacing: 8px;
         }}
-        QCheckBox::indicator, QRadioButton::indicator {{
+        QCheckBox::indicator {{
             width: 16px;
             height: 16px;
             border: 1px solid {cls.BORDER};
             border-radius: 3px;
             background-color: {cls.SURFACE_ELEVATED};
         }}
+        QRadioButton::indicator {{
+            width: 16px;
+            height: 16px;
+            border: 1px solid {cls.BORDER};
+            border-radius: 8px;
+            background-color: {cls.SURFACE_ELEVATED};
+        }}
         QCheckBox::indicator:checked {{
             background-color: {cls.CYAN};
             border: 1px solid {cls.CYAN};
+            image: url(assets/check.svg);
+        }}
+        QRadioButton::indicator:checked {{
+            background-color: {cls.CYAN};
+            border: 1px solid {cls.CYAN};
+            image: url(assets/radio_checked.svg);
         }}
 
         /* 7. SCROLLBARS TÀNG HÌNH */
