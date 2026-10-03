@@ -25,149 +25,115 @@ class Theme:
     @classmethod
     def get_global_stylesheet(cls):
         return f"""
-            QMainWindow {{
-                background-color: {cls.BG_APP};
-            }}
-            QDialog {{
-                background-color: {cls.BG_APP};
-            }}
-            QWidget {{
-                color: {cls.TEXT_PRIMARY};
-                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
-                font-size: 13px;
-            }}
-            QToolTip {{
-                background-color: {cls.SURFACE_ELEVATED};
-                color: {cls.TEXT_PRIMARY};
-                border: 1px solid {cls.BORDER};
-                padding: 5px 8px;
-                border-radius: 4px;
-            }}
-            /* Định dạng Scrollbar hiện đại */
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {cls.SURFACE_SOFT};
-                min-height: 20px;
-                border-radius: 3px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {cls.BORDER};
-            }}
-            /* Định dạng Input chung */
-            QLineEdit, QComboBox, QSpinBox {{
-                background-color: {cls.BG_APP};
-                border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: {cls.TEXT_PRIMARY};
-            }}
-            QGroupBox {{
-                background-color: {cls.SURFACE};
-                border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                margin-top: 8px;
-                padding: 8px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-                color: {cls.TEXT_SECONDARY};
-            }}
-            QPushButton {{
-                background-color: {cls.SURFACE_ELEVATED};
-                border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                color: {cls.TEXT_PRIMARY};
-                padding: 6px 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.SURFACE_SOFT};
-                border-color: {cls.CYAN};
-            }}
-            QPushButton:disabled {{
-                background-color: {cls.SURFACE};
-                color: {cls.TEXT_DISABLED};
-            }}
-            QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
-                border: 1px solid {cls.PRIMARY_PURPLE};
-            }}
+        /* 1. NỀN & TYPOGRAPHY CƠ BẢN */
+        QWidget {{
+            background-color: {cls.BG_APP};
+            color: {cls.TEXT_PRIMARY};
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+            font-size: 13px;
+        }}
 
-            /* =========================================
-               [FIX] ĐỊNH DẠNG LIVE LOG & SCROLL AREA (AI SETTINGS)
-               ========================================= */
-            QTextEdit {{
-                background-color: {cls.BG_APP};
-                border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                color: {cls.TEXT_SECONDARY};
-                font-family: 'Consolas', monospace;
-                font-size: 12px;
-                padding: 8px;
-            }}
-            QScrollArea, QScrollArea > QWidget > QWidget {{
-                background-color: transparent;
-                border: none;
-            }}
-            
-            /* =========================================
-               ĐỊNH DẠNG NÚT BẤM (BUTTON SYSTEM)
-               ========================================= */
-            /* Nút Primary (Gradient) */
-            QPushButton#btn_primary {{
-                background-color: {cls.PRIMARY_GRADIENT};
-                color: #FFFFFF;
-                font-weight: bold;
-                border-radius: 6px;
-                border: none;
-                padding: 8px 16px;
-            }}
-            QPushButton#btn_primary:hover {{
-                background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #A78BFA, stop: 1 #F472B6);
-            }}
-            QPushButton#btn_primary:disabled {{
-                background-color: {cls.BORDER};
-                color: {cls.TEXT_DISABLED};
-            }}
+        /* 2. GHOST BUTTONS (Không viền, chỉ hiện nền khi hover) */
+        QPushButton {{
+            background-color: transparent;
+            color: {cls.TEXT_PRIMARY};
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background-color: {cls.SURFACE_SOFT};
+            border: 1px solid {cls.BORDER};
+        }}
+        QPushButton:pressed {{
+            background-color: {cls.SURFACE_ELEVATED};
+        }}
+        
+        /* Nút Primary (Được phép có màu nền để call-to-action) */
+        QPushButton#btn_primary {{
+            background-color: {cls.PRIMARY_PURPLE};
+            color: #FFFFFF;
+            border: none;
+        }}
+        QPushButton#btn_primary:hover {{
+            background-color: #7b4dff; /* Sáng hơn chút */
+        }}
 
-            /* Nút Danger (Hủy, Xóa) */
-            QPushButton#btn_danger {{
-                background-color: {cls.DANGER};
-                color: #FFFFFF;
-                font-weight: bold;
-                border-radius: 6px;
-                border: none;
-                padding: 8px 16px;
-            }}
-            QPushButton#btn_danger:hover {{
-                background-color: #FB7185;
-            }}
-            QPushButton#btn_danger:disabled {{
-                background-color: {cls.BORDER};
-                color: {cls.TEXT_DISABLED};
-            }}
+        /* 3. TÀNG HÌNH QSPLITTER (Biến mất, chỉ hiện Cyan khi hover) */
+        QSplitter::handle {{
+            background-color: transparent;
+            margin: 1px 0px;
+        }}
+        QSplitter::handle:hover {{
+            background-color: {cls.CYAN};
+        }}
+        QSplitter::handle:horizontal {{
+            width: 3px;
+        }}
+        QSplitter::handle:vertical {{
+            height: 3px;
+        }}
 
-            /* Nút Secondary (Mở thư mục, Duyệt file, Lưu) */
-            QPushButton#btn_secondary {{
-                background-color: {cls.SURFACE_ELEVATED};
-                color: {cls.TEXT_PRIMARY};
-                font-weight: bold;
-                border-radius: 6px;
-                border: 1px solid {cls.BORDER};
-                padding: 8px 16px;
-            }}
-            QPushButton#btn_secondary:hover {{
-                background-color: {cls.SURFACE_SOFT};
-                border: 1px solid {cls.CYAN};
-                color: {cls.CYAN};
-            }}
-            QPushButton#btn_secondary:disabled {{
-                background-color: {cls.SURFACE};
-                color: {cls.TEXT_DISABLED};
-                border: 1px solid {cls.BORDER};
-            }}
+        /* 4. SCROLLBAR SIÊU MỎNG (Phong cách macOS/Web) */
+        QScrollBar:vertical {{
+            border: none;
+            background: transparent;
+            width: 8px;
+            margin: 0px 0px 0px 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: #333333;
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: #555555;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            border: none;
+            background: none;
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+
+        /* Scrollbar Ngang */
+        QScrollBar:horizontal {{
+            border: none;
+            background: transparent;
+            height: 8px;
+            margin: 0px 0px 0px 0px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: #333333;
+            min-width: 20px;
+            border-radius: 4px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background: #555555;
+        }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            border: none;
+            background: none;
+            width: 0px;
+        }}
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+            background: none;
+        }}
+
+        /* 5. TEXT INPUTS & DROPDOWNS (Đơn giản hóa viền) */
+        QLineEdit, QTextEdit, QComboBox, QSpinBox {{
+            background-color: {cls.SURFACE};
+            color: {cls.TEXT_PRIMARY};
+            border: 1px solid {cls.BORDER};
+            border-radius: 4px;
+            padding: 4px 8px;
+            selection-background-color: {cls.PRIMARY_PURPLE};
+        }}
+        QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
+            border: 1px solid {cls.CYAN};
+            background-color: {cls.SURFACE_ELEVATED};
+        }}
         """

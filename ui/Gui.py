@@ -295,7 +295,7 @@ class MainWindow(QMainWindow):
         self.sidebar = QFrame()
         self.sidebar.setObjectName("SidebarFrame")
         self.sidebar.setFixedWidth(230)
-        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.SURFACE}; border-right: 1px solid {Theme.BORDER}; }}")
+        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.BG_APP}; border: none; }}")
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 14, 10, 14)
         sidebar_layout.setSpacing(4)
@@ -374,7 +374,7 @@ class MainWindow(QMainWindow):
         topbar = QFrame()
         topbar.setObjectName("TopbarFrame")
         topbar.setFixedHeight(42)
-        topbar.setStyleSheet(f"#TopbarFrame {{ background-color: {Theme.BG_APP}; border-bottom: 1px solid {Theme.BORDER}; }}")
+        topbar.setStyleSheet(f"#TopbarFrame {{ background-color: {Theme.BG_APP}; border: none; }}")
         topbar_layout = QHBoxLayout(topbar)
         topbar_layout.setContentsMargins(14, 0, 10, 0)
 
@@ -444,6 +444,7 @@ class MainWindow(QMainWindow):
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
+        self.video_player.setStyleSheet(f"VideoPlayerWidget {{ background-color: {Theme.SURFACE}; border-radius: 8px; }}")
         self.video_player.setMinimumHeight(200)
         
         self.right_splitter = QSplitter(Qt.Vertical)

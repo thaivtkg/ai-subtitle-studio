@@ -269,25 +269,29 @@ class SubtitleEditorWidget(QWidget):
             QTableWidget {{ 
                 background-color: {Theme.SURFACE}; 
                 color: {Theme.TEXT_PRIMARY}; 
-                border: 1px solid {Theme.BORDER}; 
-                border-radius: 6px; 
+                border: 1px solid {Theme.SURFACE}; /* Tàng hình viền tĩnh */
+                border-radius: 8px; 
                 outline: none;
+            }}
+            QTableWidget:focus {{
+                border: 1px solid {Theme.PRIMARY_PURPLE}; /* Kích hoạt viền tím khi tương tác */
+                background-color: {Theme.SURFACE_SOFT}; /* Nền sáng lên nhẹ */
             }}
             QTableWidget::item {{ 
                 border-bottom: 1px solid {Theme.BG_APP}; 
-                padding: 4px; 
+                padding: 8px 4px; /* Tăng padding dọc tạo không gian thở */
             }}
             QTableWidget::item:selected {{ 
-                background-color: {Theme.SURFACE_SOFT}; 
-                color: {Theme.CYAN}; 
+                background-color: {Theme.SURFACE_ELEVATED}; 
+                color: {Theme.TEXT_PRIMARY}; 
                 font-weight: bold;
-                border-left: 3px solid {Theme.PRIMARY_PURPLE}; 
+                border-left: 3px solid {Theme.CYAN}; /* Vạch đánh dấu dòng hiện tại */
             }}
             QHeaderView::section {{ 
-                background-color: {Theme.BG_APP}; 
+                background-color: transparent; 
                 color: {Theme.TEXT_MUTED}; 
                 font-weight: bold; 
-                padding: 6px; 
+                padding: 8px; 
                 border: none; 
                 border-bottom: 1px solid {Theme.BORDER}; 
             }}
