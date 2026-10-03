@@ -3322,6 +3322,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Lỗi khởi tạo", f"Không thể tạo dự án:\n{e!s}")
 
     def _on_new_from_url(self):
+        if hasattr(self, "tour_spotlight") and self.tour_spotlight:
+            self.tour_spotlight.hide_step()
         dialog = MediaImportDialog(self.media_import_service, self, mode="new_project")
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -3349,6 +3351,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Import Failed", f"Could not create project:\n{exc}")
 
     def _on_add_url_to_queue(self):
+        if hasattr(self, "tour_spotlight") and self.tour_spotlight:
+            self.tour_spotlight.hide_step()
         dialog = MediaImportDialog(self.media_import_service, self, mode="queue")
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

@@ -14,8 +14,9 @@ from ui.tutorial.demo_media_viewer import DemoMediaViewer
 class DimWidget(QWidget):
     def __init__(self, parent: QWidget):
         super().__init__(parent)
+        self.setObjectName("tour_dim_widget")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 150);")
+        self.setStyleSheet("#tour_dim_widget { background-color: rgba(0, 0, 0, 150); }")
         self.hide()
 
     def mousePressEvent(self, event):
@@ -91,13 +92,16 @@ class SpotlightLayerAdapter(QObject):
         self._demo_viewer = None
 
     def _resolve_default_host(self) -> Optional[QWidget]:
-        app = QApplication.instance()
-        host = app.activeWindow() if app else None
-        if isinstance(host, QWidget) and shiboken6.isValid(host):
-            return host
         parent = self.parent()
         if isinstance(parent, QWidget) and shiboken6.isValid(parent):
             return parent.window()
+        app = QApplication.instance()
+        host = app.activeWindow() if app else None
+        if isinstance(host, QWidget) and shiboken6.isValid(host):
+            from PySide6.QtWidgets import QDialog
+            if isinstance(host, QDialog):
+                return None
+            return host
         return None
 
     def _update_geometry(self) -> None:
@@ -145,10 +149,7 @@ class SpotlightLayerAdapter(QObject):
             cy = max(0, min(cy, max(0, hh - ch)))
             self._callout_widget.move(cx, cy)
         else:
-            self._top_dim.setGeometry(host.rect())
-            self._top_dim.raise_()
-            self._top_dim.show()
-            for dim in dims[1:]:
+            for dim in dims:
                 dim.hide()
             self._border_widget.hide()
             self._callout_widget.adjustSize()
