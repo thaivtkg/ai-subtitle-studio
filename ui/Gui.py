@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(logo_lbl)
 
         # Đổi tên nhóm và trỏ sự kiện về các hàm Project (Sprint 7)
-        sidebar_layout.addWidget(QLabel("QUẢN LÝ DỰ ÁN", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
+        sidebar_layout.addWidget(QLabel("QUẢN LÝ DỰ ÁN", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
         
         # Nút Tạo Dự Án 
         self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
@@ -326,14 +326,14 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
         self.canonical_save_status_label = QLabel("Auto Save · Saved")
         self.canonical_save_status_label.setStyleSheet(
-            f"color: {Theme.TEXT_MUTED}; padding: 4px; border: none;"
+            f"color: {Theme.TEXT_SECONDARY}; padding: 4px; border: none;"
         )
         sidebar_layout.addWidget(self.canonical_save_status_label)
         
         # Nút Clear Queue
         sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
 
-        sidebar_layout.addWidget(QLabel("WORKFLOW SURFACES", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none; padding-top: 8px;"))
+        sidebar_layout.addWidget(QLabel("WORKFLOW SURFACES", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none; padding-top: 8px;"))
         self.nav_btns = {}
         sidebar_layout.addWidget(self.create_nav_button("📊  Dashboard", 0))
         sidebar_layout.addWidget(self.create_nav_button("🎬  Studio Workspace", 1))
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.create_nav_button("🚀  Export Center", 5))
 
         sidebar_layout.addStretch()
-        sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: bold; border: none;"))
+        sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none;"))
         sidebar_layout.addWidget(self.create_nav_button("⚙  Settings Center", 6))
         sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 7))
         # Thêm nút Model Manager & Glossary Manager
@@ -395,13 +395,13 @@ class MainWindow(QMainWindow):
         self.btn_minimize = QPushButton("—")
         self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
         self.btn_minimize.setFixedSize(36, 30)
-        self.btn_minimize.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        self.btn_minimize.setStyleSheet(f"QPushButton {{ background: {Theme.BG_APP}; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
         self.btn_minimize.clicked.connect(self.showMinimized)
 
         self.btn_close = QPushButton("✕")
         self.btn_close.setToolTip("Đóng ứng dụng")
         self.btn_close.setFixedSize(36, 30)
-        self.btn_close.setStyleSheet(f"QPushButton {{ background: transparent; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
+        self.btn_close.setStyleSheet(f"QPushButton {{ background: {Theme.BG_APP}; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
         self.btn_close.clicked.connect(self.close)
 
         topbar_layout.addWidget(self.btn_minimize)
@@ -533,9 +533,8 @@ class MainWindow(QMainWindow):
         self.generation_dock.setMaximumWidth(390)
         self.generation_dock.setStyleSheet(f"""
             QDockWidget {{
-                color: {Theme.TEXT_PRIMARY    background-color: {Theme.BG_APP    background-color: {Theme.BG_APP};
-};
-};
+                background-color: {Theme.BG_APP};
+                color: {Theme.TEXT_PRIMARY};
                 font-weight: bold;
             }}
             QDockWidget::title {{
@@ -548,11 +547,11 @@ class MainWindow(QMainWindow):
         dock_tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border-top: 1px solid {Theme.BORDER};
-                background: transparent;
+                background: {Theme.BG_APP};
             }}
             QTabBar::tab {{
                 background: {Theme.BG_APP};
-                color: {Theme.TEXT_MUTED};
+                color: {Theme.TEXT_SECONDARY};
                 padding: 8px 16px;
                 border: none;
                 margin: 0px;
@@ -625,7 +624,7 @@ class MainWindow(QMainWindow):
                 border-right: none;
                 border-top-left-radius: 5px;
                 border-bottom-left-radius: 5px;
-                color: {Theme.TEXT_MUTED};
+                color: {Theme.TEXT_SECONDARY};
                 font-weight: bold;
                 font-size: 16px;
             }}
@@ -810,7 +809,7 @@ class MainWindow(QMainWindow):
 
         out_row = QHBoxLayout()
         lbl_out = QLabel("📁 Output:")
-        lbl_out.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 11px;")
+        lbl_out.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-weight: bold; font-size: 11px;")
         
         self.out_input = QLineEdit()
         self.out_input.setMinimumHeight(30)
@@ -838,7 +837,7 @@ class MainWindow(QMainWindow):
         self.progress_anim.setDuration(400)
 
         self.lbl_speed_eta = QLabel("Speed: 0.0x | ETA: --")
-        self.lbl_speed_eta.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; font-weight: bold;")
+        self.lbl_speed_eta.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px; font-weight: bold;")
 
         self.start_btn = QPushButton("▶ Start Queue")
         self.start_btn.setMinimumHeight(32)
