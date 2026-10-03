@@ -8,9 +8,15 @@ class Theme:
     SURFACE_SOFT = "#262E40"       # Nền nhẹ cho phân cách
     
     PRIMARY_PURPLE = "#6366F1"     # Màu chủ đạo chính
+    PRIMARY_PINK = "#EC4899"
+    PRIMARY_GRADIENT = "qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #6366F1, stop: 1 #EC4899)"
+    PRIMARY_GREEN = "#10B981"
+
     CYAN = "#38BDF8"               # Màu nhấn/Focus
     SUCCESS = "#10B981"            # Xanh lá (Thành công/Lưu)
     DANGER = "#EF4444"             # Đỏ (Lỗi/Xóa)
+    WARNING = "#F59E0B"            # Vàng/Cam (Cảnh báo)
+    INFO = "#3B82F6"               # Xanh dương (Thông tin)
     
     TEXT_PRIMARY = "#F8FAFC"       # Chữ chính (Trắng)
     TEXT_SECONDARY = "#94A3B8"     # Chữ phụ (Xám nhạt)
