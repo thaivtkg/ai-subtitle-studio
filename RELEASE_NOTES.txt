@@ -1,0 +1,42 @@
+﻿# ðŸš€ AI Subtitle Studio v1.0.0 Release Notes
+
+ChÃ o má»«ng Ä‘áº¿n vá»›i phiÃªn báº£n chÃ­nh thá»©c Ä‘áº§u tiÃªn cá»§a **AI Subtitle Studio (v1.0.0)**. 
+Báº£n phÃ¡t hÃ nh nÃ y Ä‘Ã¡nh dáº¥u sá»± chuyá»ƒn mÃ¬nh tá»« má»™t cÃ´ng cá»¥ dá»‹ch thuáº­t vÄƒn báº£n Ä‘Æ¡n thuáº§n thÃ nh má»™t cá»— mÃ¡y **Tráº¡m khÃ´ng gian (DAW)** hoÃ n chá»‰nh, káº¿t há»£p sá»©c máº¡nh phÃ¢n tÃ­ch ngá»¯ cáº£nh cá»§a AI vÃ  thiáº¿t káº¿ giao diá»‡n tá»‘i giáº£n chuáº©n cÃ´ng nghiá»‡p.
+
+DÆ°á»›i Ä‘Ã¢y lÃ  nhá»¯ng giÃ¡ trá»‹ cá»‘t lÃµi (Business Value) Ä‘Ã£ Ä‘Æ°á»£c rÃ¨n giÅ©a:
+
+---
+
+### ðŸ§  1. Agentic Translation Engine
+TrÃ¡i tim cá»§a há»‡ thá»‘ng nay Ä‘Ã£ Ä‘Æ°á»£c tá»± Ä‘á»™ng hÃ³a hoÃ n toÃ n vá»›i bá»™ nÃ£o AI:
+- **Token Budgeting thÃ´ng minh:** Tá»‘i Æ°u hÃ³a phÃ¢n phá»‘i ngá»¯ cáº£nh ($O(N)$ Context Window), giÃºp AI dá»‹ch mÆ°á»£t mÃ  khÃ´ng lÃ m vá»¡ cÃ¡c cÃ¢u ngáº¯t dÃ²ng phá»©c táº¡p.
+- **Auto-QC (Kiá»ƒm Ä‘á»‹nh tÄ©nh):** MÃ ng lá»c phÃ²ng ngá»± Data Poisoning. Báº¥t ká»³ pháº£n há»“i rÃ¡c nÃ o tá»« AI (nhÆ° lá»—i format HTML/XML hoáº·c thiáº¿u há»¥t thuáº­t ngá»¯ ráº­p khuÃ´n) Ä‘á»u bá»‹ cÃ´ láº­p ngay táº¡i File SRT táº¡m, khÃ´ng cho phÃ©p Ã´ nhiá»…m Translation Memory (TM).
+- **Network Resilience (Tá»± phá»¥c há»“i):** Thuáº­t toÃ¡n Exponential Backoff báº¯t dÃ­nh cÃ¡c lá»—i máº¡ng ngáº«u nhiÃªn (transient timeout, connection drops). VÃ²ng láº·p sáº½ kiÃªn nháº«n thá»­ láº¡i thay vÃ¬ lÃ m sáº­p toÃ n bá»™ hÃ ng Ä‘á»£i xá»­ lÃ½.
+
+---
+
+### âš™ï¸ 2. Batch Automation Pipeline
+DÃ¢y chuyá»n sáº£n xuáº¥t tá»± Ä‘á»™ng xuyÃªn suá»‘t khÃ´ng Ä‘iá»ƒm mÃ¹ (End-to-End Zero-blindspot Pipeline):
+- **CÆ¡ cháº¿ Handoff nguyÃªn khá»‘i:** Má»i tiáº¿n trÃ¬nh tá»« (1) TrÃ­ch xuáº¥t Audio qua FFmpeg, (2) Nháº­n diá»‡n tiáº¿ng nÃ³i Whisper ASR, Ä‘áº¿n (3) Dá»‹ch thuáº­t AI Ä‘á»u tá»± Ä‘á»™ng chuyá»ƒn giao Artifact má»™t cÃ¡ch mÆ°á»£t mÃ .
+- **Dynamic Domain Binding:** Glossary Ä‘Æ°á»£c phÃ¢n nhÃ³m theo `Domain` tá»± Ä‘á»™ng táº£i vÃ o Pipeline thÃ´ng qua SQLite.
+- Tráº£ vá» káº¿t quáº£ hoÃ n chá»‰nh dÆ°á»›i dáº¡ng file Hardsub/Softsub tÃ¹y chá»n mÃ  khÃ´ng cáº§n can thiá»‡p thá»§ cÃ´ng á»Ÿ bÆ°á»›c trung gian.
+
+---
+
+### ðŸŽ›ï¸ 3. Modern DAW Interface (Ponytail Architecture)
+Giao diá»‡n khÃ´ng cÃ²n lÃ  nhá»¯ng Form nháº­p liá»‡u nhÃ m chÃ¡n, mÃ  lÃ  má»™t khÃ´ng gian thá»Ÿ (Breathing Space) Ä‘Ã­ch thá»±c:
+- **NguyÃªn khá»‘i siÃªu pháº³ng (Monolithic Flat Design):** Ãp dá»¥ng ngÃ´n ngá»¯ thiáº¿t káº¿ cá»§a Vercel/Linear. Má»i Ä‘Æ°á»ng viá»n thá»«a thÃ£i (`borders`), cÃ¡c thanh kÃ©o chia cáº¯t Ä‘á»u Ä‘Æ°á»£c xÃ³a bá» hoáº·c "tÃ ng hÃ¬nh" (Ghost buttons, Invisible splitters).
+- **Dynamic Focus States:** Sá»± tÄ©nh láº·ng tuyá»‡t Ä‘á»‘i cho Ä‘áº¿n khi báº¡n tÆ°Æ¡ng tÃ¡c. Khi bÃ n phÃ­m táº­p trung vÃ o Table Editor, má»™t viá»n sÃ¡ng `PRIMARY_PURPLE` sáº½ rá»±c lÃªn kÃ¨m hiá»‡u á»©ng Elevation (Ä‘áº©y ná»•i tháº»), bÃ¡o hiá»‡u trá»±c quan luá»“ng xá»­ lÃ½ hiá»‡n táº¡i cá»§a há»‡ thá»‘ng.
+- **Spacious Rows:** Padding Ä‘Æ°á»£c ná»›i lá»ng táº¡o thÃ nh nhá»¯ng "dÃ²ng thá»Ÿ", giáº£m thiá»ƒu Ã¡p lá»±c thá»‹ giÃ¡c khi rÃ  soÃ¡t phá»¥ Ä‘á» trong nhiá»u giá» liÃªn tá»¥c.
+
+---
+
+### ðŸ§² 4. Magnetic Timeline & Sync
+Khu vá»±c Timeline Ä‘Ã£ chÃ­nh thá»©c sá»Ÿ há»¯u "trá»ng lá»±c" cá»§a riÃªng mÃ¬nh, mang láº¡i Ä‘á»™ chÃ­nh xÃ¡c khung hÃ¬nh (Frame-accurate):
+- **Thuáº­t toÃ¡n Tá»« tÃ­nh $O(1)$:** CÆ¡ cháº¿ báº¯t dÃ­nh thÃ´ng minh (Magnetic Snapping) hoáº¡t Ä‘á»™ng vá»›i thá»i gian thá»±c. BÃ¡n kÃ­nh tá»« trÆ°á»ng 150ms giÃºp khá»‘i phá»¥ Ä‘á» tá»± Ä‘á»™ng "hÃ­t" chuáº©n xÃ¡c vÃ o cÃ¡c khá»‘i lÃ¢n cáº­n hoáº·c Playhead.
+- **Snap Bypass (VÃ´ hiá»‡u hÃ³a Tá»« tÃ­nh):** Chá»‰ cáº§n Ä‘Ã¨ phÃ­m `Alt` trong lÃºc kÃ©o chuá»™t, lá»±c hÃºt láº­p tá»©c bá»‹ triá»‡t tiÃªu, tráº£ láº¡i quyá»n vi chá»‰nh (micro-adjust) á»Ÿ cáº¥p Ä‘á»™ mili-giÃ¢y cho ngÆ°á»i dÃ¹ng.
+- **Collision & Inversion Guard:** KhÃ´ng bao giá» cÃ³ hiá»‡n tÆ°á»£ng Ä‘Ã¢m xuyÃªn hoáº·c kÃ©o Ã¢m thá»i gian.
+- **Pháº£n há»“i Thá»‹ giÃ¡c (Laser Guide):** Má»™t tia laser mÃ u Cyan (váº¡ch Ä‘á»‹nh tuyáº¿n) chá»›p lÃªn má»—i láº§n báº¯t dÃ­nh thÃ nh cÃ´ng. CÃ¹ng vá»›i Ä‘Ã³, Ä‘á»“ng há»“ thá»i gian (Local Time Scrubbing) duy trÃ¬ 20 FPS á»•n Ä‘á»‹nh, mÆ°á»£t mÃ  bÃ¡m sÃ¡t tá»«ng mili-giÃ¢y kÃ©o chuá»™t cá»§a ngÆ°á»i dÃ¹ng.
+
+---
+**AI Subtitle Studio v1.0.0** â€“ *XÃ³a bá» thao tÃ¡c thá»«a, tá»‘i Ä‘a hÃ³a sá»©c máº¡nh cá»§a AI.*
