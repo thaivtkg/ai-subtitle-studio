@@ -1,43 +1,79 @@
 class Theme:
-    # 1. Colors - Background & Surfaces
-    BG_APP = "#0B1020"              # Nền sâu nhất (Deep Navy)
-    SURFACE = "#111827"             # Bề mặt Panel (Sidebar, Stack)
-    SURFACE_ELEVATED = "#172033"    # Bề mặt nổi (Card)
-    SURFACE_SOFT = "#1B263B"        # Nền input, hover nhẹ
-    BORDER = "#273247"              # Viền phân cách chung
+    # ---------------------------------------------------------
+    # COLOR PALETTE (Dark Mode chuẩn mực)
+    # ---------------------------------------------------------
+    BG_APP = "#0D111A"             # Nền tổng thể
+    SURFACE = "#151A27"            # Nền của Card/Box
+    SURFACE_ELEVATED = "#1E2536"   # Nền sáng khi hover/chọn
+    SURFACE_SOFT = "#262E40"       # Nền nhẹ cho phân cách
+    
+    PRIMARY_PURPLE = "#6366F1"     # Màu chủ đạo chính
+    CYAN = "#38BDF8"               # Màu nhấn/Focus
+    SUCCESS = "#10B981"            # Xanh lá (Thành công/Lưu)
+    DANGER = "#EF4444"             # Đỏ (Lỗi/Xóa)
+    
+    TEXT_PRIMARY = "#F8FAFC"       # Chữ chính (Trắng)
+    TEXT_SECONDARY = "#94A3B8"     # Chữ phụ (Xám nhạt)
+    TEXT_MUTED = "#64748B"         # Chữ mờ
+    TEXT_DISABLED = "#475569"      # Chữ vô hiệu hóa
+    BORDER = "#1E293B"             # Viền phân cách
 
-    # 2. Colors - Accents & States
-    PRIMARY_GRADIENT = "qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #8B5CF6, stop: 1 #EC4899)"
-    PRIMARY_PURPLE = "#8B5CF6"
-    PRIMARY_PINK = "#EC4899"
-    CYAN = "#38BDF8"
-    SUCCESS = "#34D399"
-    WARNING = "#FBBF24"
-    DANGER = "#F43F5E"
-
-    # 3. Colors - Typography
-    TEXT_PRIMARY = "#F8FAFC"        # Chữ chính sáng rõ
-    TEXT_SECONDARY = "#CBD5E1"      # Chữ phụ (Sub-title)
-    TEXT_MUTED = "#94A3B8"          # Chữ ghi chú, label
-    TEXT_DISABLED = "#64748B"       # Trạng thái vô hiệu hóa
-
-    # 4. Global Stylesheet (Áp dụng cho toàn bộ App)
     @classmethod
     def get_global_stylesheet(cls):
         return f"""
-        /* 1. NỀN & TYPOGRAPHY CƠ BẢN */
+        /* 1. RESET CHUNG CHO MỌI WIDGET */
         QWidget {{
-            background-color: {cls.BG_APP}
-        QLabel, QCheckBox, QRadioButton {{
-            background: transparent;
-        }}
-;
-            color: {cls.TEXT_PRIMARY};
             font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
             font-size: 13px;
+            color: {cls.TEXT_PRIMARY};
+            background-color: transparent; /* Mặc định trong suốt để kế thừa từ MainWindow */
         }}
 
-        /* 2. GHOST BUTTONS (Không viền, chỉ hiện nền khi hover) */
+        /* Áp nền cho các container lớn để tránh bị trắng */
+        QMainWindow, QDialog, QDockWidget, QScrollArea, QStackedWidget {{
+            background-color: {cls.BG_APP};
+        }}
+
+        /* 2. TAB WIDGETS (Sửa lỗi nền trắng của Tab pane) */
+        QTabWidget::pane {{
+            border-top: 1px solid {cls.BORDER};
+            background-color: {cls.BG_APP};
+        }}
+        QTabBar::tab {{
+            background-color: {cls.BG_APP};
+            color: {cls.TEXT_SECONDARY};
+            padding: 8px 16px;
+            border: none;
+            font-weight: bold;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {cls.SURFACE};
+            color: {cls.PRIMARY_PURPLE};
+            border-bottom: 2px solid {cls.PRIMARY_PURPLE};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background-color: {cls.SURFACE_ELEVATED};
+        }}
+
+        /* 3. GROUPBOX (Bọc ngoài cấu hình) */
+        QGroupBox {{
+            background-color: {cls.SURFACE};
+            border: 1px solid {cls.BORDER};
+            border-radius: 6px;
+            margin-top: 20px;
+            padding-top: 15px;
+            font-weight: bold;
+            color: {cls.CYAN};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+            color: {cls.CYAN};
+        }}
+
+        /* 4. GHOST BUTTONS */
         QPushButton {{
             background-color: transparent;
             color: {cls.TEXT_PRIMARY};
@@ -53,83 +89,26 @@ class Theme:
         QPushButton:pressed {{
             background-color: {cls.SURFACE_ELEVATED};
         }}
-        
-        /* Nút Primary (Được phép có màu nền để call-to-action) */
         QPushButton#btn_primary {{
             background-color: {cls.PRIMARY_PURPLE};
             color: #FFFFFF;
             border: none;
         }}
         QPushButton#btn_primary:hover {{
-            background-color: #7b4dff; /* Sáng hơn chút */
+            background-color: #4F46E5;
+        }}
+        QPushButton#btn_secondary {{
+            background-color: {cls.SURFACE_ELEVATED};
+            color: {cls.TEXT_PRIMARY};
+            border: 1px solid {cls.BORDER};
+        }}
+        QPushButton#btn_secondary:hover {{
+            border-color: {cls.CYAN};
         }}
 
-        /* 3. TÀNG HÌNH QSPLITTER (Biến mất, chỉ hiện Cyan khi hover) */
-        QSplitter::handle {{
-            background-color: transparent;
-            margin: 1px 0px;
-        }}
-        QSplitter::handle:hover {{
-            background-color: {cls.CYAN};
-        }}
-        QSplitter::handle:horizontal {{
-            width: 3px;
-        }}
-        QSplitter::handle:vertical {{
-            height: 3px;
-        }}
-
-        /* 4. SCROLLBAR SIÊU MỎNG (Phong cách macOS/Web) */
-        QScrollBar:vertical {{
-            border: none;
-            background: transparent;
-            width: 8px;
-            margin: 0px 0px 0px 0px;
-        }}
-        QScrollBar::handle:vertical {{
-            background: #333333;
-            min-height: 20px;
-            border-radius: 4px;
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background: #555555;
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            border: none;
-            background: none;
-            height: 0px;
-        }}
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-            background: none;
-        }}
-
-        /* Scrollbar Ngang */
-        QScrollBar:horizontal {{
-            border: none;
-            background: transparent;
-            height: 8px;
-            margin: 0px 0px 0px 0px;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: #333333;
-            min-width: 20px;
-            border-radius: 4px;
-        }}
-        QScrollBar::handle:horizontal:hover {{
-            background: #555555;
-        }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            border: none;
-            background: none;
-            width: 0px;
-        }}
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-            background: none;
-        }}
-
-        /* 5. TEXT INPUTS & DROPDOWNS (Đơn giản hóa viền) */
+        /* 5. TEXT INPUTS & DROPDOWNS */
         QLineEdit, QTextEdit, QComboBox, QSpinBox {{
-            background-color: {cls.SURFACE};
+            background-color: {cls.SURFACE_ELEVATED};
             color: {cls.TEXT_PRIMARY};
             border: 1px solid {cls.BORDER};
             border-radius: 4px;
@@ -138,76 +117,12 @@ class Theme:
         }}
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
             border: 1px solid {cls.CYAN};
-            background-color: {cls.SURFACE_ELEVATED};
-        }}
-
-        QToolTip {{
-            background-color: {cls.SURFACE_ELEVATED};
-            color: {cls.TEXT_PRIMARY};
-            border: 1px solid {cls.BORDER};
-            padding: 4px;
-            border-radius: 4px;
-        }}
-
-        /* 6. TABS & GROUP BOXES */
-        QTabWidget::pane {{
-            border: 1px solid {cls.BORDER};
-            background-color: {cls.BG_APP};
-            border-radius: 4px;
-        }}
-        QTabBar::tab {{
-            background-color: {cls.SURFACE_ELEVATED};
-            color: {cls.TEXT_SECONDARY};
-            padding: 8px 16px;
-            border: 1px solid {cls.BORDER};
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            margin-right: 2px;
-        }}
-        QTabBar::tab:selected {{
-            background-color: {cls.PRIMARY_PURPLE};
-            color: {cls.TEXT_PRIMARY};
-            font-weight: bold;
-        }}
-        QTabBar::tab:hover:!selected {{
             background-color: {cls.SURFACE_SOFT};
         }}
-        
-        QGroupBox {{
-            border: 1px solid {cls.BORDER};
-            border-radius: 6px;
-            margin-top: 12px;
-            background-color: transparent;
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 0 4px;
-            color: {cls.TEXT_SECONDARY};
-            left: 8px;
-        }}
 
-        
-        /* 6. GROUPBOX, CHECKBOX & SCROLLAREA (Sửa lỗi nền trắng Windows) */
-        QGroupBox {{
-            background-color: transparent;
-            border: 1px solid {cls.BORDER};
-            border-radius: 6px;
-            margin-top: 14px;
-            font-weight: bold;
-            color: {cls.TEXT_SECONDARY};
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            left: 10px;
-            padding: 0 5px;
-            color: {cls.CYAN};
-        }}
+        /* 6. CHECKBOX & RADIO */
         QCheckBox, QRadioButton {{
             color: {cls.TEXT_PRIMARY};
-            background-color: transparent;
             spacing: 8px;
         }}
         QCheckBox::indicator, QRadioButton::indicator {{
@@ -215,16 +130,38 @@ class Theme:
             height: 16px;
             border: 1px solid {cls.BORDER};
             border-radius: 3px;
-            background-color: {cls.SURFACE};
+            background-color: {cls.SURFACE_ELEVATED};
         }}
         QCheckBox::indicator:checked {{
             background-color: {cls.CYAN};
             border: 1px solid {cls.CYAN};
         }}
-        QScrollArea, QScrollArea > QWidget > QWidget {{
-            background-color: {cls.BG_APP};
-            border: none;
-        }}
-        
 
+        /* 7. SCROLLBARS TÀNG HÌNH */
+        QScrollBar:vertical, QScrollBar:horizontal {{
+            border: none;
+            background: transparent;
+            margin: 0px;
+        }}
+        QScrollBar:vertical {{ width: 8px; }}
+        QScrollBar:horizontal {{ height: 8px; }}
+        QScrollBar::handle {{
+            background: #333333;
+            border-radius: 4px;
+        }}
+        QScrollBar::handle:hover {{ background: #555555; }}
+        QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
+            background: none; border: none;
+        }}
+
+        /* 8. QSPLITTER TÀNG HÌNH */
+        QSplitter::handle {{
+            background-color: transparent;
+            margin: 1px 0px;
+        }}
+        QSplitter::handle:hover {{
+            background-color: {cls.CYAN};
+        }}
+        QSplitter::handle:horizontal {{ width: 3px; }}
+        QSplitter::handle:vertical {{ height: 3px; }}
         """
