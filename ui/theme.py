@@ -148,4 +148,44 @@ class Theme:
             padding: 4px;
             border-radius: 4px;
         }}
+
+        /* 6. TABS & GROUP BOXES */
+        QTabWidget::pane {{
+            border: 1px solid {cls.BORDER};
+            background-color: {cls.BG_APP};
+            border-radius: 4px;
+        }}
+        QTabBar::tab {{
+            background-color: {cls.SURFACE_ELEVATED};
+            color: {cls.TEXT_SECONDARY};
+            padding: 8px 16px;
+            border: 1px solid {cls.BORDER};
+            border-bottom: none;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            margin-right: 2px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {cls.PRIMARY_PURPLE};
+            color: {cls.TEXT_PRIMARY};
+            font-weight: bold;
+        }}
+        QTabBar::tab:hover:!selected {{
+            background-color: {cls.SURFACE_SOFT};
+        }}
+        
+        QGroupBox {{
+            border: 1px solid {cls.BORDER};
+            border-radius: 6px;
+            margin-top: 12px;
+            background-color: transparent;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 0 4px;
+            color: {cls.TEXT_SECONDARY};
+            left: 8px;
+        }}
+
         """
