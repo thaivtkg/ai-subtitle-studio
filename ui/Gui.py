@@ -533,7 +533,9 @@ class MainWindow(QMainWindow):
         self.generation_dock.setMaximumWidth(390)
         self.generation_dock.setStyleSheet(f"""
             QDockWidget {{
-                color: {Theme.TEXT_PRIMARY};
+                color: {Theme.TEXT_PRIMARY    background-color: {Theme.BG_APP    background-color: {Theme.BG_APP};
+};
+};
                 font-weight: bold;
             }}
             QDockWidget::title {{

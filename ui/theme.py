@@ -188,4 +188,43 @@ class Theme:
             left: 8px;
         }}
 
+        
+        /* 6. GROUPBOX, CHECKBOX & SCROLLAREA (Sửa lỗi nền trắng Windows) */
+        QGroupBox {{
+            background-color: transparent;
+            border: 1px solid {cls.BORDER};
+            border-radius: 6px;
+            margin-top: 14px;
+            font-weight: bold;
+            color: {cls.TEXT_SECONDARY};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+            color: {cls.CYAN};
+        }}
+        QCheckBox, QRadioButton {{
+            color: {cls.TEXT_PRIMARY};
+            background-color: transparent;
+            spacing: 8px;
+        }}
+        QCheckBox::indicator, QRadioButton::indicator {{
+            width: 16px;
+            height: 16px;
+            border: 1px solid {cls.BORDER};
+            border-radius: 3px;
+            background-color: {cls.SURFACE};
+        }}
+        QCheckBox::indicator:checked {{
+            background-color: {cls.CYAN};
+            border: 1px solid {cls.CYAN};
+        }}
+        QScrollArea, QScrollArea > QWidget > QWidget {{
+            background-color: {cls.BG_APP};
+            border: none;
+        }}
+        
+
         """
