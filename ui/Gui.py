@@ -1305,8 +1305,9 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def create_nav_button(self, text, page_index):
-        icon = text.split('  ')[0].strip() if '  ' in text else text
-        tooltip = text.split('  ')[1].strip() if '  ' in text else text
+        parts = text.split(maxsplit=1)
+        icon = parts[0] if parts else text
+        tooltip = parts[1] if len(parts) > 1 else text
         btn = QPushButton(icon)
         btn.setToolTip(tooltip)
         btn.setFixedSize(44, 44)
@@ -1340,8 +1341,9 @@ class MainWindow(QMainWindow):
             self.tour_anchor_registry.register(anchor_id, widget)
 
     def create_side_action_button(self, text, slot):
-        icon = text.split('  ')[0].strip() if '  ' in text else text
-        tooltip = text.split('  ')[1].strip() if '  ' in text else text
+        parts = text.split(maxsplit=1)
+        icon = parts[0] if parts else text
+        tooltip = parts[1] if len(parts) > 1 else text
         btn = QPushButton(icon)
         btn.setToolTip(tooltip)
         btn.setFixedSize(44, 44)
@@ -1431,11 +1433,11 @@ class MainWindow(QMainWindow):
 
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
-                btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: bold; font-size: 12px; border: none; }}")
+                btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; border-radius: 8px; font-weight: bold; font-size: 20px; border: none; }}")
                 clean_title = btn.toolTip().strip()
                 self.lbl_page_title.setText(clean_title)
             else:
-                btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+                btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; border-radius: 8px; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1608,7 +1610,8 @@ class MainWindow(QMainWindow):
         if countdown:
             text += f" · {countdown}"
         if label is not None:
-            label.setText(text)
+            label.setToolTip(text)
+            label.setText("✔️")
 
         project_service = getattr(self, "project_service", None)
         project = getattr(project_service, "current_project", None)
