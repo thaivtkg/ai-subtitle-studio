@@ -136,4 +136,12 @@ class Theme:
             border: 1px solid {cls.CYAN};
             background-color: {cls.SURFACE_ELEVATED};
         }}
+
+        QToolTip {
+            background-color: {cls.SURFACE_ELEVATED};
+            color: {cls.TEXT_PRIMARY};
+            border: 1px solid {cls.BORDER};
+            padding: 4px;
+            border-radius: 4px;
+        }
         """

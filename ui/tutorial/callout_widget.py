@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.tutorial.models import CalloutSpec
+from ui.theme import Theme
 
 
 class TourCalloutWidget(QWidget):
@@ -14,10 +15,10 @@ class TourCalloutWidget(QWidget):
         self.setObjectName("tour_callout_widget")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            "#tour_callout_widget { background: white; border: 1px solid #dcdcdc; "
-            "border-radius: 8px; }"
-            "QLabel#callout_title { font-weight: bold; font-size: 14px; }"
-            "QLabel#callout_body { font-size: 12px; color: #333333; }"
+            f"#tour_callout_widget {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; "
+            f"border-radius: 8px; }}"
+            f"QLabel#callout_title {{ font-weight: bold; font-size: 14px; color: {Theme.TEXT_PRIMARY}; }}"
+            f"QLabel#callout_body {{ font-size: 12px; color: {Theme.TEXT_SECONDARY}; }}"
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -75,7 +76,9 @@ class TourCalloutWidget(QWidget):
         for name, text, slot, primary in specs:
             button = QPushButton(text)
             if primary:
-                button.setStyleSheet("background-color: #007bff; color: white;")
+                button.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; color: {Theme.TEXT_PRIMARY}; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
+            else:
+                button.setStyleSheet(f"background-color: transparent; color: {Theme.TEXT_SECONDARY}; border: 1px solid {Theme.BORDER}; padding: 6px 12px; border-radius: 4px;")
             button.clicked.connect(slot)
             self.button_layout.addWidget(button)
             self.buttons[name] = button
