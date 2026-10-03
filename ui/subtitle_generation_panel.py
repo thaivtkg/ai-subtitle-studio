@@ -97,12 +97,27 @@ class SubtitleGenerationPanel(QWidget):
         )
         settings_layout.addWidget(title)
 
+        def _kv_row(label_text, widget):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 2, 0, 2)
+            row.setSpacing(8)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; font-weight: 500; border: none;")
+            lbl.setFixedWidth(100)
+            row.addWidget(lbl)
+            row.addWidget(widget, stretch=1)
+            return row
+
         mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Task Mode:"))
+        mode_layout.setContentsMargins(0, 4, 0, 4)
+        mode_lbl = QLabel("Task Mode:")
+        mode_lbl.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; font-weight: 500; border: none;")
+        mode_lbl.setFixedWidth(100)
+        mode_layout.addWidget(mode_lbl)
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        self.cmb_mode.setStyleSheet("font-weight: bold;")
+        self.cmb_mode.setStyleSheet("font-weight: 600;")
         mode_layout.addWidget(self.cmb_mode, stretch=1)
         settings_layout.addLayout(mode_layout)
         # Adapt Qt's int payload to the no-argument policy slot.
@@ -111,32 +126,83 @@ class SubtitleGenerationPanel(QWidget):
         )
         self.cmb_mode.currentIndexChanged.connect(self._on_task_mode_changed)
 
-        self.model_group = QGroupBox("Model Configuration")
+        self.model_group = QGroupBox("MODEL CONFIGURATION")
+        self.model_group.setStyleSheet(
+            f"""
+            QGroupBox {{
+                border: none;
+                border-top: 1px solid {Theme.BORDER};
+                border-radius: 0px;
+                margin-top: 14px;
+                padding-top: 14px;
+                font-size: 11px;
+                font-weight: 700;
+                color: {Theme.CYAN};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 0px;
+                padding: 0 4px 0 0;
+                color: {Theme.CYAN};
+            }}
+            QGroupBox:disabled {{
+                color: {Theme.TEXT_DISABLED};
+                border-color: {Theme.BORDER};
+            }}
+            """
+        )
         model_layout = QVBoxLayout(self.model_group)
+        model_layout.setContentsMargins(0, 6, 0, 6)
+        model_layout.setSpacing(8)
+
         self.cmb_model = QComboBox()
         self.cmb_model.addItems(
             ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
         )
         self.cmb_model.setCurrentText("large-v3-turbo")
-        model_layout.addWidget(QLabel("Model Size:"))
-        model_layout.addWidget(self.cmb_model)
+        model_layout.addLayout(_kv_row("Model Size:", self.cmb_model))
 
         self.cmb_compute = QComboBox()
         self.cmb_compute.addItems(["float16", "int8_float16", "int8"])
         self.cmb_compute.setCurrentText("float16")
-        model_layout.addWidget(QLabel("Compute Type:"))
-        model_layout.addWidget(self.cmb_compute)
+        model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute))
+
         self.lbl_effective_compute = QLabel("Effective: not run")
+        self.lbl_effective_compute.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none; margin-left: 108px;")
         model_layout.addWidget(self.lbl_effective_compute)
 
         self.cmb_language = QComboBox()
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
-        model_layout.addWidget(QLabel("Language:"))
-        model_layout.addWidget(self.cmb_language)
+        model_layout.addLayout(_kv_row("Language:", self.cmb_language))
         settings_layout.addWidget(self.model_group)
 
-        advanced_group = QGroupBox("Advanced Settings")
+        advanced_group = QGroupBox("ADVANCED SETTINGS")
+        advanced_group.setStyleSheet(
+            f"""
+            QGroupBox {{
+                border: none;
+                border-top: 1px solid {Theme.BORDER};
+                border-radius: 0px;
+                margin-top: 14px;
+                padding-top: 14px;
+                font-size: 11px;
+                font-weight: 700;
+                color: {Theme.CYAN};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 0px;
+                padding: 0 4px 0 0;
+                color: {Theme.CYAN};
+            }}
+            """
+        )
         advanced_layout = QVBoxLayout(advanced_group)
+        advanced_layout.setContentsMargins(0, 6, 0, 6)
+        advanced_layout.setSpacing(8)
+
         self.chk_vad = QCheckBox("Enable VAD (lọc khoảng lặng)")
         self.chk_vad.setChecked(True)
         advanced_layout.addWidget(self.chk_vad)
@@ -145,36 +211,27 @@ class SubtitleGenerationPanel(QWidget):
         self.chk_fix_overlap.setChecked(True)
         advanced_layout.addWidget(self.chk_fix_overlap)
 
-        overlap_layout = QHBoxLayout()
-        overlap_layout.addWidget(QLabel("Overlap gap:"))
         self.spin_overlap_gap = QSpinBox()
         self.spin_overlap_gap.setRange(1, 500)
         self.spin_overlap_gap.setValue(50)
         self.spin_overlap_gap.setSuffix(" ms")
-        overlap_layout.addWidget(self.spin_overlap_gap)
-        advanced_layout.addLayout(overlap_layout)
+        advanced_layout.addLayout(_kv_row("Overlap gap:", self.spin_overlap_gap))
 
         self.chk_word_timestamps = QCheckBox("Word-level Timestamps")
         advanced_layout.addWidget(self.chk_word_timestamps)
 
-        batch_mode_layout = QHBoxLayout()
         self.cmb_batch_mode = QComboBox()
         self.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
         self.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
-        batch_mode_layout.addWidget(QLabel("Batch Mode:"))
-        batch_mode_layout.addWidget(self.cmb_batch_mode, stretch=1)
-        advanced_layout.addLayout(batch_mode_layout)
+        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode))
 
-        batch_layout = QHBoxLayout()
         self.spin_batch_val = QSpinBox()
         self.spin_batch_val.setRange(1, 30)
         self.spin_batch_val.setValue(5)
         self.spin_batch_val.setSuffix(" min")
         # Compatibility alias for existing timing-panel integrations.
         self.spin_batch = self.spin_batch_val
-        batch_layout.addWidget(QLabel("Batch Size:"))
-        batch_layout.addWidget(self.spin_batch_val)
-        advanced_layout.addLayout(batch_layout)
+        advanced_layout.addLayout(_kv_row("Batch Size:", self.spin_batch_val))
         self.cmb_batch_mode.currentIndexChanged.connect(
             lambda _index: self._on_batch_mode_changed()
         )
@@ -186,9 +243,16 @@ class SubtitleGenerationPanel(QWidget):
         settings_layout.addWidget(advanced_group)
 
         context_layout = QHBoxLayout()
+        context_layout.setContentsMargins(0, 6, 0, 0)
         self.lbl_context_status = QLabel("Context: not configured")
+        self.lbl_context_status.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none;")
         self.lbl_context_status.setWordWrap(True)
         self.btn_context_edit = QPushButton("Edit context")
+        self.btn_context_edit.setStyleSheet(
+            f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY}; "
+            f"border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 4px 10px; font-size: 11px; }} "
+            f"QPushButton:hover {{ border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}"
+        )
         self.context_status_label = self.lbl_context_status
         self.edit_context_btn = self.btn_context_edit
         context_layout.addWidget(self.lbl_context_status, stretch=1)
@@ -199,33 +263,64 @@ class SubtitleGenerationPanel(QWidget):
         layout.addWidget(self.settings_scroll_area, stretch=1)
 
         self.action_footer = QWidget(self)
+        self.action_footer.setStyleSheet(f"background-color: {Theme.BG_APP}; border-top: 1px solid {Theme.BORDER}; padding-top: 6px;")
         footer_layout = QVBoxLayout(self.action_footer)
-        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setContentsMargins(0, 4, 0, 0)
         footer_layout.setSpacing(8)
 
         self.lbl_status = QLabel("Ready")
         self._configure_status_label(self.lbl_status)
         self.lbl_status.setAlignment(Qt.AlignCenter)
-        self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED};")
+        self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 12px; border: none;")
         footer_layout.addWidget(self.lbl_status)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(
+            f"QProgressBar {{ background: {Theme.SURFACE_SOFT}; border: none; border-radius: 2px; }} "
+            f"QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 2px; }}"
+        )
         footer_layout.addWidget(self.progress_bar)
 
         button_layout = QHBoxLayout()
-        self.btn_generate = QPushButton("Generate")
+        button_layout.setSpacing(8)
+        self.btn_generate = QPushButton("✨ Generate Subtitle")
+        self.btn_generate.setFixedHeight(36)
         self.btn_generate.setObjectName("btn_primary")
+        self.btn_generate.setStyleSheet(
+            f"QPushButton {{ background-color: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; font-weight: 700; "
+            f"font-size: 13px; border-radius: 6px; border: none; }} "
+            f"QPushButton:hover {{ background-color: #4F46E5; }} "
+            f"QPushButton:disabled {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_DISABLED}; }}"
+        )
+
         self.btn_resume = QPushButton("Resume")
+        self.btn_resume.setFixedHeight(36)
         self.btn_resume.setObjectName("btn_warning")
+        self.btn_resume.setStyleSheet(
+            f"QPushButton {{ background-color: {Theme.WARNING}; color: #0D111A; font-weight: 700; "
+            f"font-size: 13px; border-radius: 6px; border: none; }} "
+            f"QPushButton:hover {{ background-color: #D97706; }}"
+        )
         self.btn_resume.setVisible(False)
+
         self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setFixedHeight(36)
         self.btn_cancel.setObjectName("btn_danger")
+        self.btn_cancel.setStyleSheet(
+            f"QPushButton {{ background-color: transparent; color: {Theme.DANGER}; font-weight: 600; "
+            f"font-size: 13px; border-radius: 6px; border: 1px solid {Theme.DANGER}; }} "
+            f"QPushButton:hover {{ background-color: {Theme.DANGER}; color: #FFFFFF; }} "
+            f"QPushButton:disabled {{ border-color: {Theme.BORDER}; color: {Theme.TEXT_DISABLED}; }}"
+        )
         self.btn_cancel.setEnabled(False)
-        button_layout.addWidget(self.btn_generate)
-        button_layout.addWidget(self.btn_resume)
-        button_layout.addWidget(self.btn_cancel)
+
+        button_layout.addWidget(self.btn_generate, stretch=3)
+        button_layout.addWidget(self.btn_resume, stretch=3)
+        button_layout.addWidget(self.btn_cancel, stretch=1)
         footer_layout.addLayout(button_layout)
         layout.addWidget(self.action_footer, stretch=0)
 
