@@ -27,7 +27,11 @@ class Theme:
         return f"""
         /* 1. NỀN & TYPOGRAPHY CƠ BẢN */
         QWidget {{
-            background-color: {cls.BG_APP};
+            background-color: {cls.BG_APP}
+        QLabel, QCheckBox, QRadioButton {
+            background: transparent;
+        }
+;
             color: {cls.TEXT_PRIMARY};
             font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
             font-size: 13px;

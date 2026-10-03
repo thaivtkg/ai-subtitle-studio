@@ -17,8 +17,8 @@ class TourCalloutWidget(QWidget):
         self.setStyleSheet(
             f"#tour_callout_widget {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; "
             f"border-radius: 8px; }}"
-            f"QLabel#callout_title {{ font-weight: bold; font-size: 14px; color: {Theme.TEXT_PRIMARY}; }}"
-            f"QLabel#callout_body {{ font-size: 12px; color: {Theme.TEXT_SECONDARY}; }}"
+            f"QLabel#callout_title {{ font-weight: bold; font-size: 14px; background: transparent; color: {Theme.TEXT_PRIMARY}; }}"
+            f"QLabel#callout_body {{ font-size: 12px; background: transparent; color: {Theme.TEXT_SECONDARY}; }}"
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
