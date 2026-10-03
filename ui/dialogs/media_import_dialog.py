@@ -72,7 +72,7 @@ def translate_error(error: MediaImportError) -> str:
 class MediaImportDialog(QDialog):
     def __init__(self, service, parent=None, mode=MODE_NEW_PROJECT):
         super().__init__(parent)
-        self.setStyleSheet(Theme.get_global_stylesheet())
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY}; }} QPushButton {{ font-weight: 600; }}")
         if mode not in {MODE_NEW_PROJECT, MODE_QUEUE}:
             raise ValueError(f"Unsupported media import mode: {mode}")
         self.service = service
