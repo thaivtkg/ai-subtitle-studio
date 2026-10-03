@@ -294,68 +294,62 @@ class MainWindow(QMainWindow):
         # ========================================================
         self.sidebar = QFrame()
         self.sidebar.setObjectName("SidebarFrame")
-        self.sidebar.setFixedWidth(230)
-        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.BG_APP}; border: none; }}")
+        self.sidebar.setFixedWidth(64)
+        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: {Theme.BG_APP}; border: none; border-right: 1px solid {Theme.BORDER}; }}")
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 14, 10, 14)
-        sidebar_layout.setSpacing(4)
+        sidebar_layout.setContentsMargins(4, 14, 4, 14)
+        sidebar_layout.setSpacing(10)
+        sidebar_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
-        logo_lbl = QLabel("✨ AI Subtitle Studio")
-        logo_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; padding: 4px 4px 10px 4px; border: none;")
+        logo_lbl = QLabel("✨")
+        logo_lbl.setAlignment(Qt.AlignCenter)
+        logo_lbl.setStyleSheet(f"font-size: 24px; color: {Theme.CYAN}; border: none;")
         sidebar_layout.addWidget(logo_lbl)
+        sidebar_layout.addSpacing(15)
 
-        # Đổi tên nhóm và trỏ sự kiện về các hàm Project (Sprint 7)
-        sidebar_layout.addWidget(QLabel("QUẢN LÝ DỰ ÁN", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none; padding-top: 4px;"))
-        
-        # Nút Tạo Dự Án 
         self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
-        self.btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 6px; color: {Theme.CYAN}; text-align: left; padding-left: 10px; font-weight: bold; font-size: 11px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
+        self.btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 8px; color: {Theme.CYAN}; font-weight: bold; font-size: 20px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
         sidebar_layout.addWidget(self.btn_new_project)
+        
         sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
         sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
-        self.btn_recovery_center = self.create_side_action_button(
-            "🛟  Recovery Center", self.open_recovery_center
-        )
+        
+        self.btn_recovery_center = self.create_side_action_button("🛟  Recovery Center", self.open_recovery_center)
         self.btn_recovery_center.setObjectName("btn_recovery_center")
         sidebar_layout.addWidget(self.btn_recovery_center)
         
-        # Nút Mở Dự Án 
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
-        
-        # Nút Lưu Dự Án
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
-        self.canonical_save_status_label = QLabel("Auto Save · Saved")
-        self.canonical_save_status_label.setStyleSheet(
-            f"color: {Theme.TEXT_SECONDARY}; padding: 4px; border: none;"
-        )
+        
+        self.canonical_save_status_label = QLabel("✔️")
+        self.canonical_save_status_label.setToolTip("Auto Save Status")
+        self.canonical_save_status_label.setAlignment(Qt.AlignCenter)
+        self.canonical_save_status_label.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 14px; border: none; margin: 4px 0;")
         sidebar_layout.addWidget(self.canonical_save_status_label)
         
-        # Nút Clear Queue
         sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
 
-        sidebar_layout.addWidget(QLabel("WORKFLOW SURFACES", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none; padding-top: 8px;"))
+        sidebar_layout.addStretch()
+        
         self.nav_btns = {}
+        # CHUẨN HÓA LẠI CHỈ SỐ NAVIGATION
         sidebar_layout.addWidget(self.create_nav_button("📊  Dashboard", 0))
         sidebar_layout.addWidget(self.create_nav_button("🎬  Studio Workspace", 1))
-
-        sidebar_layout.addWidget(self.create_nav_button("📋  Queue & Output", 3))
-        sidebar_layout.addWidget(self.create_nav_button("📦  Draft Center", 4))
-        sidebar_layout.addWidget(self.create_nav_button("🚀  Export Center", 5))
-
-        sidebar_layout.addStretch()
-        sidebar_layout.addWidget(QLabel("HỆ THỐNG", styleSheet=f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: bold; border: none;"))
-        sidebar_layout.addWidget(self.create_nav_button("⚙  Settings Center", 6))
-        sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 7))
-        # Thêm nút Model Manager & Glossary Manager
+        sidebar_layout.addWidget(self.create_nav_button("📋  Queue & Output", 2))
+        sidebar_layout.addWidget(self.create_nav_button("📦  Draft Center", 3))
+        sidebar_layout.addWidget(self.create_nav_button("🚀  Export Center", 4))
+        
+        sidebar_layout.addSpacing(10)
+        sidebar_layout.addWidget(self.create_nav_button("⚙️  Settings Center", 5))
+        sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 6))
         sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
         sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
 
         root_layout.addWidget(self.sidebar)
 
-        # --- BỔ SUNG: KHỞI TẠO SIDEBAR INDICATOR ---
         self.sidebar_indicator = QFrame(self.sidebar)
-        self.sidebar_indicator.setFixedSize(4, 20) 
-        self.sidebar_indicator.setStyleSheet(f"background-color: {Theme.CYAN}; border-radius: 2px;")
+        self.sidebar_indicator.setFixedSize(3, 24) 
+        self.sidebar_indicator.setStyleSheet(f"background-color: {Theme.CYAN}; border-radius: 1px;")
         
         self.indicator_anim = QPropertyAnimation(self.sidebar_indicator, b"pos")
         self.indicator_anim.setDuration(160)
@@ -1311,9 +1305,12 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def create_nav_button(self, text, page_index):
-        btn = QPushButton(text)
-        btn.setFixedHeight(32)
-        btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 10px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        icon = text.split('  ')[0].strip() if '  ' in text else text
+        tooltip = text.split('  ')[1].strip() if '  ' in text else text
+        btn = QPushButton(icon)
+        btn.setToolTip(tooltip)
+        btn.setFixedSize(44, 44)
+        btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; border-radius: 8px; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
         btn.clicked.connect(lambda: self.switch_page(page_index))
         self.nav_btns[page_index] = btn
         return btn
@@ -1343,9 +1340,12 @@ class MainWindow(QMainWindow):
             self.tour_anchor_registry.register(anchor_id, widget)
 
     def create_side_action_button(self, text, slot):
-        btn = QPushButton(text)
-        btn.setFixedHeight(30)
-        btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.BORDER}; border-radius: 6px; color: {Theme.TEXT_PRIMARY}; text-align: left; padding-left: 10px; font-weight: 600; font-size: 11px; }} QPushButton:hover {{ border: 1px solid {Theme.CYAN}; color: {Theme.CYAN}; background-color: {Theme.SURFACE_SOFT}; }}")
+        icon = text.split('  ')[0].strip() if '  ' in text else text
+        tooltip = text.split('  ')[1].strip() if '  ' in text else text
+        btn = QPushButton(icon)
+        btn.setToolTip(tooltip)
+        btn.setFixedSize(44, 44)
+        btn.setStyleSheet(f"QPushButton {{ background-color: transparent; border-radius: 8px; color: {Theme.TEXT_SECONDARY}; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ border: 1px solid {Theme.CYAN}; color: {Theme.CYAN}; background-color: {Theme.SURFACE_SOFT}; }}")
         btn.clicked.connect(slot)
         return btn
 
@@ -1407,7 +1407,7 @@ class MainWindow(QMainWindow):
 
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
-            self.bottom_frame.setVisible(original_index != 1)
+            self.bottom_frame.setVisible(original_index == 2)
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if original_index == 3:
@@ -1418,7 +1418,7 @@ class MainWindow(QMainWindow):
         target_btn = self.nav_btns.get(original_index)
         if target_btn:
             target_y = target_btn.y() + (target_btn.height() - self.sidebar_indicator.height()) // 2
-            target_pos = QPoint(4, target_y)
+            target_pos = QPoint(2, target_y)
             
             if not self.sidebar_indicator.isVisible() or self.sidebar_indicator.pos() == QPoint(0,0):
                 self.sidebar_indicator.move(target_pos)
@@ -1432,7 +1432,7 @@ class MainWindow(QMainWindow):
         for idx, btn in self.nav_btns.items():
             if idx == original_index:
                 btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: bold; font-size: 12px; border: none; }}")
-                clean_title = re.sub(r"[^\w\s]", "", btn.text()).strip()
+                clean_title = btn.toolTip().strip()
                 self.lbl_page_title.setText(clean_title)
             else:
                 btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; text-align: left; padding-left: 12px; border-radius: 6px; font-weight: 600; font-size: 12px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
