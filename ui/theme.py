@@ -28,9 +28,9 @@ class Theme:
         /* 1. NỀN & TYPOGRAPHY CƠ BẢN */
         QWidget {{
             background-color: {cls.BG_APP}
-        QLabel, QCheckBox, QRadioButton {
+        QLabel, QCheckBox, QRadioButton {{
             background: transparent;
-        }
+        }}
 ;
             color: {cls.TEXT_PRIMARY};
             font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
