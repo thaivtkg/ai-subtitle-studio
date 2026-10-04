@@ -3,7 +3,11 @@ from ui.core.liquid_theme_engine import LiquidThemeEngine
 
 
 class Theme:
-    """Backward-compatible color aliases. Values live in ui.core.design_tokens (single source)."""
+    """Backward-compatible color aliases.
+
+    Values live in ui.core.design_tokens (single source of truth).
+    Stylesheets are compiled by ui.core.liquid_theme_engine.LiquidThemeEngine.
+    """
 
     BG_APP = C.BG_APP
     SURFACE = C.SURFACE
