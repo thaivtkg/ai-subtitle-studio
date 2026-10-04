@@ -306,78 +306,64 @@ class MainWindow(QMainWindow):
         self.sidebar_scroll.setFixedWidth(64)
         self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.sidebar_scroll.setStyleSheet(f"QScrollArea {{ border: none; border-right: 1px solid {Theme.BORDER}; background-color: {Theme.BG_APP}; }}")
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("SidebarFrame")
-        self.sidebar.setStyleSheet(f"#SidebarFrame {{ background-color: transparent; border: none; }}")
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(4, 14, 4, 14)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setContentsMargins(4, 12, 4, 12)
+        sidebar_layout.setSpacing(8)
         sidebar_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
+        # 1. Brand Logo
         logo_lbl = QLabel("✨")
         logo_lbl.setAlignment(Qt.AlignCenter)
-        logo_lbl.setStyleSheet(f"font-size: 24px; color: {Theme.CYAN}; border: none;")
+        logo_lbl.setProperty("class", "Accent")
         sidebar_layout.addWidget(logo_lbl)
-        sidebar_layout.addSpacing(15)
+        sidebar_layout.addSpacing(4)
 
-        self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project)
-        self.btn_new_project.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; border: 1px solid {Theme.CYAN}; border-radius: 8px; color: {Theme.CYAN}; font-weight: bold; font-size: 20px; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; }}")
+        # 2. Primary Project Action (Pill Action)
+        self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project, is_primary=True)
         sidebar_layout.addWidget(self.btn_new_project)
-        
-        sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
-        sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
-        
+        sidebar_layout.addSpacing(6)
+
+        # 3. Primary Navigation (Liquid Nav)
+        self.nav_btns = {}
+        from ui.liquid_nav import LiquidNavWidget
+        self.liquid_nav = LiquidNavWidget()
+        self.liquid_nav.tab_changed.connect(self.switch_page)
+        sidebar_layout.addWidget(self.liquid_nav)
+
+        sidebar_layout.addStretch()
+
+        # 4. Utility & Tool Actions (Bottom Group)
         self.btn_recovery_center = self.create_side_action_button("🛟  Recovery Center", self.open_recovery_center)
         self.btn_recovery_center.setObjectName("btn_recovery_center")
         sidebar_layout.addWidget(self.btn_recovery_center)
-        
+
+        sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
+        sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
         sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
         sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
-        
+
         self.canonical_save_status_label = QLabel("✔️")
         self.canonical_save_status_label.setToolTip("Auto Save Status")
         self.canonical_save_status_label.setAlignment(Qt.AlignCenter)
-        self.canonical_save_status_label.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 14px; border: none; margin: 4px 0;")
+        self.canonical_save_status_label.setProperty("class", "Caption")
         sidebar_layout.addWidget(self.canonical_save_status_label)
-        
-        sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
 
-        sidebar_layout.addStretch()
-        
-        self.nav_btns = {}
-        # CHUẨN HÓA LẠI CHỈ SỐ NAVIGATION
-        sidebar_layout.addWidget(self.create_nav_button("📊  Dashboard", 0))
-        sidebar_layout.addWidget(self.create_nav_button("🎬  Studio Workspace", 1))
-        sidebar_layout.addWidget(self.create_nav_button("📋  Queue & Output", 2))
-        sidebar_layout.addWidget(self.create_nav_button("📦  Draft Center", 3))
-        sidebar_layout.addWidget(self.create_nav_button("🚀  Export Center", 4))
-        
-        sidebar_layout.addSpacing(10)
-        sidebar_layout.addWidget(self.create_nav_button("⚙️  Settings Center", 5))
-        sidebar_layout.addWidget(self.create_nav_button("❓  Help Center", 6))
-        sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
-        sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
+        sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
+        sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
+        sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
 
         self.sidebar_scroll.setWidget(self.sidebar)
         self.sidebar_dock.setWidget(self.sidebar_scroll)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar_dock)
-
-        self.sidebar_indicator = QFrame(self.sidebar)
-        self.sidebar_indicator.setFixedSize(3, 24) 
-        self.sidebar_indicator.setStyleSheet(f"background-color: {Theme.CYAN}; border-radius: 1px;")
-        
-        self.indicator_anim = QPropertyAnimation(self.sidebar_indicator, b"pos")
-        self.indicator_anim.setDuration(160)
-        self.indicator_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         # ========================================================
         # 2. RIGHT WORKSPACE AREA
         # ========================================================
         right_area = QWidget()
         right_area.setObjectName("RightArea")
-        right_area.setStyleSheet(f"#RightArea {{ background-color: {Theme.BG_APP}; }}")
         right_layout = QVBoxLayout(right_area)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -385,12 +371,11 @@ class MainWindow(QMainWindow):
         topbar = QFrame()
         topbar.setObjectName("TopbarFrame")
         topbar.setFixedHeight(42)
-        topbar.setStyleSheet(f"#TopbarFrame {{ background-color: {Theme.BG_APP}; border: none; }}")
         topbar_layout = QHBoxLayout(topbar)
         topbar_layout.setContentsMargins(14, 0, 10, 0)
 
         self.lbl_page_title = QLabel("Dashboard")
-        self.lbl_page_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; border: none;")
+        self.lbl_page_title.setProperty("class", "SectionTitle")
         topbar_layout.addWidget(self.lbl_page_title)
         topbar_layout.addStretch()
 
@@ -398,21 +383,26 @@ class MainWindow(QMainWindow):
         self.lbl_project_status.setObjectName("lbl_project_status")
         self.lbl_project_status.setFixedWidth(280)
         self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.lbl_project_status.setStyleSheet(
-            f"font-size: 11px; color: {Theme.TEXT_SECONDARY}; border: none;"
-        )
+        self.lbl_project_status.setProperty("class", "Caption")
         topbar_layout.addWidget(self.lbl_project_status)
+
+        self.btn_theme = QPushButton("🔲")
+        self.btn_theme.setToolTip("Đổi Theme (Zen / Liquid Glass)")
+        self.btn_theme.setFixedSize(36, 30)
+        self.btn_theme.setProperty("variant", "window")
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        topbar_layout.addWidget(self.btn_theme)
 
         self.btn_minimize = QPushButton("—")
         self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
         self.btn_minimize.setFixedSize(36, 30)
-        self.btn_minimize.setStyleSheet(f"QPushButton {{ background: {Theme.BG_APP}; color: {Theme.TEXT_SECONDARY}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        self.btn_minimize.setProperty("variant", "window")
         self.btn_minimize.clicked.connect(self.showMinimized)
 
         self.btn_close = QPushButton("✕")
         self.btn_close.setToolTip("Đóng ứng dụng")
         self.btn_close.setFixedSize(36, 30)
-        self.btn_close.setStyleSheet(f"QPushButton {{ background: {Theme.BG_APP}; color: {Theme.DANGER}; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; }} QPushButton:hover {{ background: {Theme.DANGER}; color: #FFFFFF; }}")
+        self.btn_close.setProperty("variant", "window-close")
         self.btn_close.clicked.connect(self.close)
 
         topbar_layout.addWidget(self.btn_minimize)
@@ -439,12 +429,10 @@ class MainWindow(QMainWindow):
 
         # Splitter dọc: top workspace (Editor + Video) trên Timeline
         self.workspace_vertical_splitter = QSplitter(Qt.Vertical)
-        self.workspace_vertical_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; height: 2px; }}")
         self.work_splitter = self.workspace_vertical_splitter
 
         # --- TOP WORKSPACE: EDITOR 68% / VIDEO 32% ---
         self.top_horizontal_splitter = QSplitter(Qt.Horizontal)
-        self.top_horizontal_splitter.setStyleSheet(f"QSplitter::handle {{ background: {Theme.BORDER}; width: 2px; }}")
         self.top_splitter = self.top_horizontal_splitter
         self.sub_editor = SubtitleEditorWidget()
         self.sub_editor.project_service = self.project_service
@@ -455,7 +443,6 @@ class MainWindow(QMainWindow):
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         self.video_player = VideoPlayerWidget()
-        self.video_player.setStyleSheet(f"VideoPlayerWidget {{ background-color: {Theme.BG_APP}; }}")
         self.video_player.setMinimumHeight(200)
         
         self.tm_matches_panel = TMMatchesPanel()
@@ -532,56 +519,10 @@ class MainWindow(QMainWindow):
         self.generation_dock.setFeatures(
             QDockWidget.DockWidgetMovable
         )
-        self.generation_dock.setMinimumWidth(350)
-        self.generation_dock.setMaximumWidth(390)
-        self.generation_dock.setStyleSheet(f"""
-            QDockWidget {{
-                background-color: {Theme.BG_APP};
-                color: {Theme.TEXT_PRIMARY};
-                font-weight: bold;
-            }}
-            QDockWidget::title {{
-                background: {Theme.SURFACE};
-                padding: 6px 10px;
-                border-bottom: 1px solid {Theme.BORDER};
-            }}
-        """)
+        self.generation_dock.setMinimumWidth(340)
+        self.generation_dock.setMaximumWidth(400)
         dock_tabs = QTabWidget()
-        dock_tabs.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border-top: 1px solid {Theme.BORDER};
-                background: {Theme.BG_APP};
-            }}
-            QTabBar::tab {{
-                background: {Theme.BG_APP};
-                color: {Theme.TEXT_SECONDARY};
-                padding: 8px 16px;
-                border: none;
-                margin: 0px;
-                min-height: 22px;
-                font-weight: bold;
-            }}
-            QTabBar::tab:selected {{
-                background: {Theme.PRIMARY_PURPLE};
-                color: #FFFFFF;
-                font-weight: bold;
-                margin: 0px;
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {Theme.SURFACE_SOFT};
-            }}
-            QTabBar::scroller {{
-                width: 28px;
-            }}
-            QTabBar QToolButton {{
-                background: {Theme.SURFACE};
-                border: none;
-                color: {Theme.TEXT_PRIMARY};
-            }}
-            QTabBar QToolButton:hover {{
-                background: {Theme.SURFACE_SOFT};
-            }}
-        """)
+        dock_tabs.setObjectName("DockTabs")
         dock_tabs.addTab(self.generation_panel, "✨ Generate")
         dock_tabs.addTab(self.tm_matches_panel, "🧠 TM Matches")
         self.context_panel = TranscriptionContextPanel(self)
@@ -602,6 +543,13 @@ class MainWindow(QMainWindow):
         dock_tabs.addTab(self.quality_inspector_panel, "🔎 Quality")
         dock_tabs.addTab(self.log_box, "📜 Log")
         self.dock_tabs = dock_tabs
+
+        # CẤY KÍNH LỎNG VÀO TABS CỦA AI WORKSPACE
+        try:
+            from ui.liquid_physics import LiquidOverlayWidget
+            self._dock_tab_liquid = LiquidOverlayWidget(self.dock_tabs.tabBar())
+        except Exception:
+            pass
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
         self.inspector_panel.style_changed.connect(self._on_subtitle_style_changed)
         self.video_player.subtitle_placement_committed.connect(
@@ -616,26 +564,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
 
         self.btn_drawer_toggle = QPushButton(self)
-        self.btn_drawer_toggle.setFixedSize(34, 64)
-        self.btn_drawer_toggle.setIconSize(QSize(18, 18))
+        self.btn_drawer_toggle.setFixedSize(32, 64)
+        self.btn_drawer_toggle.setIconSize(QSize(16, 16))
         self.btn_drawer_toggle.setCursor(Qt.PointingHandCursor)
-        self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
-        self.btn_drawer_toggle.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Theme.SURFACE_ELEVATED};
-                border: 1px solid {Theme.BORDER};
-                border-right: none;
-                border-top-left-radius: 5px;
-                border-bottom-left-radius: 5px;
-                color: {Theme.TEXT_SECONDARY};
-                font-weight: bold;
-                font-size: 16px;
-            }}
-            QPushButton:hover {{
-                background-color: {Theme.SURFACE_SOFT};
-                color: {Theme.TEXT_PRIMARY};
-            }}
-        """)
+        self.btn_drawer_toggle.setToolTip("Ẩn/Hiện AI Workspace")
+        self.btn_drawer_toggle.setProperty("variant", "handle")
         self.btn_drawer_toggle.clicked.connect(self._toggle_ai_drawer)
         self.generation_dock.visibilityChanged.connect(self._sync_drawer_toggle_state)
         self._drawer_target_width = 350
@@ -669,14 +602,14 @@ class MainWindow(QMainWindow):
         timeline_container_layout.setSpacing(0)
 
         timeline_toolbar = QFrame()
+        timeline_toolbar.setObjectName("TimelineToolbar")
         timeline_toolbar.setFixedHeight(34)
-        timeline_toolbar.setStyleSheet(f"QFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; border-bottom: 1px solid {Theme.BORDER}; }}")
         tl_tb_layout = QHBoxLayout(timeline_toolbar)
         tl_tb_layout.setContentsMargins(8, 0, 8, 0)
         tl_tb_layout.setSpacing(8)
 
         lbl_tl = QLabel("⏱️ TIMELINE")
-        lbl_tl.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {Theme.CYAN};")
+        lbl_tl.setProperty("class", "SectionTitle")
         tl_tb_layout.addWidget(lbl_tl)
         tl_tb_layout.addStretch()
 
@@ -693,7 +626,6 @@ class MainWindow(QMainWindow):
         self.timeline_dock.setObjectName("TimelineDock")
         self.timeline_dock.setTitleBarWidget(QWidget())
         self.timeline_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        self.timeline_dock.setStyleSheet(f"QDockWidget {{ background-color: {Theme.BG_APP}; border: none; }}")
         self.timeline_dock.setWidget(self.timeline_container)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.timeline_dock)
         self.timeline_dock.hide()
@@ -743,6 +675,16 @@ class MainWindow(QMainWindow):
 
         # Page 6 (Index 5): Settings Center
         self.page_settings = SettingsCenterPage()
+
+        # NỘI SOI VÀ CẤY KÍNH LỎNG VÀO CÁC DANH MỤC TRONG SETTINGS
+        try:
+            from ui.liquid_physics import LiquidOverlayWidget
+            from PySide6.QtWidgets import QListWidget
+            self._settings_liquids = []
+            for child in self.page_settings.findChildren(QListWidget):
+                self._settings_liquids.append(LiquidOverlayWidget(child))
+        except Exception:
+            pass
         self.page_settings.motion_preset_combo.currentIndexChanged.connect(self.on_motion_preset_changed)
         self.page_settings.appear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.disappear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
@@ -834,14 +776,13 @@ class MainWindow(QMainWindow):
         self.bottom_frame = QFrame()
         self.bottom_frame.setObjectName("BottomFrame")
         self.bottom_frame.setMinimumHeight(96)
-        self.bottom_frame.setStyleSheet(f"#BottomFrame {{ background-color: {Theme.SURFACE}; border-top: 1px solid {Theme.BORDER}; }}")
-        bottom_layout = QVBoxLayout(self.bottom_frame) # <-- Sửa ở đây
+        bottom_layout = QVBoxLayout(self.bottom_frame)
         bottom_layout.setContentsMargins(14, 10, 14, 10)
         bottom_layout.setSpacing(10)
 
         out_row = QHBoxLayout()
         lbl_out = QLabel("📁 Output:")
-        lbl_out.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-weight: bold; font-size: 11px;")
+        lbl_out.setProperty("class", "Caption")
         
         self.out_input = QLineEdit()
         self.out_input.setMinimumHeight(30)
@@ -860,16 +801,15 @@ class MainWindow(QMainWindow):
         prog_action_row = QHBoxLayout()
         prog_action_row.setSpacing(12)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setMinimumHeight(12)
+        self.progress_bar.setMinimumHeight(8)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_APP}; border: none; border-radius: 4px; }} QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 4px; }}")
 
         self.progress_anim = QPropertyAnimation(self.progress_bar, b"value")
         self.progress_anim.setDuration(400)
 
         self.lbl_speed_eta = QLabel("Speed: 0.0x | ETA: --")
-        self.lbl_speed_eta.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px; font-weight: bold;")
+        self.lbl_speed_eta.setProperty("class", "Caption")
 
         self.start_btn = QPushButton("▶ Start Queue")
         self.start_btn.setMinimumHeight(32)
@@ -1354,8 +1294,8 @@ class MainWindow(QMainWindow):
         tooltip = parts[1] if len(parts) > 1 else text
         btn = QPushButton(icon)
         btn.setToolTip(tooltip)
-        btn.setFixedSize(44, 44)
-        btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; border-radius: 8px; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        btn.setFixedSize(36, 36)
+        btn.setProperty("variant", "icon")
         btn.clicked.connect(lambda: self.switch_page(page_index))
         self.nav_btns[page_index] = btn
         return btn
@@ -1376,7 +1316,7 @@ class MainWindow(QMainWindow):
         bindings = (
             ("dashboard.root", self.page_dashboard),
             ("dashboard.new_project", self.btn_new_project),
-            ("navigation.video_workspace", self.nav_btns[1]),
+            ("navigation.video_workspace", self.liquid_nav),
             ("workspace.subtitle_editor", self.sub_editor),
             ("workspace.ai_generation", self.generation_panel),
             ("export_center.root", self.page_export),
@@ -1384,14 +1324,13 @@ class MainWindow(QMainWindow):
         for anchor_id, widget in bindings:
             self.tour_anchor_registry.register(anchor_id, widget)
 
-    def create_side_action_button(self, text, slot):
+    def create_side_action_button(self, text, slot, is_primary=False):
         parts = text.split(maxsplit=1)
-        icon = parts[0] if parts else text
         tooltip = parts[1] if len(parts) > 1 else text
-        btn = QPushButton(icon)
+        btn = QPushButton(text)
         btn.setToolTip(tooltip)
-        btn.setFixedSize(44, 44)
-        btn.setStyleSheet(f"QPushButton {{ background-color: transparent; border-radius: 8px; color: {Theme.TEXT_SECONDARY}; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ border: 1px solid {Theme.CYAN}; color: {Theme.CYAN}; background-color: {Theme.SURFACE_SOFT}; }}")
+        btn.setFixedSize(36, 36)
+        btn.setProperty("variant", "primary" if is_primary else "icon")
         btn.clicked.connect(slot)
         return btn
 
@@ -1441,12 +1380,30 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
+    
+    def toggle_theme(self):
+        if not hasattr(self, "is_liquid_theme"):
+            self.is_liquid_theme = False
+        
+        from ui.theme import Theme
+        self.is_liquid_theme = not self.is_liquid_theme
+        
+        if self.is_liquid_theme:
+            self.setStyleSheet(Theme.get_liquid_stylesheet())
+            self.btn_theme.setText("💧")
+            self.append_log("🔮 Đã chuyển sang giao diện Liquid Glass")
+        else:
+            self.setStyleSheet(Theme.get_global_stylesheet())
+            self.btn_theme.setText("🔲")
+            self.append_log("🔲 Đã chuyển sang giao diện Zen Mặc định")
+
     def switch_page(self, original_index):
         self._active_nav_index = original_index
-        if original_index == 6 and hasattr(self, "page_help"):
+        target_stack_index = 6 if original_index == 7 else original_index
+        if original_index in (6, 7) and hasattr(self, "page_help"):
             self.page_help.refresh()
             
-        self.stack.setCurrentIndex(original_index)
+        self.stack.setCurrentIndex(target_stack_index)
         
         if original_index == 5:
             self._sync_debug_logging_controls()
@@ -1464,42 +1421,30 @@ class MainWindow(QMainWindow):
             default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
-        # Cập nhật UI Sidebar
-        target_btn = self.nav_btns.get(original_index)
-        if target_btn:
-            target_y = target_btn.y() + (target_btn.height() - self.sidebar_indicator.height()) // 2
-            target_pos = QPoint(2, target_y)
-            
-            if not self.sidebar_indicator.isVisible() or self.sidebar_indicator.pos() == QPoint(0,0):
-                self.sidebar_indicator.move(target_pos)
-                self.sidebar_indicator.show()
-            else:
-                self.indicator_anim.stop()
-                self.indicator_anim.setStartValue(self.sidebar_indicator.pos())
-                self.indicator_anim.setEndValue(target_pos)
-                self.indicator_anim.start()
-
-        for idx, btn in self.nav_btns.items():
-            if idx == original_index:
-                btn.setStyleSheet(f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.CYAN}; border-radius: 8px; font-weight: bold; font-size: 20px; border: none; }}")
-                clean_title = btn.toolTip().strip()
-                self.lbl_page_title.setText(clean_title)
-            else:
-                btn.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_SECONDARY}; border-radius: 8px; font-weight: 600; font-size: 20px; border: none; }} QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; }}")
+        # Cập nhật UI Sidebar (Liquid Nav)
+        if hasattr(self, 'liquid_nav'):
+            self.liquid_nav.set_active_tab(original_index)
+            for t in self.liquid_nav.tabs:
+                if t["id"] == original_index:
+                    self.lbl_page_title.setText(t["tooltip"])
+                    break
+        else:
+            for idx, btn in self.nav_btns.items():
+                if idx == original_index:
+                    clean_title = btn.toolTip().strip()
+                    self.lbl_page_title.setText(clean_title)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.accept()
-            self.setStyleSheet(f"QMainWindow {{ background-color: {Theme.BG_APP}; border: 2px solid {Theme.PRIMARY_PURPLE}; }}")
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet(Theme.get_global_stylesheet())
         event.accept()
 
     def dropEvent(self, event):
-        self.setStyleSheet(Theme.get_global_stylesheet())
+        event.accept()
         urls = event.mimeData().urls()
         valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
         valid_files = [u.toLocalFile() for u in urls if u.toLocalFile().lower().endswith(valid_exts)]
