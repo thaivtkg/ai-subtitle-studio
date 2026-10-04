@@ -8,7 +8,7 @@ from ui.core.design_tokens import RadiusToken
 class LiquidNavWidget(QWidget):
     """
     Thanh điều hướng Sidebar với hiệu ứng trượt Liquid Glass (Hooke's Law Spring Physics).
-    Chứa các nút QPushButton thực tế để tương thích tuyệt đối với Anchor Registry và Tests.
+    Phân bổ khoảng cách thoáng đãng, icon to rõ, chống hiện tượng ghost-hover ra ngoài vùng nút.
     """
 
     tab_changed = Signal(int)
@@ -33,8 +33,8 @@ class LiquidNavWidget(QWidget):
         self.btn_map = {}
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 0, 6, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(14)  # Dàn đều khoảng cách giữa các icon
         layout.setAlignment(Qt.AlignHCenter)
 
         for idx, icon, tooltip in self.primary_tabs:
@@ -53,9 +53,9 @@ class LiquidNavWidget(QWidget):
         self.btn_map[2] = self.btn_map[3]
 
         self.current_index = 0
-        self._blob_height = 38.0
-        self._blob_y = 19.0
-        self._target_y = 19.0
+        self._blob_height = 44.0
+        self._blob_y = 26.0
+        self._target_y = 26.0
         self._velocity_y = 0.0
         self._velocity_h = 0.0
 
@@ -71,7 +71,8 @@ class LiquidNavWidget(QWidget):
     def _create_tab_button(self, idx: int, icon: str, tooltip: str) -> QPushButton:
         btn = QPushButton(icon, self)
         btn.setObjectName(f"nav_btn_{idx}")
-        btn.setFixedSize(44, 38)
+        btn.setFixedSize(48, 44)  # Nút to hơn và rõ nét hơn
+        btn.setFont(QFont("Segoe UI Emoji", 15))
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.PointingHandCursor)
         btn.setProperty("variant", "liquid-nav-btn")
@@ -81,13 +82,11 @@ class LiquidNavWidget(QWidget):
         return btn
 
     def eventFilter(self, watched, event):
+        # Chỉ kích hoạt hover pill khi chuột thực sự nằm trên một nút điều hướng
         if event.type() == QEvent.Enter:
             self._hover_target_y = float(watched.y() + (watched.height() / 2.0))
         elif event.type() == QEvent.Leave:
             self._hover_target_y = -100.0
-        elif event.type() == QEvent.MouseMove:
-            pos = watched.mapTo(self, event.pos())
-            self._hover_target_y = float(pos.y())
         return super().eventFilter(watched, event)
 
     def _on_btn_clicked(self, idx: int):
@@ -103,11 +102,11 @@ class LiquidNavWidget(QWidget):
         # Fallback estimation before layout is painted
         for i, (tab_id, _, _) in enumerate(self.primary_tabs):
             if tab_id == idx:
-                return float(i * 44 + 19)
+                return float(i * 58 + 26)
         for i, (tab_id, _, _) in enumerate(self.system_tabs):
             if tab_id == idx:
-                return float(self.height() - (len(self.system_tabs) - i) * 44 + 19)
-        return 19.0
+                return float(self.height() - (len(self.system_tabs) - i) * 58 + 26)
+        return 26.0
 
     def set_active_tab(self, page_id: int):
         self.current_index = page_id
@@ -120,10 +119,6 @@ class LiquidNavWidget(QWidget):
             btn.setProperty("active", "true" if is_active else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        self._hover_target_y = float(event.pos().y())
-        super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
         self._hover_target_y = -100.0
@@ -141,7 +136,7 @@ class LiquidNavWidget(QWidget):
         target = self._get_button_center_y(self.current_index)
         if target > 0:
             self._target_y = target
-            if abs(self._blob_y - 19.0) < 1.0:
+            if abs(self._blob_y - 26.0) < 1.0:
                 self._blob_y = target
 
     def _update_physics(self):
@@ -160,17 +155,17 @@ class LiquidNavWidget(QWidget):
         self._blob_y += self._velocity_y
 
         # Độ co giãn theo vận tốc (Squash & Stretch)
-        target_height = 38.0 + min(6.0, abs(self._velocity_y) * 0.7)
+        target_height = 44.0 + min(6.0, abs(self._velocity_y) * 0.7)
         force_h = (target_height - self._blob_height) * spring_k
         self._velocity_h = (self._velocity_h + force_h) * damping
         self._blob_height += self._velocity_h
 
         # Hover tracking
         if self._hover_target_y >= 0:
-            self._hover_y += (self._hover_target_y - self._hover_y) * 0.25
-            self._hover_alpha += (35.0 - self._hover_alpha) * 0.2
+            self._hover_y += (self._hover_target_y - self._hover_y) * 0.28
+            self._hover_alpha += (40.0 - self._hover_alpha) * 0.22
         else:
-            self._hover_alpha += (0.0 - self._hover_alpha) * 0.2
+            self._hover_alpha += (0.0 - self._hover_alpha) * 0.22
 
         self.update()
 
@@ -180,23 +175,23 @@ class LiquidNavWidget(QWidget):
 
         radius = float(RadiusToken.CONTROL)  # 8px Control Geometry
 
-        # 1. Hover Pill (Bóng mờ trượt nhẹ theo chuột)
+        # 1. Hover Pill (Bóng mờ trượt chính xác theo nút đang hover)
         if self._hover_alpha > 1:
-            hover_rect = QRectF(6, self._hover_y - 19, self.width() - 12, 38)
+            hover_rect = QRectF(4, self._hover_y - 22, 48, 44)
             painter.setBrush(QColor(255, 255, 255, int(self._hover_alpha)))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(hover_rect, radius, radius)
 
         # 2. Active Liquid Glass Blob (Khối kính lỏng đàn hồi trượt theo tab chọn)
         blob_rect = QRectF(
-            6,
+            4,
             self._blob_y - (self._blob_height / 2.0),
-            self.width() - 12,
+            48,
             self._blob_height,
         )
         grad = QLinearGradient(blob_rect.topLeft(), blob_rect.bottomRight())
-        grad.setColorAt(0.0, QColor(99, 102, 241, 150))  # Legacy Indigo
-        grad.setColorAt(1.0, QColor(56, 189, 248, 110))  # Cyan/Sky
+        grad.setColorAt(0.0, QColor(99, 102, 241, 160))  # Legacy Indigo
+        grad.setColorAt(1.0, QColor(56, 189, 248, 120))  # Cyan/Sky
         painter.setBrush(grad)
 
         pen = QPen(QColor(165, 180, 252, 140))  # Viền kính mờ

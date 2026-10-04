@@ -414,7 +414,7 @@ QPushButton[variant="liquid-nav-btn"] {
     border: none;
     border-radius: $RADIUS_CONTROL;
     color: $TEXT_SECONDARY;
-    font-size: 16px;
+    font-size: 20px;
     font-weight: 500;
     padding: 0px;
 }
@@ -488,13 +488,15 @@ QMenu {
 QMenu::item {
     background: transparent;
     padding: 6px $SPACE_MD;
+    margin: 1px 4px;
     border-radius: $RADIUS_INNER;
     color: $TEXT_PRIMARY;
     font-size: $FONT_BODY;
 }
 
 QMenu::item:selected {
-    background-color: $HOVER_OVERLAY;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
+    border: 1px solid rgba(165, 180, 252, 0.40);
     color: #FFFFFF;
 }
 
@@ -544,8 +546,31 @@ QComboBox::drop-down {
 QComboBox QAbstractItemView {
     background-color: $SURFACE_ELEVATED;
     border: 1px solid $BORDER;
-    selection-background-color: $PRIMARY;
+    border-radius: $RADIUS_CONTROL;
+    padding: $SPACE_XS;
     outline: 0px;
+    selection-background-color: transparent;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 6px $SPACE_SM;
+    margin: 1px 2px;
+    border-radius: $RADIUS_INNER;
+    color: $TEXT_SECONDARY;
+    min-height: 24px;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: $HOVER_OVERLAY;
+    color: $TEXT_PRIMARY;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
+    border: 1px solid rgba(165, 180, 252, 0.40);
+    border-radius: $RADIUS_INNER;
+    color: #FFFFFF;
+    font-weight: 600;
 }
 
 /* ==========================================================
@@ -622,27 +647,29 @@ QSlider::handle:horizontal:hover {
 /* ==========================================================
    10. LISTS, TABLES, PROGRESS BARS
    ========================================================== */
-QListWidget {
+QListWidget, QListView {
     background: transparent;
     border: none;
     outline: none;
 }
 
-QListWidget::item {
+QListWidget::item, QListView::item {
     padding: $SPACE_SM $SPACE_MD;
     margin-bottom: $SPACE_XS;
     border-radius: $RADIUS_CONTROL;
     color: $TEXT_SECONDARY;
 }
 
-QListWidget::item:hover {
+QListWidget::item:hover:!selected, QListView::item:hover:!selected {
     background-color: $HOVER_OVERLAY;
+    border: 1px solid $GLASS_EDGE;
     color: $TEXT_PRIMARY;
 }
 
-QListWidget::item:selected {
-    background-color: $SELECTED_SURFACE;
-    color: $TEXT_PRIMARY;
+QListWidget::item:selected, QListView::item:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
+    border: 1px solid rgba(165, 180, 252, 0.45);
+    color: #FFFFFF;
     font-weight: 600;
 }
 

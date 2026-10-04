@@ -313,21 +313,21 @@ class MainWindow(QMainWindow):
         # 1. Brand Logo
         logo_lbl = QLabel("✨")
         logo_lbl.setAlignment(Qt.AlignCenter)
-        logo_lbl.setFixedSize(40, 32)
+        logo_lbl.setFixedSize(48, 36)
         logo_lbl.setProperty("class", "Accent")
         sidebar_layout.addWidget(logo_lbl, alignment=Qt.AlignHCenter)
-        sidebar_layout.addSpacing(4)
+        sidebar_layout.addSpacing(6)
 
         # 2. Primary Project Action (New Project icon-only button)
         self.btn_new_project = QPushButton("＋")
         self.btn_new_project.setObjectName("btn_new_project")
-        self.btn_new_project.setFixedSize(40, 40)
+        self.btn_new_project.setFixedSize(48, 44)
         self.btn_new_project.setToolTip("Tạo Dự Án Mới")
         self.btn_new_project.setCursor(Qt.PointingHandCursor)
         self.btn_new_project.setProperty("variant", "primary")
         self.btn_new_project.clicked.connect(self.action_new_project)
         sidebar_layout.addWidget(self.btn_new_project, alignment=Qt.AlignHCenter)
-        sidebar_layout.addSpacing(6)
+        sidebar_layout.addSpacing(10)
 
         # 3. Liquid Navigation (Activity Bar - Liquid Glass Spring Physics)
         from ui.liquid_nav import LiquidNavWidget
@@ -717,15 +717,8 @@ class MainWindow(QMainWindow):
         # Page 6 (Index 5): Settings Center
         self.page_settings = SettingsCenterPage()
 
-        # NỘI SOI VÀ CẤY KÍNH LỎNG VÀO CÁC DANH MỤC TRONG SETTINGS
-        try:
-            from ui.liquid_physics import LiquidOverlayWidget
-            from PySide6.QtWidgets import QListWidget
-            self._settings_liquids = []
-            for child in self.page_settings.findChildren(QListWidget):
-                self._settings_liquids.append(LiquidOverlayWidget(child))
-        except Exception:
-            pass
+        # CẤY KÍNH LỎNG CHO TOÀN BỘ DANH SÁCH (QListWidget) TRONG ỨNG DỤNG
+        self._apply_liquid_to_all_listboxes()
         self.page_settings.motion_preset_combo.currentIndexChanged.connect(self.on_motion_preset_changed)
         self.page_settings.appear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
         self.page_settings.disappear_combo.currentIndexChanged.connect(self.apply_motion_config_to_player)
@@ -1485,6 +1478,23 @@ class MainWindow(QMainWindow):
                 btn.style().polish(btn)
                 if is_active and hasattr(self, 'lbl_page_title'):
                     self.lbl_page_title.setText(btn.toolTip().strip())
+
+        # Tự động cấy kính lỏng cho các danh sách trên trang mới
+        self._apply_liquid_to_all_listboxes()
+
+    def _apply_liquid_to_all_listboxes(self):
+        """Tự động cấy hiệu ứng kính lỏng đàn hồi cho toàn bộ QListWidget trong ứng dụng."""
+        try:
+            from ui.liquid_physics import apply_liquid_overlay
+            from PySide6.QtWidgets import QListWidget
+            if not hasattr(self, "_active_list_liquids"):
+                self._active_list_liquids = []
+            for child in self.findChildren(QListWidget):
+                overlay = apply_liquid_overlay(child)
+                if overlay:
+                    self._active_list_liquids.append(overlay)
+        except Exception:
+            pass
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
