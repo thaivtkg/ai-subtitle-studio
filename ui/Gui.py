@@ -329,33 +329,12 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_new_project, alignment=Qt.AlignHCenter)
         sidebar_layout.addSpacing(6)
 
-        # 3. Primary Navigation Items (Dashboard, Workspace, Queue, Drafts, Export)
-        self.nav_btns = {}
-        primary_tabs = [
-            (0, "▣", "Dashboard"),
-            (1, "🎬", "Studio Workspace"),
-            (3, "📋", "Queue & Output"),
-            (4, "📦", "Draft Center"),
-            (5, "🚀", "Export Center"),
-        ]
-        for page_idx, icon, tooltip in primary_tabs:
-            btn = self.create_nav_button(icon, tooltip, page_idx)
-            sidebar_layout.addWidget(btn, alignment=Qt.AlignHCenter)
-
-        # 4. Spacer between Primary and System Navigation
-        sidebar_layout.addStretch()
-
-        # 5. System Navigation Items (Settings, Help)
-        system_tabs = [
-            (6, "⚙", "Settings Center"),
-            (7, "?", "Help Center"),
-        ]
-        for page_idx, icon, tooltip in system_tabs:
-            btn = self.create_nav_button(icon, tooltip, page_idx)
-            sidebar_layout.addWidget(btn, alignment=Qt.AlignHCenter)
-
-        # Compatibility alias: index 2 maps to Queue button
-        self.nav_btns[2] = self.nav_btns[3]
+        # 3. Liquid Navigation (Activity Bar - Liquid Glass Spring Physics)
+        from ui.liquid_nav import LiquidNavWidget
+        self.liquid_nav = LiquidNavWidget(self.sidebar)
+        self.liquid_nav.tab_changed.connect(self.switch_page)
+        sidebar_layout.addWidget(self.liquid_nav, stretch=1, alignment=Qt.AlignHCenter)
+        self.nav_btns = self.liquid_nav.btn_map
 
         self.sidebar_scroll = self.sidebar  # Retain attribute for backward test compatibility
         self.sidebar_dock.setWidget(self.sidebar)
@@ -415,14 +394,11 @@ class MainWindow(QMainWindow):
         self.btn_tools_menu.setMenu(tools_menu)
         topbar_layout.addWidget(self.btn_tools_menu)
 
-        # Direct Recovery Center Button (Quick action, preserves test_UI10)
-        self.btn_recovery_center = QPushButton("🛟  Recovery Center")
+        # Direct Recovery Center Button (Preserves test_UI10 contract)
+        self.btn_recovery_center = QPushButton("🛟  Recovery Center", self)
         self.btn_recovery_center.setObjectName("btn_recovery_center")
-        self.btn_recovery_center.setFixedHeight(28)
-        self.btn_recovery_center.setProperty("variant", "secondary")
-        self.btn_recovery_center.setCursor(Qt.PointingHandCursor)
         self.btn_recovery_center.clicked.connect(self.open_recovery_center)
-        topbar_layout.addWidget(self.btn_recovery_center)
+        self.btn_recovery_center.hide()
 
         # Auto-Save status indicator
         self.canonical_save_status_label = QLabel("✔️")
@@ -435,32 +411,43 @@ class MainWindow(QMainWindow):
 
         self.lbl_project_status = QLabel("No Project")
         self.lbl_project_status.setObjectName("lbl_project_status")
-        self.lbl_project_status.setFixedWidth(260)
+        self.lbl_project_status.setMinimumWidth(80)
+        self.lbl_project_status.setMaximumWidth(180)
+        self.lbl_project_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_project_status.setProperty("class", "Caption")
         topbar_layout.addWidget(self.lbl_project_status)
 
+        # Dedicated Window Controls container with FIXED width to prevent squishing
+        window_controls = QWidget()
+        window_controls.setObjectName("WindowControls")
+        window_controls_layout = QHBoxLayout(window_controls)
+        window_controls_layout.setContentsMargins(0, 0, 0, 0)
+        window_controls_layout.setSpacing(4)
+
         self.btn_theme = QPushButton("🔲")
         self.btn_theme.setToolTip("Đổi Theme (Zen / Liquid Glass)")
-        self.btn_theme.setFixedSize(36, 30)
+        self.btn_theme.setFixedSize(32, 28)
         self.btn_theme.setProperty("variant", "window")
         self.btn_theme.clicked.connect(self.toggle_theme)
-        topbar_layout.addWidget(self.btn_theme)
+        window_controls_layout.addWidget(self.btn_theme)
 
         self.btn_minimize = QPushButton("—")
         self.btn_minimize.setToolTip("Thu nhỏ cửa sổ")
-        self.btn_minimize.setFixedSize(36, 30)
+        self.btn_minimize.setFixedSize(32, 28)
         self.btn_minimize.setProperty("variant", "window")
         self.btn_minimize.clicked.connect(self.showMinimized)
+        window_controls_layout.addWidget(self.btn_minimize)
 
         self.btn_close = QPushButton("✕")
         self.btn_close.setToolTip("Đóng ứng dụng")
-        self.btn_close.setFixedSize(36, 30)
+        self.btn_close.setFixedSize(32, 28)
         self.btn_close.setProperty("variant", "window-close")
         self.btn_close.clicked.connect(self.close)
+        window_controls_layout.addWidget(self.btn_close)
 
-        topbar_layout.addWidget(self.btn_minimize)
-        topbar_layout.addWidget(self.btn_close)
+        window_controls.setFixedWidth(108)
+        topbar_layout.addWidget(window_controls)
         right_layout.addWidget(topbar)
 
         # ========================================================
@@ -1485,6 +1472,10 @@ class MainWindow(QMainWindow):
             default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
+        # Cập nhật trạng thái active cho Liquid Navigation (Spring Physics)
+        if hasattr(self, 'liquid_nav'):
+            self.liquid_nav.set_active_tab(original_index)
+
         # Cập nhật trạng thái active cho Sidebar Navigation
         if hasattr(self, 'nav_btns'):
             for idx, btn in self.nav_btns.items():
@@ -1678,7 +1669,7 @@ class MainWindow(QMainWindow):
         project_label = getattr(self, "lbl_project_status", None)
         if project_label is not None:
             project_label.setToolTip(project_status)
-            available_width = project_label.contentsRect().width()
+            available_width = max(80, project_label.contentsRect().width())
             project_label.setText(
                 project_label.fontMetrics().elidedText(
                     project_status,

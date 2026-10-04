@@ -408,6 +408,41 @@ QPushButton[variant="handle"]:hover {
     color: $TEXT_PRIMARY;
 }
 
+/* Liquid Nav Buttons (Sidebar Activity Bar with Spring Physics Underlay) */
+QPushButton[variant="liquid-nav-btn"] {
+    background-color: transparent;
+    border: none;
+    border-radius: $RADIUS_CONTROL;
+    color: $TEXT_SECONDARY;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 0px;
+}
+
+QPushButton[variant="liquid-nav-btn"]:hover {
+    background-color: transparent;
+    border: none;
+    color: $TEXT_PRIMARY;
+}
+
+QPushButton[variant="liquid-nav-btn"]:pressed {
+    background-color: transparent;
+    border: none;
+    color: #FFFFFF;
+}
+
+QPushButton[variant="liquid-nav-btn"][active="true"] {
+    background-color: transparent;
+    border: none;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+
+QPushButton[variant="liquid-nav-btn"]:focus {
+    border: none;
+    outline: none;
+}
+
 /* Navigation item buttons (Sidebar Activity Bar - 8px Standard) */
 QPushButton[variant="nav-item"] {
     background-color: transparent;
