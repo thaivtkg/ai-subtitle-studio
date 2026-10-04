@@ -246,26 +246,6 @@ class SettingsCenterPage(QWidget):
 
         self.nav_list = QListWidget()
         self.nav_list.setFixedWidth(180)
-        self.nav_list.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {Theme.SURFACE};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 6px;
-                padding: 6px;
-                outline: none;
-            }}
-            QListWidget::item {{
-                color: {Theme.TEXT_SECONDARY};
-                padding: 10px;
-                border-radius: 4px;
-                font-weight: 600;
-            }}
-            QListWidget::item:selected {{
-                background-color: {Theme.SURFACE_SOFT};
-                color: {Theme.CYAN};
-                border-left: 3px solid {Theme.PRIMARY_PURPLE};
-            }}
-        """)
         for label in (
             "🤖 Whisper AI",
             "🎨 Kiểu phụ đề",
@@ -408,7 +388,7 @@ class SettingsCenterPage(QWidget):
                 ),
             ),
         ))
-
+        # Accessibility contrast rule for settings checkboxes (checked by test_settings_checkbox_contrast)
         self.setStyleSheet(f"""
             QCheckBox[settingsCheckbox="true"]:disabled {{
                 color: {Theme.TEXT_DISABLED};
@@ -423,7 +403,6 @@ class SettingsCenterPage(QWidget):
                 border: 1px solid #475569;
             }}
         """)
-
         self.scroll_area = QScrollArea()
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setWidgetResizable(True)

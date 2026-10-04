@@ -47,28 +47,7 @@ class SubtitleGenerationPanel(QWidget):
         self._connect_signals()
 
     def _setup_ui(self):
-        # The global theme styles normal inputs with a bright foreground but
-        # has no disabled-state rules. Keep the mode lock visible even when
-        # the panel is hosted inside a globally styled MainWindow.
-        self.setStyleSheet(
-            f"""
-            QGroupBox:disabled {{
-                color: {Theme.TEXT_DISABLED};
-                border-color: {Theme.BORDER};
-            }}
-            QGroupBox:disabled QLabel {{
-                color: {Theme.TEXT_DISABLED};
-            }}
-            QComboBox:disabled, QSpinBox:disabled {{
-                background-color: {Theme.SURFACE};
-                border: 1px solid {Theme.BORDER};
-                color: {Theme.TEXT_DISABLED};
-            }}
-            QCheckBox:disabled {{
-                color: {Theme.TEXT_DISABLED};
-            }}
-            """
-        )
+        # Panel uses global styling from LiquidThemeEngine
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -92,9 +71,7 @@ class SubtitleGenerationPanel(QWidget):
         settings_layout.setSpacing(12)
 
         title = QLabel("✨ Generate Subtitle")
-        title.setStyleSheet(
-            f"font-size: 16px; font-weight: bold; color: {Theme.TEXT_PRIMARY};"
-        )
+        title.setProperty("class", "SectionTitle")
         settings_layout.addWidget(title)
 
         def _kv_row(label_text, widget):
@@ -102,7 +79,7 @@ class SubtitleGenerationPanel(QWidget):
             row.setContentsMargins(0, 2, 0, 2)
             row.setSpacing(8)
             lbl = QLabel(label_text)
-            lbl.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; font-weight: 500; border: none;")
+            lbl.setProperty("class", "Caption")
             lbl.setFixedWidth(100)
             row.addWidget(lbl)
             row.addWidget(widget, stretch=1)
@@ -111,13 +88,12 @@ class SubtitleGenerationPanel(QWidget):
         mode_layout = QHBoxLayout()
         mode_layout.setContentsMargins(0, 4, 0, 4)
         mode_lbl = QLabel("Task Mode:")
-        mode_lbl.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; font-weight: 500; border: none;")
+        mode_lbl.setProperty("class", "Caption")
         mode_lbl.setFixedWidth(100)
         mode_layout.addWidget(mode_lbl)
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        self.cmb_mode.setStyleSheet("font-weight: 600;")
         mode_layout.addWidget(self.cmb_mode, stretch=1)
         settings_layout.addLayout(mode_layout)
         # Adapt Qt's int payload to the no-argument policy slot.
@@ -126,32 +102,7 @@ class SubtitleGenerationPanel(QWidget):
         )
         self.cmb_mode.currentIndexChanged.connect(self._on_task_mode_changed)
 
-        self.model_group = QGroupBox("MODEL CONFIGURATION")
-        self.model_group.setStyleSheet(
-            f"""
-            QGroupBox {{
-                border: none;
-                border-top: 1px solid {Theme.BORDER};
-                border-radius: 0px;
-                margin-top: 14px;
-                padding-top: 14px;
-                font-size: 11px;
-                font-weight: 700;
-                color: {Theme.CYAN};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 0px;
-                padding: 0 4px 0 0;
-                color: {Theme.CYAN};
-            }}
-            QGroupBox:disabled {{
-                color: {Theme.TEXT_DISABLED};
-                border-color: {Theme.BORDER};
-            }}
-            """
-        )
+        self.model_group = QGroupBox("Model Configuration")
         model_layout = QVBoxLayout(self.model_group)
         model_layout.setContentsMargins(0, 6, 0, 6)
         model_layout.setSpacing(8)
@@ -169,7 +120,7 @@ class SubtitleGenerationPanel(QWidget):
         model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute))
 
         self.lbl_effective_compute = QLabel("Effective: not run")
-        self.lbl_effective_compute.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none; margin-left: 108px;")
+        self.lbl_effective_compute.setProperty("class", "Caption")
         model_layout.addWidget(self.lbl_effective_compute)
 
         self.cmb_language = QComboBox()
@@ -177,28 +128,7 @@ class SubtitleGenerationPanel(QWidget):
         model_layout.addLayout(_kv_row("Language:", self.cmb_language))
         settings_layout.addWidget(self.model_group)
 
-        advanced_group = QGroupBox("ADVANCED SETTINGS")
-        advanced_group.setStyleSheet(
-            f"""
-            QGroupBox {{
-                border: none;
-                border-top: 1px solid {Theme.BORDER};
-                border-radius: 0px;
-                margin-top: 14px;
-                padding-top: 14px;
-                font-size: 11px;
-                font-weight: 700;
-                color: {Theme.CYAN};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 0px;
-                padding: 0 4px 0 0;
-                color: {Theme.CYAN};
-            }}
-            """
-        )
+        advanced_group = QGroupBox("Advanced Settings")
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setContentsMargins(0, 6, 0, 6)
         advanced_layout.setSpacing(8)
@@ -245,14 +175,10 @@ class SubtitleGenerationPanel(QWidget):
         context_layout = QHBoxLayout()
         context_layout.setContentsMargins(0, 6, 0, 0)
         self.lbl_context_status = QLabel("Context: not configured")
-        self.lbl_context_status.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none;")
+        self.lbl_context_status.setProperty("class", "Caption")
         self.lbl_context_status.setWordWrap(True)
         self.btn_context_edit = QPushButton("Edit context")
-        self.btn_context_edit.setStyleSheet(
-            f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY}; "
-            f"border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 4px 10px; font-size: 11px; }} "
-            f"QPushButton:hover {{ border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}"
-        )
+        self.btn_context_edit.setProperty("variant", "secondary")
         self.context_status_label = self.lbl_context_status
         self.edit_context_btn = self.btn_context_edit
         context_layout.addWidget(self.lbl_context_status, stretch=1)
@@ -263,7 +189,6 @@ class SubtitleGenerationPanel(QWidget):
         layout.addWidget(self.settings_scroll_area, stretch=1)
 
         self.action_footer = QWidget(self)
-        self.action_footer.setStyleSheet(f"background-color: {Theme.BG_APP}; border-top: 1px solid {Theme.BORDER}; padding-top: 6px;")
         footer_layout = QVBoxLayout(self.action_footer)
         footer_layout.setContentsMargins(0, 4, 0, 0)
         footer_layout.setSpacing(8)
@@ -271,7 +196,7 @@ class SubtitleGenerationPanel(QWidget):
         self.lbl_status = QLabel("Ready")
         self._configure_status_label(self.lbl_status)
         self.lbl_status.setAlignment(Qt.AlignCenter)
-        self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 12px; border: none;")
+        self.lbl_status.setProperty("class", "Caption")
         footer_layout.addWidget(self.lbl_status)
 
         self.progress_bar = QProgressBar()
@@ -279,43 +204,25 @@ class SubtitleGenerationPanel(QWidget):
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(4)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(
-            f"QProgressBar {{ background: {Theme.SURFACE_SOFT}; border: none; border-radius: 2px; }} "
-            f"QProgressBar::chunk {{ background: {Theme.PRIMARY_GRADIENT}; border-radius: 2px; }}"
-        )
         footer_layout.addWidget(self.progress_bar)
 
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
         self.btn_generate = QPushButton("✨ Generate Subtitle")
-        self.btn_generate.setFixedHeight(36)
+        self.btn_generate.setFixedHeight(34)
         self.btn_generate.setObjectName("btn_primary")
-        self.btn_generate.setStyleSheet(
-            f"QPushButton {{ background-color: {Theme.PRIMARY_PURPLE}; color: #FFFFFF; font-weight: 700; "
-            f"font-size: 13px; border-radius: 6px; border: none; }} "
-            f"QPushButton:hover {{ background-color: #4F46E5; }} "
-            f"QPushButton:disabled {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_DISABLED}; }}"
-        )
+        self.btn_generate.setProperty("variant", "primary")
 
         self.btn_resume = QPushButton("Resume")
-        self.btn_resume.setFixedHeight(36)
+        self.btn_resume.setFixedHeight(34)
         self.btn_resume.setObjectName("btn_warning")
-        self.btn_resume.setStyleSheet(
-            f"QPushButton {{ background-color: {Theme.WARNING}; color: #0D111A; font-weight: 700; "
-            f"font-size: 13px; border-radius: 6px; border: none; }} "
-            f"QPushButton:hover {{ background-color: #D97706; }}"
-        )
+        self.btn_resume.setProperty("variant", "warning")
         self.btn_resume.setVisible(False)
 
         self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setFixedHeight(36)
+        self.btn_cancel.setFixedHeight(34)
         self.btn_cancel.setObjectName("btn_danger")
-        self.btn_cancel.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {Theme.DANGER}; font-weight: 600; "
-            f"font-size: 13px; border-radius: 6px; border: 1px solid {Theme.DANGER}; }} "
-            f"QPushButton:hover {{ background-color: {Theme.DANGER}; color: #FFFFFF; }} "
-            f"QPushButton:disabled {{ border-color: {Theme.BORDER}; color: {Theme.TEXT_DISABLED}; }}"
-        )
+        self.btn_cancel.setProperty("variant", "danger")
         self.btn_cancel.setEnabled(False)
 
         button_layout.addWidget(self.btn_generate, stretch=3)

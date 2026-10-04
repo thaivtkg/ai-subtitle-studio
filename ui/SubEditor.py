@@ -100,19 +100,6 @@ class CurrentSubtitleEditor(QWidget):
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("Bản dịch...")
         self.text_edit.setFixedHeight(30)
-        self.text_edit.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {Theme.SURFACE_ELEVATED};
-                color: {Theme.TEXT_PRIMARY};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 4px;
-                padding: 2px 6px;
-                font-size: 13px;
-            }}
-            QTextEdit:focus {{
-                border-color: {Theme.CYAN};
-            }}
-        """)
         layout.addWidget(self.text_edit, stretch=1)
 
         # Hidden text_original for backward compatibility
@@ -289,35 +276,7 @@ class SubtitleEditorWidget(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(36) # Chiều cao hàng vừa vặn
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # Bắt buộc giãn tối đa
         
-        self.table.setStyleSheet(f"""
-            QTableWidget {{ 
-                background-color: {Theme.SURFACE}; 
-                color: {Theme.TEXT_PRIMARY}; 
-                border: none;
-                outline: none;
-            }}
-            QTableWidget:focus {{
-                border-top: 1px solid {Theme.PRIMARY_PURPLE};
-            }}
-            QTableWidget::item {{ 
-                border-bottom: 1px solid {Theme.BORDER}; 
-                padding: 4px 6px;
-            }}
-            QTableWidget::item:selected {{ 
-                background-color: {Theme.SURFACE_ELEVATED}; 
-                color: {Theme.TEXT_PRIMARY}; 
-                font-weight: bold;
-                border-left: 3px solid {Theme.CYAN};
-            }}
-            QHeaderView::section {{ 
-                background-color: {Theme.SURFACE_SOFT}; 
-                color: {Theme.TEXT_MUTED}; 
-                font-weight: bold; 
-                padding: 6px 8px; 
-                border: none; 
-                border-bottom: 1px solid {Theme.BORDER}; 
-            }}
-        """)
+
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
@@ -347,19 +306,22 @@ class SubtitleEditorWidget(QWidget):
 
         # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         self.ai_translate_btn = QPushButton("🪄 AI Translate")
-        self.ai_translate_btn.setStyleSheet(f"background-color: {Theme.PRIMARY_PURPLE}; color: white; font-weight: bold; border-radius: 4px; padding: 4px 12px; border: none;")
+        self.ai_translate_btn.setProperty("variant", "primary")
+        self.ai_translate_btn.setObjectName("btn_primary")
         self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
         
         self.approve_btn = QPushButton("✅ Chốt Timing")
-        self.approve_btn.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: #0D111A; font-weight: bold; border-radius: 4px; padding: 4px 12px; border: none;")
+        self.approve_btn.setProperty("variant", "success")
         self.approve_btn.clicked.connect(self.approve_timing)
         
         self.save_draft_btn = QPushButton("📦 Lưu Draft")
         self.save_draft_btn.setObjectName("btn_secondary")
+        self.save_draft_btn.setProperty("variant", "secondary")
         self.save_draft_btn.clicked.connect(lambda: self.save_draft(silent=False))
         
         self.save_btn = QPushButton("💾 Lưu SRT")
         self.save_btn.setObjectName("btn_secondary")
+        self.save_btn.setProperty("variant", "secondary")
         self.save_btn.clicked.connect(self.save_srt)
         self.save_draft_btn.clicked.connect(lambda: self.save_requested.emit("draft"))
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
