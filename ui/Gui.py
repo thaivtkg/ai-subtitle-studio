@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -293,70 +294,71 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(0)
 
         # ========================================================
-        # 1. SIDEBAR NAVIGATION
+        # 1. SIDEBAR NAVIGATION (ACTIVITY BAR - 64px)
         # ========================================================
         self.sidebar_dock = QDockWidget("Sidebar", self)
         self.sidebar_dock.setObjectName("SidebarDock")
         self.sidebar_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self.sidebar_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
         self.sidebar_dock.setTitleBarWidget(QWidget())
-        
-        self.sidebar_scroll = QScrollArea()
-        self.sidebar_scroll.setWidgetResizable(True)
-        self.sidebar_scroll.setFixedWidth(64)
-        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("SidebarFrame")
+        self.sidebar.setFixedWidth(64)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(4, 12, 4, 12)
-        sidebar_layout.setSpacing(8)
+        sidebar_layout.setContentsMargins(0, 12, 0, 12)
+        sidebar_layout.setSpacing(6)
         sidebar_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
         # 1. Brand Logo
         logo_lbl = QLabel("✨")
         logo_lbl.setAlignment(Qt.AlignCenter)
+        logo_lbl.setFixedSize(40, 32)
         logo_lbl.setProperty("class", "Accent")
-        sidebar_layout.addWidget(logo_lbl)
+        sidebar_layout.addWidget(logo_lbl, alignment=Qt.AlignHCenter)
         sidebar_layout.addSpacing(4)
 
-        # 2. Primary Project Action (Pill Action)
-        self.btn_new_project = self.create_side_action_button("✨  Tạo Dự Án Mới", self.action_new_project, is_primary=True)
-        sidebar_layout.addWidget(self.btn_new_project)
+        # 2. Primary Project Action (New Project icon-only button)
+        self.btn_new_project = QPushButton("＋")
+        self.btn_new_project.setObjectName("btn_new_project")
+        self.btn_new_project.setFixedSize(40, 40)
+        self.btn_new_project.setToolTip("Tạo Dự Án Mới")
+        self.btn_new_project.setCursor(Qt.PointingHandCursor)
+        self.btn_new_project.setProperty("variant", "primary")
+        self.btn_new_project.clicked.connect(self.action_new_project)
+        sidebar_layout.addWidget(self.btn_new_project, alignment=Qt.AlignHCenter)
         sidebar_layout.addSpacing(6)
 
-        # 3. Primary Navigation (Liquid Nav)
+        # 3. Primary Navigation Items (Dashboard, Workspace, Queue, Drafts, Export)
         self.nav_btns = {}
-        from ui.liquid_nav import LiquidNavWidget
-        self.liquid_nav = LiquidNavWidget()
-        self.liquid_nav.tab_changed.connect(self.switch_page)
-        sidebar_layout.addWidget(self.liquid_nav)
+        primary_tabs = [
+            (0, "▣", "Dashboard"),
+            (1, "🎬", "Studio Workspace"),
+            (3, "📋", "Queue & Output"),
+            (4, "📦", "Draft Center"),
+            (5, "🚀", "Export Center"),
+        ]
+        for page_idx, icon, tooltip in primary_tabs:
+            btn = self.create_nav_button(icon, tooltip, page_idx)
+            sidebar_layout.addWidget(btn, alignment=Qt.AlignHCenter)
 
+        # 4. Spacer between Primary and System Navigation
         sidebar_layout.addStretch()
 
-        # 4. Utility & Tool Actions (Bottom Group)
-        self.btn_recovery_center = self.create_side_action_button("🛟  Recovery Center", self.open_recovery_center)
-        self.btn_recovery_center.setObjectName("btn_recovery_center")
-        sidebar_layout.addWidget(self.btn_recovery_center)
+        # 5. System Navigation Items (Settings, Help)
+        system_tabs = [
+            (6, "⚙", "Settings Center"),
+            (7, "?", "Help Center"),
+        ]
+        for page_idx, icon, tooltip in system_tabs:
+            btn = self.create_nav_button(icon, tooltip, page_idx)
+            sidebar_layout.addWidget(btn, alignment=Qt.AlignHCenter)
 
-        sidebar_layout.addWidget(self.create_side_action_button("📦  Model Manager", self.action_open_model_manager))
-        sidebar_layout.addWidget(self.create_side_action_button("📖  Glossary Manager", self.action_open_glossary_manager))
-        sidebar_layout.addWidget(self.create_side_action_button("📂  Mở Dự Án...", self.action_open_project))
-        sidebar_layout.addWidget(self.create_side_action_button("💾  Lưu Dự Án", self.action_save_project))
+        # Compatibility alias: index 2 maps to Queue button
+        self.nav_btns[2] = self.nav_btns[3]
 
-        self.canonical_save_status_label = QLabel("✔️")
-        self.canonical_save_status_label.setToolTip("Auto Save Status")
-        self.canonical_save_status_label.setAlignment(Qt.AlignCenter)
-        self.canonical_save_status_label.setProperty("class", "Caption")
-        sidebar_layout.addWidget(self.canonical_save_status_label)
-
-        sidebar_layout.addWidget(self.create_side_action_button("🌐  New from URL...", self._on_new_from_url))
-        sidebar_layout.addWidget(self.create_side_action_button("➕  Add URL to Queue...", self._on_add_url_to_queue))
-        sidebar_layout.addWidget(self.create_side_action_button("🗑  Clear Queue", self.clear_files))
-
-        self.sidebar_scroll.setWidget(self.sidebar)
-        self.sidebar_dock.setWidget(self.sidebar_scroll)
+        self.sidebar_scroll = self.sidebar  # Retain attribute for backward test compatibility
+        self.sidebar_dock.setWidget(self.sidebar)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar_dock)
 
         # ========================================================
@@ -373,15 +375,67 @@ class MainWindow(QMainWindow):
         topbar.setFixedHeight(42)
         topbar_layout = QHBoxLayout(topbar)
         topbar_layout.setContentsMargins(14, 0, 10, 0)
+        topbar_layout.setSpacing(8)
 
         self.lbl_page_title = QLabel("Dashboard")
         self.lbl_page_title.setProperty("class", "SectionTitle")
         topbar_layout.addWidget(self.lbl_page_title)
+        topbar_layout.addSpacing(8)
+
+        # Project Menu Dropdown
+        self.btn_project_menu = QPushButton("📁  Dự Án ▾")
+        self.btn_project_menu.setObjectName("btn_project_menu")
+        self.btn_project_menu.setFixedHeight(28)
+        self.btn_project_menu.setProperty("variant", "secondary")
+        self.btn_project_menu.setCursor(Qt.PointingHandCursor)
+        project_menu = QMenu(self.btn_project_menu)
+        project_menu.setObjectName("ProjectMenu")
+        project_menu.addAction("✨  Tạo Dự Án Mới", self.action_new_project)
+        project_menu.addAction("📂  Mở Dự Án...", self.action_open_project)
+        project_menu.addAction("💾  Lưu Dự Án", self.action_save_project)
+        project_menu.addSeparator()
+        project_menu.addAction("🌐  Nhập từ URL (New)...", self._on_new_from_url)
+        project_menu.addAction("➕  Thêm URL vào Queue...", self._on_add_url_to_queue)
+        project_menu.addAction("🗑  Xóa Danh Sách Queue", self.clear_files)
+        self.btn_project_menu.setMenu(project_menu)
+        topbar_layout.addWidget(self.btn_project_menu)
+
+        # Tools Menu Dropdown
+        self.btn_tools_menu = QPushButton("🛠  Công Cụ ▾")
+        self.btn_tools_menu.setObjectName("btn_tools_menu")
+        self.btn_tools_menu.setFixedHeight(28)
+        self.btn_tools_menu.setProperty("variant", "secondary")
+        self.btn_tools_menu.setCursor(Qt.PointingHandCursor)
+        tools_menu = QMenu(self.btn_tools_menu)
+        tools_menu.setObjectName("ToolsMenu")
+        tools_menu.addAction("📦  Model Manager", self.action_open_model_manager)
+        tools_menu.addAction("📖  Glossary Manager", self.action_open_glossary_manager)
+        tools_menu.addSeparator()
+        tools_menu.addAction("🛟  Recovery Center", self.open_recovery_center)
+        self.btn_tools_menu.setMenu(tools_menu)
+        topbar_layout.addWidget(self.btn_tools_menu)
+
+        # Direct Recovery Center Button (Quick action, preserves test_UI10)
+        self.btn_recovery_center = QPushButton("🛟  Recovery Center")
+        self.btn_recovery_center.setObjectName("btn_recovery_center")
+        self.btn_recovery_center.setFixedHeight(28)
+        self.btn_recovery_center.setProperty("variant", "secondary")
+        self.btn_recovery_center.setCursor(Qt.PointingHandCursor)
+        self.btn_recovery_center.clicked.connect(self.open_recovery_center)
+        topbar_layout.addWidget(self.btn_recovery_center)
+
+        # Auto-Save status indicator
+        self.canonical_save_status_label = QLabel("✔️")
+        self.canonical_save_status_label.setObjectName("canonical_save_status_label")
+        self.canonical_save_status_label.setToolTip("Auto Save Status: Synced")
+        self.canonical_save_status_label.setProperty("class", "Caption")
+        topbar_layout.addWidget(self.canonical_save_status_label)
+
         topbar_layout.addStretch()
 
         self.lbl_project_status = QLabel("No Project")
         self.lbl_project_status.setObjectName("lbl_project_status")
-        self.lbl_project_status.setFixedWidth(280)
+        self.lbl_project_status.setFixedWidth(260)
         self.lbl_project_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_project_status.setProperty("class", "Caption")
         topbar_layout.addWidget(self.lbl_project_status)
@@ -1288,16 +1342,26 @@ class MainWindow(QMainWindow):
             self._update_drawer_handle_position()
         return super().eventFilter(obj, event)
 
-    def create_nav_button(self, text, page_index):
-        parts = text.split(maxsplit=1)
-        icon = parts[0] if parts else text
-        tooltip = parts[1] if len(parts) > 1 else text
+    def create_nav_button(self, text_or_icon, tooltip_or_index, page_index=None):
+        if page_index is None:
+            parts = str(text_or_icon).split(maxsplit=1)
+            icon = parts[0] if parts else str(text_or_icon)
+            tooltip = parts[1] if len(parts) > 1 else icon
+            idx = int(tooltip_or_index)
+        else:
+            icon = str(text_or_icon)
+            tooltip = str(tooltip_or_index)
+            idx = int(page_index)
+
         btn = QPushButton(icon)
+        btn.setObjectName(f"nav_btn_{idx}")
+        btn.setFixedSize(40, 40)
         btn.setToolTip(tooltip)
-        btn.setFixedSize(36, 36)
-        btn.setProperty("variant", "icon")
-        btn.clicked.connect(lambda: self.switch_page(page_index))
-        self.nav_btns[page_index] = btn
+        btn.setProperty("variant", "nav-item")
+        btn.setProperty("active", "false")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda checked=False, p=idx: self.switch_page(p))
+        self.nav_btns[idx] = btn
         return btn
 
     def _start_tour_from_help(self, guide_id):
@@ -1316,23 +1380,13 @@ class MainWindow(QMainWindow):
         bindings = (
             ("dashboard.root", self.page_dashboard),
             ("dashboard.new_project", self.btn_new_project),
-            ("navigation.video_workspace", self.liquid_nav),
+            ("navigation.video_workspace", self.nav_btns[1]),
             ("workspace.subtitle_editor", self.sub_editor),
             ("workspace.ai_generation", self.generation_panel),
             ("export_center.root", self.page_export),
         )
         for anchor_id, widget in bindings:
             self.tour_anchor_registry.register(anchor_id, widget)
-
-    def create_side_action_button(self, text, slot, is_primary=False):
-        parts = text.split(maxsplit=1)
-        tooltip = parts[1] if len(parts) > 1 else text
-        btn = QPushButton(text)
-        btn.setToolTip(tooltip)
-        btn.setFixedSize(36, 36)
-        btn.setProperty("variant", "primary" if is_primary else "icon")
-        btn.clicked.connect(slot)
-        return btn
 
     def _active_recovery_session_id(self):
         autosave = getattr(self, "autosave_coordinator", None)
@@ -1399,40 +1453,47 @@ class MainWindow(QMainWindow):
 
     def switch_page(self, original_index):
         self._active_nav_index = original_index
-        target_stack_index = 6 if original_index == 7 else original_index
         if original_index in (6, 7) and hasattr(self, "page_help"):
             self.page_help.refresh()
-            
+
+        NAV_TO_STACK = {
+            0: 0,  # Dashboard
+            1: 1,  # Workspace
+            2: 2,  # Queue
+            3: 2,  # Queue & Output
+            4: 3,  # Draft Center
+            5: 4,  # Export Center
+            6: 5,  # Settings Center
+            7: 6,  # Help Center
+        }
+        target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 6))
         self.stack.setCurrentIndex(target_stack_index)
         
-        if original_index == 5:
+        if original_index in (5, 6):
             self._sync_debug_logging_controls()
 
         # Quản lý Ẩn/Hiện Global Output Bar
         if hasattr(self, 'bottom_frame'):
-            self.bottom_frame.setVisible(original_index == 2)
+            self.bottom_frame.setVisible(target_stack_index == 2)
 
         # Quản lý Ẩn/Hiện Timeline Dock (chỉ hiện ở Studio Workspace)
         if hasattr(self, 'timeline_dock'):
-            self.timeline_dock.setVisible(original_index == 1)
+            self.timeline_dock.setVisible(target_stack_index == 1)
 
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
-        if original_index == 3:
+        if target_stack_index == 3:
             default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
             self.page_drafts.set_directory(default_dir)
 
-        # Cập nhật UI Sidebar (Liquid Nav)
-        if hasattr(self, 'liquid_nav'):
-            self.liquid_nav.set_active_tab(original_index)
-            for t in self.liquid_nav.tabs:
-                if t["id"] == original_index:
-                    self.lbl_page_title.setText(t["tooltip"])
-                    break
-        else:
+        # Cập nhật trạng thái active cho Sidebar Navigation
+        if hasattr(self, 'nav_btns'):
             for idx, btn in self.nav_btns.items():
-                if idx == original_index:
-                    clean_title = btn.toolTip().strip()
-                    self.lbl_page_title.setText(clean_title)
+                is_active = (idx == original_index or (original_index == 2 and idx == 3))
+                btn.setProperty("active", "true" if is_active else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+                if is_active and hasattr(self, 'lbl_page_title'):
+                    self.lbl_page_title.setText(btn.toolTip().strip())
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

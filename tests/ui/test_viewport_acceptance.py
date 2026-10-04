@@ -36,16 +36,17 @@ def test_viewports_acceptance(qapp):
             sidebar_w = win.sidebar_scroll.width()
             assert sidebar_w <= 240, f"Sidebar too wide: {sidebar_w}px"
 
-            # Verify all 7 core pages switch cleanly without exceptions
+            # Verify all core pages switch cleanly without exceptions
+            expected_mapping = [(0, 0), (1, 1), (3, 2), (4, 3), (5, 4), (6, 5), (7, 6)]
             from PySide6.QtTest import QTest
-            for page_idx in range(7):
-                win.switch_page(page_idx)
+            for nav_idx, expected_stack_idx in expected_mapping:
+                win.switch_page(nav_idx)
                 for _ in range(50):
                     qapp.processEvents()
-                    if win.stack.current_index == page_idx:
+                    if win.stack.current_index == expected_stack_idx:
                         break
                     QTest.qWait(10)
-                assert win.stack.current_index == page_idx
+                assert win.stack.current_index == expected_stack_idx
 
             # Verify recovery center can be invoked without layout breakage
             from ui.dialogs.recovery_center_dialog import RecoveryCenterDialog

@@ -108,12 +108,17 @@ QToolTip {
    ========================================================== */
 .GlassPanel,
 QDockWidget > QWidget,
-QDockWidget#SidebarDock,
 QDockWidget#SubtitleGenerationDock {
     background-color: $GLASS_SURFACE;
     border: 1px solid $GLASS_EDGE;
     border-top: 1px solid $GLASS_EDGE_TOP;
     border-radius: $RADIUS_FLOATING;
+}
+
+QDockWidget#SidebarDock {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
 }
 
 QDockWidget {
@@ -129,6 +134,15 @@ QDockWidget::title {
 }
 
 /* Window frame panels */
+#SidebarFrame {
+    background-color: $GLASS_SURFACE;
+    border-right: 1px solid $GLASS_EDGE;
+    border-top: none;
+    border-bottom: none;
+    border-left: none;
+    border-radius: 0px;
+}
+
 #TopbarFrame, #RightArea {
     background-color: $BG_APP;
     border: none;
@@ -392,6 +406,67 @@ QPushButton[variant="handle"] {
 QPushButton[variant="handle"]:hover {
     background-color: $SURFACE_SOFT;
     color: $TEXT_PRIMARY;
+}
+
+/* Navigation item buttons (Sidebar Activity Bar - 8px Standard) */
+QPushButton[variant="nav-item"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: $RADIUS_CONTROL;
+    color: $TEXT_SECONDARY;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 0px;
+}
+
+QPushButton[variant="nav-item"]:hover {
+    background-color: $HOVER_OVERLAY;
+    border: 1px solid $GLASS_EDGE;
+    color: $TEXT_PRIMARY;
+}
+
+QPushButton[variant="nav-item"]:pressed {
+    background-color: $SURFACE_ELEVATED;
+    color: #FFFFFF;
+}
+
+QPushButton[variant="nav-item"][active="true"] {
+    background-color: rgba(99, 102, 241, 0.20);
+    border: 1px solid rgba(99, 102, 241, 0.45);
+    color: $ACCENT;
+    font-weight: 600;
+}
+
+QPushButton[variant="nav-item"]:focus {
+    border-color: $ACCENT;
+}
+
+/* Dropdown Menus (Project & Tools Menu in Topbar) */
+QMenu {
+    background-color: $SURFACE;
+    border: 1px solid $BORDER;
+    border-radius: $RADIUS_CONTROL;
+    padding: $SPACE_XS;
+    color: $TEXT_PRIMARY;
+}
+
+QMenu::item {
+    background: transparent;
+    padding: 6px $SPACE_MD;
+    border-radius: $RADIUS_INNER;
+    color: $TEXT_PRIMARY;
+    font-size: $FONT_BODY;
+}
+
+QMenu::item:selected {
+    background-color: $HOVER_OVERLAY;
+    color: #FFFFFF;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: $BORDER;
+    margin: $SPACE_XS 0px;
 }
 
 /* ==========================================================
