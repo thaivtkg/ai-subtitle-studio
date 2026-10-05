@@ -1,200 +1,267 @@
-from PySide6.QtCore import Qt, QTimer, QRectF, Signal, QPoint, QEvent
-from PySide6.QtGui import QPainter, QColor, QLinearGradient, QMouseEvent, QPen, QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
+import math
+from PySide6.QtCore import Qt, QTimer, QRectF, Signal
+from PySide6.QtGui import QPainter, QColor, QLinearGradient, QMouseEvent, QPen, QPainterPath, QPixmap, QImage
+from PySide6.QtWidgets import QWidget
 
-from ui.core.design_tokens import RadiusToken
-
+LIQUID_GLASS = {
+    "nav_width": 64,
+    "nav_radius": 32,
+    "active_width": 50,
+    "active_height": 50,
+    "active_radius": 25,
+    "item_gap": 8,
+    
+    "diffusion_alpha": 0.13,
+    "tint_idle": 0.08,
+    "tint_active": 0.19,
+    "saturation": 1.10,
+    
+    "refraction_y": 1.5,
+    
+    "dark_edge_width": 1.0,
+    "dark_edge_alpha": 60,  # 0-255 scale (~24%)
+    
+    "specular_width": 1.2,
+    "specular_alpha": 130,  # ~50%
+    "inner_glow_alpha": 28, # ~11%
+    
+    "shadow_y": 5,
+    "shadow_blur": 20,
+    "shadow_alpha": 40,     # ~16%
+    
+    "hover_scale": 1.015,
+    "press_scale": 0.985,
+}
 
 class LiquidNavWidget(QWidget):
-    """
-    Thanh điều hướng Sidebar với hiệu ứng trượt Liquid Glass (Hooke's Law Spring Physics).
-    Phân bổ khoảng cách thoáng đãng, icon to rõ, chống hiện tượng ghost-hover ra ngoài vùng nút.
-    """
-
     tab_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(56)
+        # API Contract: Phục hồi đủ 7 Tab khớp NAV_TO_STACK của Gui.py
+        self.tabs = [
+            {"icon": "📊", "id": 0, "tooltip": "Dashboard"},
+            {"icon": "🎬", "id": 1, "tooltip": "Studio Workspace"},
+            {"icon": "📋", "id": 3, "tooltip": "Queue & Output"},
+            {"icon": "📦", "id": 4, "tooltip": "Draft Center"},
+            {"icon": "🚀", "id": 5, "tooltip": "Export Center"},
+            {"icon": "⚙️", "id": 6, "tooltip": "Settings"},
+            {"icon": "❓", "id": 7, "tooltip": "Help"}
+        ]
+        
+        self.tab_height = LIQUID_GLASS["active_height"] + LIQUID_GLASS["item_gap"]
+        
+        self.setFixedWidth(LIQUID_GLASS["nav_width"])
+        self.setFixedHeight(len(self.tabs) * self.tab_height + 20)
         self.setMouseTracking(True)
-
-        self.primary_tabs = [
-            (0, "📊", "Dashboard"),
-            (1, "🎬", "Studio Workspace"),
-            (3, "📋", "Queue & Output"),
-            (4, "📦", "Draft Center"),
-            (5, "🚀", "Export Center"),
-        ]
-        self.system_tabs = [
-            (6, "⚙", "Settings Center"),
-            (7, "❓", "Help Center"),
-        ]
-
-        self.btn_map = {}
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(14)  # Dàn đều khoảng cách giữa các icon
-        layout.setAlignment(Qt.AlignHCenter)
-
-        for idx, icon, tooltip in self.primary_tabs:
-            btn = self._create_tab_button(idx, icon, tooltip)
-            layout.addWidget(btn, alignment=Qt.AlignHCenter)
-            self.btn_map[idx] = btn
-
-        layout.addStretch(1)
-
-        for idx, icon, tooltip in self.system_tabs:
-            btn = self._create_tab_button(idx, icon, tooltip)
-            layout.addWidget(btn, alignment=Qt.AlignHCenter)
-            self.btn_map[idx] = btn
-
-        # Compatibility alias: 2 -> Queue (3)
-        self.btn_map[2] = self.btn_map[3]
-
+        
         self.current_index = 0
-        self._blob_height = 44.0
-        self._blob_y = 26.0
-        self._target_y = 26.0
-        self._velocity_y = 0.0
-        self._velocity_h = 0.0
-
-        # Hover state
-        self._hover_y = -100.0
-        self._hover_target_y = -100.0
-        self._hover_alpha = 0.0
-
+        self._target_y = self._get_tab_y(0)
+        
+        # Spring Variables
+        self._blob_y = self._target_y
+        self._blob_vel = 0.0
+        
+        self._highlight_y = self._target_y
+        self._highlight_vel = 0.0
+        
+        self._scale = 1.0
+        self._scale_vel = 0.0
+        self._target_scale = 1.0
+        
+        self._specular_alpha = LIQUID_GLASS["tint_idle"]
+        self._specular_vel = 0.0
+        self._target_specular = LIQUID_GLASS["tint_idle"]
+        
+        self._is_dragging = False
+        
+        # Background Cache
+        self._blurred_bg = None
+        self._tint_color = QColor(139, 92, 246)
+        
         self.physics_timer = QTimer(self)
         self.physics_timer.timeout.connect(self._update_physics)
         self.physics_timer.start(16)
 
-    def _create_tab_button(self, idx: int, icon: str, tooltip: str) -> QPushButton:
-        btn = QPushButton(icon, self)
-        btn.setObjectName(f"nav_btn_{idx}")
-        btn.setFixedSize(48, 44)  # Nút to hơn và rõ nét hơn
-        btn.setFont(QFont("Segoe UI Emoji", 15))
-        btn.setToolTip(tooltip)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setProperty("variant", "liquid-nav-btn")
-        btn.setProperty("active", "false")
-        btn.installEventFilter(self)
-        btn.clicked.connect(lambda checked=False, p=idx: self._on_btn_clicked(p))
-        return btn
-
-    def eventFilter(self, watched, event):
-        # Chỉ kích hoạt hover pill khi chuột thực sự nằm trên một nút điều hướng
-        if event.type() == QEvent.Enter:
-            self._hover_target_y = float(watched.y() + (watched.height() / 2.0))
-        elif event.type() == QEvent.Leave:
-            self._hover_target_y = -100.0
-        return super().eventFilter(watched, event)
-
-    def _on_btn_clicked(self, idx: int):
-        self.set_active_tab(idx)
-        self.tab_changed.emit(idx)
-
-    def _get_button_center_y(self, idx: int) -> float:
-        btn = self.btn_map.get(idx)
-        if btn and btn.height() > 0:
-            center = float(btn.y() + (btn.height() / 2.0))
-            if center > 0:
-                return center
-        # Fallback estimation before layout is painted
-        for i, (tab_id, _, _) in enumerate(self.primary_tabs):
-            if tab_id == idx:
-                return float(i * 58 + 26)
-        for i, (tab_id, _, _) in enumerate(self.system_tabs):
-            if tab_id == idx:
-                return float(self.height() - (len(self.system_tabs) - i) * 58 + 26)
-        return 26.0
+        # API Contract: Proxy widgets cho Tour Anchors & Gui.py
+        self.btn_map = {}
+        for i, tab in enumerate(self.tabs):
+            proxy = QWidget(self)
+            proxy.setGeometry(0, self._get_tab_y(i), LIQUID_GLASS["nav_width"], LIQUID_GLASS["active_height"])
+            self.btn_map[tab["id"]] = proxy
+        self.btn_map[2] = self.btn_map.get(3, self.btn_map.get(2))
 
     def set_active_tab(self, page_id: int):
-        self.current_index = page_id
-        target = self._get_button_center_y(page_id)
-        if target > 0:
-            self._target_y = target
+        """API Hotfix: Chuyển tab từ xa cho Gui.py"""
+        for idx, tab in enumerate(self.tabs):
+            if tab["id"] == page_id or (page_id in (2, 3) and tab["id"] in (2, 3)):
+                self.current_index = idx
+                self._target_y = self._get_tab_y(idx)
+                break
 
-        for i, btn in self.btn_map.items():
-            is_active = (i == page_id or (page_id == 2 and i == 3))
-            btn.setProperty("active", "true" if is_active else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+    def _get_tab_y(self, index):
+        return 10 + index * self.tab_height
 
-    def leaveEvent(self, event):
-        self._hover_target_y = -100.0
-        super().leaveEvent(event)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        QTimer.singleShot(50, self._sync_target_pos)
+    def _update_background_cache(self):
+        if not self.parentWidget(): return
+        
+        self.hide()
+        raw_bg = self.parentWidget().grab(self.geometry())
+        self.show()
+        
+        img = raw_bg.toImage()
+        if img.isNull(): return
+        
+        small = img.scaled(img.width() // 8, img.height() // 8, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        self._blurred_bg = QPixmap.fromImage(small.scaled(img.width(), img.height(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+        
+        center_color = small.pixelColor(small.width() // 2, small.height() // 2)
+        self._tint_color = QColor(
+            min(255, int(center_color.red() * 0.8 + 50)),
+            min(255, int(center_color.green() * 0.8 + 50)),
+            min(255, int(center_color.blue() * 0.8 + 60))
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._sync_target_pos()
-
-    def _sync_target_pos(self):
-        target = self._get_button_center_y(self.current_index)
-        if target > 0:
-            self._target_y = target
-            if abs(self._blob_y - 26.0) < 1.0:
-                self._blob_y = target
+        QTimer.singleShot(100, self._update_background_cache)
 
     def _update_physics(self):
-        btn = self.btn_map.get(self.current_index)
-        if btn and btn.height() > 0:
-            target = float(btn.y() + (btn.height() / 2.0))
-            if target > 0 and abs(target - self._target_y) > 0.5:
-                self._target_y = target
-
-        # Hệ Lò Xo đàn hồi có kiểm soát (Restrained Hooke's Law Spring Physics)
-        spring_k = 0.20
-        damping = 0.70
-
-        force_y = (self._target_y - self._blob_y) * spring_k
-        self._velocity_y = (self._velocity_y + force_y) * damping
-        self._blob_y += self._velocity_y
-
-        # Độ co giãn theo vận tốc (Squash & Stretch)
-        target_height = 44.0 + min(6.0, abs(self._velocity_y) * 0.7)
-        force_h = (target_height - self._blob_height) * spring_k
-        self._velocity_h = (self._velocity_h + force_h) * damping
-        self._blob_height += self._velocity_h
-
-        # Hover tracking
-        if self._hover_target_y >= 0:
-            self._hover_y += (self._hover_target_y - self._hover_y) * 0.28
-            self._hover_alpha += (40.0 - self._hover_alpha) * 0.22
-        else:
-            self._hover_alpha += (0.0 - self._hover_alpha) * 0.22
+        stiffness = 0.15
+        damping = 0.65
+        
+        f_y = (self._target_y - self._blob_y) * stiffness
+        self._blob_vel = (self._blob_vel + f_y) * damping
+        self._blob_y += self._blob_vel
+        
+        f_hy = (self._target_y - self._highlight_y) * (stiffness * 0.6)
+        self._highlight_vel = (self._highlight_vel + f_hy) * (damping * 0.9)
+        self._highlight_y += self._highlight_vel
+        
+        f_s = (self._target_scale - self._scale) * 0.2
+        self._scale_vel = (self._scale_vel + f_s) * 0.7
+        self._scale += self._scale_vel
+        
+        f_a = (self._target_specular - self._specular_alpha) * 0.2
+        self._specular_vel = (self._specular_vel + f_a) * 0.7
+        self._specular_alpha += self._specular_vel
 
         self.update()
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = True
+            self._target_scale = LIQUID_GLASS["press_scale"]
+            self._target_specular = LIQUID_GLASS["tint_active"]
+            self._target_y = max(10, min(self.height() - LIQUID_GLASS["active_height"], event.pos().y() - LIQUID_GLASS["active_height"]/2))
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if getattr(self, "_is_dragging", False):
+            self._target_y = max(10, min(self.height() - LIQUID_GLASS["active_height"], event.pos().y() - LIQUID_GLASS["active_height"]/2))
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            self._target_scale = LIQUID_GLASS["hover_scale"] if self.underMouse() else 1.0
+            
+            idx = round((self._target_y - 10) / self.tab_height)
+            idx = max(0, min(len(self.tabs) - 1, idx))
+            self.current_index = idx
+            self._target_y = self._get_tab_y(idx)
+            self.tab_changed.emit(self.tabs[idx]["id"])
+
+    def enterEvent(self, event):
+        self._target_scale = LIQUID_GLASS["hover_scale"]
+        self._target_specular = LIQUID_GLASS["tint_active"]
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._is_dragging:
+            self._target_scale = 1.0
+            self._target_specular = LIQUID_GLASS["tint_idle"]
+            self._target_y = self._get_tab_y(self.current_index)
+        super().leaveEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        radius = float(RadiusToken.CONTROL)  # 8px Control Geometry
+        pad_x = (self.width() - LIQUID_GLASS["active_width"]) / 2
+        center_y = self._blob_y + (LIQUID_GLASS["active_height"] / 2)
+        center_x = self.width() / 2
+        
+        painter.translate(center_x, center_y)
+        painter.scale(self._scale, self._scale)
+        painter.translate(-center_x, -center_y)
 
-        # 1. Hover Pill (Bóng mờ trượt chính xác theo nút đang hover)
-        if self._hover_alpha > 1:
-            hover_rect = QRectF(4, self._hover_y - 22, 48, 44)
-            painter.setBrush(QColor(255, 255, 255, int(self._hover_alpha)))
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(hover_rect, radius, radius)
+        blob_rect = QRectF(pad_x, self._blob_y, LIQUID_GLASS["active_width"], LIQUID_GLASS["active_height"])
+        
+        path = QPainterPath()
+        path.addRoundedRect(blob_rect, LIQUID_GLASS["active_radius"], LIQUID_GLASS["active_radius"])
 
-        # 2. Active Liquid Glass Blob (Khối kính lỏng đàn hồi trượt theo tab chọn)
-        blob_rect = QRectF(
-            4,
-            self._blob_y - (self._blob_height / 2.0),
-            48,
-            self._blob_height,
-        )
-        grad = QLinearGradient(blob_rect.topLeft(), blob_rect.bottomRight())
-        grad.setColorAt(0.0, QColor(99, 102, 241, 160))  # Legacy Indigo
-        grad.setColorAt(1.0, QColor(56, 189, 248, 120))  # Cyan/Sky
-        painter.setBrush(grad)
+        # 1. Background Blur & Refraction
+        if self._blurred_bg:
+            painter.save()
+            painter.setClipPath(path)
+            source_rect = QRectF(blob_rect.x(), blob_rect.y() - LIQUID_GLASS["refraction_y"], blob_rect.width(), blob_rect.height())
+            painter.drawPixmap(blob_rect, self._blurred_bg, source_rect)
+            painter.restore()
 
-        pen = QPen(QColor(165, 180, 252, 140))  # Viền kính mờ
-        pen.setWidthF(1.0)
-        painter.setPen(pen)
-        painter.drawRoundedRect(blob_rect, radius, radius)
+        # 2. Context-aware Tint
+        painter.save()
+        painter.setClipPath(path)
+        tint_alpha = int(self._specular_alpha * 255)
+        painter.fillPath(path, QColor(self._tint_color.red(), self._tint_color.green(), self._tint_color.blue(), tint_alpha))
+        painter.restore()
+
+        # 3. Inner Glow
+        painter.save()
+        inner_pen = QPen(QColor(255, 255, 255, LIQUID_GLASS["inner_glow_alpha"]))
+        inner_pen.setWidthF(1.0)
+        painter.setPen(inner_pen)
+        painter.drawPath(path)
+        painter.restore()
+
+        # 4. Darkened Edge (Viền tối chặn sáng đáy)
+        dark_grad = QLinearGradient(blob_rect.topLeft(), blob_rect.bottomLeft())
+        dark_grad.setColorAt(0.0, QColor(0, 0, 0, 0))
+        dark_grad.setColorAt(0.7, QColor(0, 0, 0, int(LIQUID_GLASS["dark_edge_alpha"] * 0.3)))
+        dark_grad.setColorAt(1.0, QColor(0, 0, 0, LIQUID_GLASS["dark_edge_alpha"]))
+        
+        painter.save()
+        dark_pen = QPen(dark_grad, LIQUID_GLASS["dark_edge_width"])
+        painter.setPen(dark_pen)
+        painter.drawPath(path)
+        painter.restore()
+
+        # 5. Specular Highlight (Vệt sáng phản quang trễ pha)
+        spec_grad = QLinearGradient(blob_rect.left(), self._highlight_y, blob_rect.right(), self._highlight_y + LIQUID_GLASS["active_height"])
+        spec_grad.setColorAt(0.0, QColor(255, 255, 255, LIQUID_GLASS["specular_alpha"]))
+        spec_grad.setColorAt(0.35, QColor(255, 255, 255, int(LIQUID_GLASS["specular_alpha"] * 0.1)))
+        spec_grad.setColorAt(0.4, QColor(255, 255, 255, 0))
+        
+        painter.save()
+        spec_pen = QPen(spec_grad, LIQUID_GLASS["specular_width"])
+        painter.setPen(spec_pen)
+        painter.drawPath(path)
+        painter.restore()
+
+        # 6. Icons & Text
+        painter.resetTransform()
+        font = painter.font()
+        font.setPointSize(14)
+        painter.setFont(font)
+        
+        for i, tab in enumerate(self.tabs):
+            item_y = self._get_tab_y(i)
+            rect = QRectF(0, item_y, self.width(), LIQUID_GLASS["active_height"])
+            
+            dist = abs(self._blob_y - item_y)
+            is_active = dist < (LIQUID_GLASS["active_height"] / 2)
+            
+            if is_active:
+                painter.setPen(QColor(255, 255, 255, 255))
+            else:
+                painter.setPen(QColor(156, 163, 175, 180))
+                
+            painter.drawText(rect, Qt.AlignCenter, tab["icon"])

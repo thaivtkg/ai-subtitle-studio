@@ -9,6 +9,8 @@ psutil>=5.9.0
 numpy>=1.24.0
 yt-dlp>=2024.03.10
 urllib3>=1.26.17
+requests>=2.31.0
+pydantic>=2.0.0
 
 # For reproducible deployment, use the pinned runtime profile:
 # pip install -r requirements-runtime.txt

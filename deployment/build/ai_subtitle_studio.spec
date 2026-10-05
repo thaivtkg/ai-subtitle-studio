@@ -55,6 +55,8 @@ hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
+    'PySide6.QtMultimedia',
+    'PySide6.QtMultimediaWidgets',
     'faster_whisper',
     'ctranslate2',
     'huggingface_hub',
@@ -62,6 +64,8 @@ hiddenimports = [
     'torch',
     'torchaudio',
     'psutil',
+    'pydantic',
+    'sqlite3',
     'unittest.mock',  # Đã ghim cứng để sửa lỗi PyTorch Import
     # Modules nội bộ của dự án
     'core',

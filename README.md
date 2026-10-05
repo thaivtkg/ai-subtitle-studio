@@ -59,6 +59,13 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
   * Help Center hỗ trợ tìm kiếm hướng dẫn và phím tắt.
   * Getting Started guided tour có thể mở lại từ Help Center, kèm nội dung hướng dẫn và media tutorial nội bộ.
 
+* 💎 **Giao diện Quang học Kính lỏng (Liquid Glass V2 Optical Engine & Design System)**
+  * **Hệ thống Vật lý Thấu kính (Optical Physics):** Khối điều hướng Sidebar tích hợp công nghệ **Background Caching** (làm mờ nền nội suy siêu nhẹ không sụt FPS), tạo ảo giác thấu kính quang học với độ lệch khúc xạ (**Refraction Y-offset 1.5px**).
+  * **Động lực học Lò xo Độc lập (Independent Spring Dynamics):** Áp dụng định luật Hooke kết hợp giảm chấn (**Spring-Mass-Damper**), vệt sáng phản quang trễ pha 30ms (**Lagging Specular Highlight**), hiệu ứng phồng dẹp theo vận tốc (**Squash & Stretch**) và co giãn vật lý khi nhấn chuột (**Morphing Scale**).
+  * **Vật liệu Bán trong suốt Đa tầng (Frosted Translucency):** Hòa trộn màu nền thông minh (**Context-aware Tint**), viền hắt sáng cực mảnh (**Edge Lighting**), ánh sáng trong (**Inner Glow**) và bóng đổ chiều sâu không gian (**Soft Drop Shadow**).
+  * **Trải nghiệm Giữ - Kéo - Thả (Continuous Drag-to-Select):** Hỗ trợ click giữ và rê chuột trượt mượt mà dọc thanh Sidebar và các ListBox/Tab; khối kính liên tục bám sát con trỏ và tự động snap kích hoạt mục được chọn khi thả chuột.
+  * **Chuẩn hóa Vi kiến trúc (P0 Visual Grammar):** Quy chuẩn hình khối 8px cho Standard Controls, 16px cho Surfaces, 24px/Pill cho Glass & Primary Actions, đồng bộ qua trình biên dịch giao diện duy nhất `LiquidThemeEngine`.
+
 * 🎬 **Xuất xưởng Đa Định dạng & Render Hardsub GPU/CPU**
   * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
   * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
@@ -126,8 +133,8 @@ Tính năng hỗ trợ rà soát và tạo phụ đề bổ sung cho các khoả
 
 ### Dependency profiles
 
-- `requirements.txt`: bộ dependency nền linh hoạt cho môi trường chạy mã nguồn.
-- `requirements-runtime.txt`: profile nền thay thế, ghim phiên bản để tạo runtime/CI reproducible; hiện dùng PyTorch CUDA 12.1.
+- `requirements.txt`: bộ dependency nền linh hoạt cho môi trường chạy mã nguồn (PySide6, Faster-Whisper, PyTorch, CTranslate2, Pydantic, Requests, v.v.).
+- `requirements-runtime.txt`: profile nền thay thế, ghim phiên bản chính xác để tạo runtime/CI reproducible; hiện dùng PyTorch CUDA 12.1.
 - `requirements-dev.txt`: phần bổ sung chỉ dành cho development/test; hiện gồm Pillow cho demo-capture và asset validation.
 
 `requirements-dev.txt` được cài thêm sau một trong hai profile nền ở trên. Không cần cài đồng thời `requirements.txt` và `requirements-runtime.txt`.
@@ -195,17 +202,31 @@ python main.py
 
 ### 1. Đóng gói mã nguồn thành File thực thi (`PyInstaller`)
 
+Sử dụng kịch bản build tự động hoặc tệp cấu hình spec:
 
 ```powershell
-.\scripts\build_windows.ps1
+# Cách 1: Chạy trực tiếp qua Python script
+python build.py
 
+# Cách 2: Sử dụng trực tiếp PyInstaller với file Spec
+pyinstaller --noconfirm --clean "AI Subtitle Studio.spec"
+
+# Cách 3: Chạy script đóng gói tự động hóa (PowerShell)
+.\tools\build_windows.ps1
 ```
+
+Gói nhị phân hoàn chỉnh được xuất ra tại thư mục `dist/AI Subtitle Studio/`.
 
 ### 2. Tạo File Setup Cài đặt (`Inno Setup`)
 
 1. Cài đặt công cụ [Inno Setup 6+](https://jrsoftware.org/).
-2. Chạy `scripts/build_windows.ps1`; script sẽ gọi `installer/setup.iss` nếu Inno Setup đã được cài.
-3. File cài đặt được xuất vào thư mục `release/`.
+2. Biên dịch bộ cài đặt Windows:
+   - Mở và biên dịch tệp `installer.iss` (hoặc `deployment/installer/setup.iss`) bằng Inno Setup Compiler.
+   - Hoặc chạy bằng lệnh CLI:
+     ```powershell
+     & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+     ```
+3. Tệp cài đặt được xuất ra: `dist/AI_Subtitle_Studio_Setup_v1.0.0.exe`.
 
 <a id="troubleshooting"></a>
 

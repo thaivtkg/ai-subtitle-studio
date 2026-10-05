@@ -1,20 +1,96 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
+project_root = os.path.abspath(SPECPATH)
 
+# 1. Thu thập data files & dynamic libs từ các thư viện AI
+datas = []
+datas += collect_data_files('faster_whisper')
+datas += collect_data_files('ctranslate2')
+datas += collect_data_files('huggingface_hub')
+datas += collect_data_files('tokenizers')
+
+# Đóng gói FFmpeg và Resources theo đúng Contract của RuntimePaths
+ffmpeg_dir = os.path.join(project_root, 'ffmpeg')
+resources_dir = os.path.join(project_root, 'resources')
+
+if os.path.exists(ffmpeg_dir):
+    datas.append((ffmpeg_dir, 'ffmpeg'))
+if os.path.exists(resources_dir):
+    datas.append((resources_dir, 'resources'))
+
+binaries = []
+binaries += collect_dynamic_libs('ctranslate2')
+
+# Loại trừ Poppler ICU xung đột nếu có
+_poppler_icu_names = {'icuuc.dll', 'icudt78.dll'}
+_poppler_bin_marker = os.path.normcase(
+    os.path.join('native', 'poppler', 'library', 'bin')
+)
+
+def _exclude_conflicting_poppler_icu(entries):
+    filtered = []
+    for entry in entries:
+        destination, source, *metadata = entry
+        source_path = os.path.normcase(os.path.normpath(str(source)))
+        source_name = os.path.basename(source_path)
+        if (
+            source_name in _poppler_icu_names
+            and _poppler_bin_marker in source_path
+        ):
+            continue
+        filtered.append((destination, source, *metadata))
+    return type(entries)(filtered)
+
+# 2. Hidden imports để tránh lỗi thiếu module ngầm của PySide6, PyTorch, AI và nội bộ
+hiddenimports = [
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'PySide6.QtWidgets',
+    'PySide6.QtMultimedia',
+    'PySide6.QtMultimediaWidgets',
+    'faster_whisper',
+    'ctranslate2',
+    'huggingface_hub',
+    'tokenizers',
+    'torch',
+    'torchaudio',
+    'psutil',
+    'pydantic',
+    'sqlite3',
+    'unittest.mock',
+    # Modules nội bộ của dự án
+    'core',
+    'player',
+    'ui',
+    'workers',
+]
+hiddenimports += collect_submodules('faster_whisper')
+hiddenimports += collect_submodules('ctranslate2')
+
+# 3. Phân tích mã nguồn
 a = Analysis(
-    ['main.py'],
-    pathex=[],
-    binaries=[],
-    datas=[('resources', 'resources')],
-    hiddenimports=['pydantic', 'google.genai', 'openai', 'dotenv', 'sqlite3', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets'],
+    [os.path.join(project_root, 'main.py')],
+    pathex=[project_root],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter', 'pytest', 'IPython', 'notebook', 'curl_cffi'],
     noarchive=False,
     optimize=0,
 )
+a.binaries = _exclude_conflicting_poppler_icu(a.binaries)
+
 pyz = PYZ(a.pure)
+
+icon_file = os.path.join(project_root, 'resources', 'app_icon.ico')
+if not os.path.exists(icon_file):
+    icon_file = os.path.join(project_root, 'app_icon.ico')
 
 exe = EXE(
     pyz,
@@ -25,21 +101,22 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['app_icon.ico'],
+    icon=icon_file if os.path.exists(icon_file) else None,
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='AI Subtitle Studio',
 )
