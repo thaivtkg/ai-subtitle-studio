@@ -4,7 +4,7 @@ import os
 
 def build_app():
     print("==================================================")
-    print(" BẮT ĐẦU QUY TRÌNH ĐÓNG GÓI AI SUBTITLE STUDIO    ")
+    print(" BAT DAU QUY TRINH DONG GOI AI SUBTITLE STUDIO    ")
     print("==================================================")
     
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -50,9 +50,9 @@ def build_app():
     
     try:
         subprocess.run(cmd, check=True, cwd=project_root)
-        print("\n✅ Build thành công! Thư mục kết xuất: 'dist/AI Subtitle Studio/'")
+        print("\n[SUCCESS] Build thanh cong! Thu muc ket xuat: 'dist/AI Subtitle Studio/'")
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ Build thất bại: {e}")
+        print(f"\n[ERROR] Build that bai: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

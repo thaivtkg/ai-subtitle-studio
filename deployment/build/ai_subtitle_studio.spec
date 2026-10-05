@@ -14,7 +14,9 @@ datas += collect_data_files('huggingface_hub')
 datas += collect_data_files('tokenizers')
 
 # [QUAN TRỌNG] Đóng gói FFmpeg và Resources theo đúng Contract của RuntimePaths
-ffmpeg_dir = os.path.join(project_root, 'ffmpeg')
+ffmpeg_dir = os.path.join(project_root, 'resources', 'ffmpeg')
+if not os.path.exists(ffmpeg_dir):
+    ffmpeg_dir = os.path.join(project_root, 'ffmpeg')
 resources_dir = os.path.join(project_root, 'resources')
 
 if os.path.exists(ffmpeg_dir):
