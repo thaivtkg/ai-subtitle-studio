@@ -5,6 +5,7 @@ mode for the liquid glass environment, while keeping content surfaces solid
 and readable.
 """
 
+import os
 from string import Template
 from ui.core.design_tokens import (
     ColorToken,
@@ -15,8 +16,28 @@ from ui.core.design_tokens import (
 )
 
 
+def _get_check_icon_url() -> str:
+    try:
+        from core.runtime.runtime_paths import RuntimePaths
+        res_file = RuntimePaths.get_resources_dir() / "check.svg"
+        if res_file.exists():
+            return str(res_file).replace("\\", "/")
+    except Exception:
+        pass
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "resources", "check.svg"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "assets", "check.svg"),
+    ]
+    for c in candidates:
+        norm = os.path.normpath(c)
+        if os.path.exists(norm):
+            return norm.replace("\\", "/")
+    return "resources/check.svg"
+
+
 def _vars() -> dict:
     return {
+        "CHECK_ICON_URL": _get_check_icon_url(),
         "BG_APP": ColorToken.BG_APP,
         "SURFACE": ColorToken.SURFACE,
         "SURFACE_ELEVATED": ColorToken.SURFACE_ELEVATED,
@@ -603,7 +624,7 @@ QCheckBox::indicator:hover, QRadioButton::indicator:hover {
 QCheckBox::indicator:checked {
     background-color: $ACCENT;
     border-color: $ACCENT;
-    image: url(assets/check.svg);
+    image: url($CHECK_ICON_URL);
 }
 
 QCheckBox[settingsCheckbox="true"]:disabled {
@@ -678,9 +699,28 @@ QTableWidget, QTableView {
     color: $TEXT_PRIMARY;
     border: none;
     gridline-color: $BORDER;
-    selection-background-color: $SELECTED_SURFACE;
-    selection-color: $TEXT_PRIMARY;
+    selection-background-color: rgba(99, 102, 241, 0.40);
+    selection-color: #FFFFFF;
     outline: none;
+}
+
+QTableWidget::item, QTableView::item {
+    outline: none;
+    border: none;
+}
+
+QTableWidget::item:selected, QTableView::item:selected {
+    background-color: rgba(99, 102, 241, 0.40);
+    color: #FFFFFF;
+}
+
+QTableWidget::item:selected:!active, QTableView::item:selected:!active {
+    background-color: rgba(99, 102, 241, 0.28);
+    color: #FFFFFF;
+}
+
+QTableWidget::item:hover, QTableView::item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 QHeaderView::section {

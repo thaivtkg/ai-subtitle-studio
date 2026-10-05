@@ -565,7 +565,6 @@ class MainWindow(QMainWindow):
         dock_tabs = QTabWidget()
         dock_tabs.setObjectName("DockTabs")
         dock_tabs.addTab(self.generation_panel, "✨ Generate")
-        dock_tabs.addTab(self.tm_matches_panel, "🧠 TM Matches")
         self.context_panel = TranscriptionContextPanel(self)
         self.context_panel.context_committed.connect(
             self.on_transcription_context_committed
@@ -654,7 +653,6 @@ class MainWindow(QMainWindow):
         tl_tb_layout.addWidget(lbl_tl)
         tl_tb_layout.addStretch()
 
-        tl_tb_layout.addWidget(self.sub_editor.ai_translate_btn)
         tl_tb_layout.addWidget(self.sub_editor.approve_btn)
         tl_tb_layout.addWidget(self.sub_editor.save_draft_btn)
         tl_tb_layout.addWidget(self.sub_editor.save_btn)

@@ -98,7 +98,7 @@ class CurrentSubtitleEditor(QWidget):
         layout.addWidget(self.lbl_duration)
 
         self.text_edit = QTextEdit()
-        self.text_edit.setPlaceholderText("Bản dịch...")
+        self.text_edit.setPlaceholderText("Nội dung phụ đề...")
         self.text_edit.setFixedHeight(30)
         layout.addWidget(self.text_edit, stretch=1)
 
@@ -187,8 +187,9 @@ class SubtitleEditorWidget(QWidget):
     COL_START = 1
     COL_END = 2
     COL_DUR = 3
-    COL_ORIGINAL = 4
-    COL_TRANSLATION = 5
+    COL_TEXT = 4
+    COL_TRANSLATION = 4
+    COL_ORIGINAL = None
 
     request_tm_suggestion = Signal(str)  # original_text
     commit_segment = Signal(str, str, str, str, list)  # original, translated, prev, next, qc_flags
@@ -259,15 +260,14 @@ class SubtitleEditorWidget(QWidget):
         
         # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN, EDGE-TO-EDGE) ---
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Bản gốc", "Bản dịch"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["STT", "Bắt đầu", "Kết thúc", "Duration", "Nội dung phụ đề"])
         from PySide6.QtWidgets import QHeaderView
         self.table.horizontalHeader().setSectionResizeMode(self.COL_STT, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(self.COL_START, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(self.COL_END, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(self.COL_DUR, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(self.COL_ORIGINAL, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(self.COL_TRANSLATION, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(self.COL_TEXT, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
@@ -309,6 +309,7 @@ class SubtitleEditorWidget(QWidget):
         self.ai_translate_btn.setProperty("variant", "primary")
         self.ai_translate_btn.setObjectName("btn_primary")
         self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
+        self.ai_translate_btn.hide()
         
         self.approve_btn = QPushButton("✅ Chốt Timing")
         self.approve_btn.setProperty("variant", "success")
@@ -487,14 +488,6 @@ class SubtitleEditorWidget(QWidget):
                 duration_text = "--"
             self._set_table_item(row, self.COL_DUR, duration_text, readonly=True)
             
-            orig_text = seg.get('original_text', '')
-            if not orig_text.strip():
-                orig_text = "[Unknown Source]"
-            orig_item = QTableWidgetItem(orig_text)
-            orig_item.setFlags(orig_item.flags() & ~Qt.ItemIsEditable)
-            orig_item.setForeground(QColor(Theme.TEXT_MUTED))
-            self.table.setItem(row, self.COL_ORIGINAL, orig_item)
-            
             display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
             
@@ -514,7 +507,7 @@ class SubtitleEditorWidget(QWidget):
                     text_item.setBackground(QColor('#5c4a1a')) # Dark yellow/orange
                     text_item.setToolTip('Cảnh báo Auto-QC:\n' + '\n'.join(f'- {f}' for f in qc_flags))
                     
-            self.table.setItem(row, self.COL_TRANSLATION, text_item)
+            self.table.setItem(row, self.COL_TEXT, text_item)
 
         self.table.blockSignals(False)
         self.update_empty_state()
@@ -541,7 +534,7 @@ class SubtitleEditorWidget(QWidget):
 
     def _set_table_item(self, row, col, text, readonly=False):
         item = QTableWidgetItem(str(text))
-        if readonly or col in (self.COL_STT, self.COL_DUR, self.COL_ORIGINAL):
+        if readonly or col in (self.COL_STT, self.COL_DUR):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
         if col in (self.COL_STT, self.COL_START, self.COL_END, self.COL_DUR):
             item.setTextAlignment(Qt.AlignCenter)
@@ -584,7 +577,7 @@ class SubtitleEditorWidget(QWidget):
         it_stt = self.table.item(row, self.COL_STT)
         it_start = self.table.item(row, self.COL_START)
         it_end = self.table.item(row, self.COL_END)
-        it_text = self.table.item(row, self.COL_TRANSLATION)
+        it_text = self.table.item(row, self.COL_TEXT)
 
         if it_stt and it_start and it_end and it_text:
             try:
