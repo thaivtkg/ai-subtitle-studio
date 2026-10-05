@@ -268,7 +268,7 @@ class MainWindow(QMainWindow):
         self.setDockOptions(
             QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
         )
-        self.setCorner(Qt.BottomRightCorner, Qt.BottomDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
         self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
         self.center_on_screen()
         self.setStyleSheet(Theme.get_global_stylesheet())
@@ -644,9 +644,9 @@ class MainWindow(QMainWindow):
 
         timeline_toolbar = QFrame()
         timeline_toolbar.setObjectName("TimelineToolbar")
-        timeline_toolbar.setFixedHeight(34)
+        timeline_toolbar.setFixedHeight(38)
         tl_tb_layout = QHBoxLayout(timeline_toolbar)
-        tl_tb_layout.setContentsMargins(8, 0, 8, 0)
+        tl_tb_layout.setContentsMargins(12, 3, 12, 3)
         tl_tb_layout.setSpacing(8)
 
         lbl_tl = QLabel("⏱️ TIMELINE")

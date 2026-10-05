@@ -10,9 +10,13 @@ def build_app():
     project_root = os.path.dirname(os.path.abspath(__file__))
     spec_path = os.path.join(project_root, "AI Subtitle Studio.spec")
     
+    venv_python = os.path.join(project_root, ".venv", "Scripts", "python.exe")
+    python_bin = venv_python if os.path.exists(venv_python) else sys.executable
+    print(f"Using Python: {python_bin}")
+
     if os.path.exists(spec_path):
         cmd = [
-            sys.executable, "-m", "PyInstaller",
+            python_bin, "-m", "PyInstaller",
             spec_path,
             "--noconfirm",
             "--clean"

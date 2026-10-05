@@ -50,14 +50,15 @@ class SubtitleGenerationPanel(QWidget):
         # Panel uses global styling from LiquidThemeEngine
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
         self.settings_scroll_area = QScrollArea(self)
         self.settings_scroll_area.setWidgetResizable(True)
         self.settings_scroll_area.setFrameShape(QFrame.NoFrame)
         self.settings_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.settings_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.settings_scroll_area.setMinimumHeight(60)
         self.settings_scroll_area.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
@@ -191,7 +192,7 @@ class SubtitleGenerationPanel(QWidget):
         self.action_footer = QWidget(self)
         footer_layout = QVBoxLayout(self.action_footer)
         footer_layout.setContentsMargins(0, 4, 0, 0)
-        footer_layout.setSpacing(8)
+        footer_layout.setSpacing(6)
 
         self.lbl_status = QLabel("Ready")
         self._configure_status_label(self.lbl_status)

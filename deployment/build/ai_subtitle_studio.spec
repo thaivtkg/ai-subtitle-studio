@@ -66,7 +66,6 @@ hiddenimports = [
     'torch',
     'torchaudio',
     'psutil',
-    'pydantic',
     'sqlite3',
     'unittest.mock',  # Đã ghim cứng để sửa lỗi PyTorch Import
     # Modules nội bộ của dự án

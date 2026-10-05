@@ -60,7 +60,6 @@ hiddenimports = [
     'torch',
     'torchaudio',
     'psutil',
-    'pydantic',
     'sqlite3',
     'unittest.mock',
     # Modules nội bộ của dự án
