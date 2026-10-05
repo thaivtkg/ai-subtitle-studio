@@ -85,31 +85,20 @@ class _SettingsRow(QWidget):
             self._layout.takeAt(0)
 
         gutter = self._checkbox or self._gutter
-        self._layout.addWidget(gutter, 0, 0, alignment=Qt.AlignmentFlag.AlignTop)
-        if compact:
+        self._layout.addWidget(gutter, 0, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._layout.addWidget(
+            self._main, 0, 1, alignment=Qt.AlignmentFlag.AlignVCenter
+        )
+        if self._control is not None:
             self._layout.addWidget(
-                self._main, 0, 1, 1, 2, Qt.AlignmentFlag.AlignTop
+                self._control,
+                0,
+                2,
+                alignment=Qt.AlignmentFlag.AlignRight
+                | Qt.AlignmentFlag.AlignVCenter,
             )
-            if self._control is not None:
-                self._layout.addWidget(
-                    self._control, 1, 1, 1, 2, Qt.AlignmentFlag.AlignRight
-                )
-            self._layout.setColumnStretch(1, 1)
-            self._layout.setColumnStretch(2, 0)
-        else:
-            self._layout.addWidget(
-                self._main, 0, 1, alignment=Qt.AlignmentFlag.AlignTop
-            )
-            if self._control is not None:
-                self._layout.addWidget(
-                    self._control,
-                    0,
-                    2,
-                    alignment=Qt.AlignmentFlag.AlignLeft
-                    | Qt.AlignmentFlag.AlignVCenter,
-                )
-            self._layout.setColumnStretch(1, 1)
-            self._layout.setColumnStretch(2, 0)
+        self._layout.setColumnStretch(1, 1)
+        self._layout.setColumnStretch(2, 0)
 
         self._apply_control_width()
 
@@ -126,12 +115,7 @@ class _SettingsRow(QWidget):
     def _apply_control_width(self):
         if self._control is None or not self._shared_control_width:
             return
-        width = self._shared_control_width
-        if self._compact and self.width() > 0:
-            available = self.width() - self._indicator_gutter_width
-            available -= self._layout.horizontalSpacing()
-            width = min(width, max(0, available))
-        self._control.setFixedWidth(width)
+        self._control.setFixedWidth(self._shared_control_width)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

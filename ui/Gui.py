@@ -362,7 +362,7 @@ class MainWindow(QMainWindow):
         topbar_layout.addSpacing(8)
 
         # Project Menu Dropdown
-        self.btn_project_menu = QPushButton("📁  Dự Án ▾")
+        self.btn_project_menu = QPushButton("📁  Dự Án")
         self.btn_project_menu.setObjectName("btn_project_menu")
         self.btn_project_menu.setFixedHeight(28)
         self.btn_project_menu.setProperty("variant", "secondary")
@@ -380,7 +380,7 @@ class MainWindow(QMainWindow):
         topbar_layout.addWidget(self.btn_project_menu)
 
         # Tools Menu Dropdown
-        self.btn_tools_menu = QPushButton("🛠  Công Cụ ▾")
+        self.btn_tools_menu = QPushButton("🛠  Công Cụ")
         self.btn_tools_menu.setObjectName("btn_tools_menu")
         self.btn_tools_menu.setFixedHeight(28)
         self.btn_tools_menu.setProperty("variant", "secondary")
