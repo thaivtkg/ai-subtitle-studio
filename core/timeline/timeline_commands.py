@@ -110,7 +110,7 @@ class ResizeStartCommand(TimelineEditCommand):
         if not seg: return False
         new_start = seg.start_ms + self.delta_ms
         if new_start > seg.end_ms - MIN_DURATION_MS: return False
-        segs = self.data_provider.get_segments()
+        segs = self.data_provider.get_all_segments()
         idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         if idx > 0 and new_start < segs[idx - 1].start_ms + MIN_DURATION_MS: return False
         elif idx == 0 and new_start < 0: return False
@@ -119,7 +119,7 @@ class ResizeStartCommand(TimelineEditCommand):
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
         seg = self.data_provider.get_segment(self.segment_id)
-        segs = self.data_provider.get_segments()
+        segs = self.data_provider.get_all_segments()
         idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         
         affected_ids = [self.segment_id]
@@ -155,7 +155,7 @@ class ResizeEndCommand(TimelineEditCommand):
         if not seg: return False
         new_end = seg.end_ms + self.delta_ms
         if new_end < seg.start_ms + MIN_DURATION_MS: return False
-        segs = self.data_provider.get_segments()
+        segs = self.data_provider.get_all_segments()
         idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         if idx < len(segs) - 1 and new_end > segs[idx + 1].end_ms - MIN_DURATION_MS: return False
         elif idx == len(segs) - 1 and new_end > self.data_provider.get_duration_ms(): return False
@@ -164,7 +164,7 @@ class ResizeEndCommand(TimelineEditCommand):
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
         seg = self.data_provider.get_segment(self.segment_id)
-        segs = self.data_provider.get_segments()
+        segs = self.data_provider.get_all_segments()
         idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         
         affected_ids = [self.segment_id]
