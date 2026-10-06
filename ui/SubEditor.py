@@ -409,8 +409,8 @@ class SubtitleEditorWidget(QWidget):
         if item:
             item.setText(text)
 
-    def on_timeline_live_edit(self, segment_id: str, new_start_ms: int, new_end_ms: int, *args):
-        """Cập nhật UI thời gian thực khi người dùng đang kéo thả trên Timeline, KHÔNG trigger lưu data."""
+    def on_timeline_live_edit(self, changes: list, edit_mode: object, *args):
+        """Cập nhật UI thời gian thực khi người dùng đang kéo thả trên Timeline, cập nhật all_segments nhưng KHÔNG tạo Undo."""
         if not self.all_segments:
             return
             
@@ -418,20 +418,26 @@ class SubtitleEditorWidget(QWidget):
         if 0 <= self.current_index < len(self.all_segments):
             current_seg_id = self.all_segments[self.current_index].get("id")
             
-        # 1. Cập nhật bảng CurrentSubtitleEditor
-        if current_seg_id == segment_id:
-            blocker = self.current_editor.blockSignals(True)
-            self.current_editor.set_time(new_start_ms, new_end_ms)
-            self.current_editor.blockSignals(False)
+        from core.export.subtitle_parser import ms_to_time_str
+        
+        for seg_id, new_start_ms, new_end_ms in changes:
+            # 1. Cập nhật bảng CurrentSubtitleEditor
+            if current_seg_id == seg_id:
+                blocker = self.current_editor.blockSignals(True)
+                self.current_editor.set_time(new_start_ms, new_end_ms)
+                self.current_editor.blockSignals(False)
 
-        # 2. Cập nhật nhãn (Label) trên QTableWidget
-        row = self._get_row_by_id(segment_id)
-        if row >= 0:
-            from core.export.subtitle_parser import ms_to_time_str
-            self._set_table_item(row, self.COL_START, ms_to_time_str(new_start_ms))
-            self._set_table_item(row, self.COL_END, ms_to_time_str(new_end_ms))
-            dur_ms = max(0, new_end_ms - new_start_ms)
-            self._set_table_item(row, self.COL_DUR, f"{dur_ms / 1000:.3f} s")
+            # 2. Cập nhật all_segments và QTableWidget
+            row = self._get_row_by_id(seg_id)
+            if row >= 0:
+                abs_idx = self._get_absolute_index(row)
+                if abs_idx >= 0:
+                    self.all_segments[abs_idx]["start"] = ms_to_time_str(new_start_ms)
+                    self.all_segments[abs_idx]["end"] = ms_to_time_str(new_end_ms)
+                self._set_table_item(row, self.COL_START, ms_to_time_str(new_start_ms))
+                self._set_table_item(row, self.COL_END, ms_to_time_str(new_end_ms))
+                dur_ms = max(0, new_end_ms - new_start_ms)
+                self._set_table_item(row, self.COL_DUR, f"{dur_ms / 1000:.3f} s")
 
     def render_page(self):
         self.is_rendering = True

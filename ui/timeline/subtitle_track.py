@@ -16,7 +16,7 @@ class SubtitleTrack(QWidget):
     selection_cleared = Signal()
     gap_clicked = Signal(object)
     edit_committed = Signal(str, EditMode, int)
-    live_edit_updated = Signal(str, int, int, object)
+    live_edit_updated = Signal(list, object)
     
     action_split_requested = Signal(str)
     action_merge_requested = Signal(set)
@@ -217,15 +217,34 @@ class SubtitleTrack(QWidget):
 
                 c_start = seg.start_ms
                 c_end = seg.end_ms
+                changes = []
+                
                 if self.edit_mode == EditMode.MOVE:
                     c_start += self.current_delta_ms
                     c_end += self.current_delta_ms
+                    changes.append((self.drag_segment_id, c_start, c_end))
                 elif self.edit_mode == EditMode.RESIZE_LEFT:
                     c_start += self.current_delta_ms
+                    if c_start > c_end - 100: c_start = c_end - 100
+                    changes.append((self.drag_segment_id, c_start, c_end))
+                    
+                    if idx > 0:
+                        prev_seg = self.segments[idx - 1]
+                        if c_start < prev_seg.end_ms:
+                            p_end = max(c_start, prev_seg.start_ms + 100)
+                            changes.append((prev_seg.segment_id, prev_seg.start_ms, p_end))
                 elif self.edit_mode == EditMode.RESIZE_RIGHT:
                     c_end += self.current_delta_ms
+                    if c_end < c_start + 100: c_end = c_start + 100
+                    changes.append((self.drag_segment_id, c_start, c_end))
+                    
+                    if idx < len(self.segments) - 1:
+                        next_seg = self.segments[idx + 1]
+                        if c_end > next_seg.start_ms:
+                            n_start = min(c_end, next_seg.end_ms - 100)
+                            changes.append((next_seg.segment_id, n_start, next_seg.end_ms))
                 
-                self.live_edit_updated.emit(self.drag_segment_id, c_start, c_end, self.edit_mode)
+                self.live_edit_updated.emit(changes, self.edit_mode)
 
             self.update() 
             return

@@ -1046,7 +1046,9 @@ class MainWindow(QMainWindow):
             self.video_player.toggle_playback()
 
 
-    def _on_timeline_live_edit_video_scrub(self, segment_id, start_ms, end_ms, edit_mode):
+    def _on_timeline_live_edit_video_scrub(self, changes, edit_mode):
+        if not changes: return
+        segment_id, start_ms, end_ms = changes[0]
         # Scrub video based on which edge is being dragged
         # EditMode Enum is not directly available, but it is passed as an object.
         # We can use its name.
