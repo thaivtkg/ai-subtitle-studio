@@ -205,12 +205,14 @@ class SubtitleTrack(QWidget):
                     max_delta = next_start - seg.end_ms
                     self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
                 elif self.edit_mode == EditMode.RESIZE_LEFT:
-                    min_delta = prev_end - seg.start_ms
+                    prev_start = self.segments[idx-1].start_ms if idx > 0 else 0
+                    min_delta = (prev_start + min_duration) - seg.start_ms
                     max_delta = (seg.end_ms - min_duration) - seg.start_ms
                     self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
                 elif self.edit_mode == EditMode.RESIZE_RIGHT:
+                    next_end = self.segments[idx+1].end_ms if idx < len(self.segments) - 1 else self.duration_ms
                     min_delta = (seg.start_ms + min_duration) - seg.end_ms
-                    max_delta = next_start - seg.end_ms
+                    max_delta = (next_end - min_duration) - seg.end_ms
                     self.current_delta_ms = max(min_delta, min(self.current_delta_ms, max_delta))
 
                 c_start = seg.start_ms
@@ -300,8 +302,19 @@ class SubtitleTrack(QWidget):
             render_start_ms = seg.start_ms
             render_end_ms = seg.end_ms
 
-            is_dragging = (self.edit_mode != EditMode.NONE and seg.segment_id == self.drag_segment_id)
-            if is_dragging:
+            is_dragging = False
+            drag_seg = None
+            drag_idx = -1
+            
+            if self.edit_mode != EditMode.NONE:
+                for j, s in enumerate(self.segments):
+                    if s.segment_id == self.drag_segment_id:
+                        drag_seg = s
+                        drag_idx = j
+                        break
+                        
+            if drag_seg and seg.segment_id == self.drag_segment_id:
+                is_dragging = True
                 if self.edit_mode == EditMode.MOVE:
                     render_start_ms += self.current_delta_ms
                     render_end_ms += self.current_delta_ms
@@ -313,6 +326,19 @@ class SubtitleTrack(QWidget):
                 if render_start_ms >= render_end_ms - 100:
                     if self.edit_mode == EditMode.RESIZE_LEFT: render_start_ms = render_end_ms - 100
                     if self.edit_mode == EditMode.RESIZE_RIGHT: render_end_ms = render_start_ms + 100
+            elif drag_seg:
+                if self.edit_mode == EditMode.RESIZE_LEFT and seg == self.segments[drag_idx - 1] if drag_idx > 0 else False:
+                    new_drag_start = drag_seg.start_ms + self.current_delta_ms
+                    if render_end_ms > new_drag_start:
+                        render_end_ms = new_drag_start
+                        if render_end_ms < render_start_ms + 100:
+                            render_end_ms = render_start_ms + 100
+                elif self.edit_mode == EditMode.RESIZE_RIGHT and seg == self.segments[drag_idx + 1] if drag_idx < len(self.segments) - 1 else False:
+                    new_drag_end = drag_seg.end_ms + self.current_delta_ms
+                    if render_start_ms < new_drag_end:
+                        render_start_ms = new_drag_end
+                        if render_start_ms > render_end_ms - 100:
+                            render_start_ms = render_end_ms - 100
 
             x1 = self._ms_to_x(render_start_ms)
             x2 = self._ms_to_x(render_end_ms)

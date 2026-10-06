@@ -105,21 +105,40 @@ class ResizeStartCommand(TimelineEditCommand):
         self.segment_id = segment_id
         self.delta_ms = delta_ms
 
-    # BLOCKER 1 FIXED: Validation cho ResizeStart (Giữ khoảng cách tối thiểu)
     def can_execute(self, context=None):
         seg = self.data_provider.get_segment(self.segment_id)
         if not seg: return False
         new_start = seg.start_ms + self.delta_ms
-        return 0 <= new_start <= (seg.end_ms - MIN_DURATION_MS)
+        if new_start > seg.end_ms - MIN_DURATION_MS: return False
+        segs = self.data_provider.get_segments()
+        idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
+        if idx > 0 and new_start < segs[idx - 1].start_ms + MIN_DURATION_MS: return False
+        elif idx == 0 and new_start < 0: return False
+        return True
 
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
-        self._capture_state([self.segment_id], self.before_states)
-        
         seg = self.data_provider.get_segment(self.segment_id)
-        seg.start_ms += self.delta_ms
+        segs = self.data_provider.get_segments()
+        idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         
-        self._capture_state([self.segment_id], self.after_states)
+        affected_ids = [self.segment_id]
+        if idx > 0: affected_ids.append(segs[idx - 1].segment_id)
+        
+        self._capture_state(affected_ids, self.before_states)
+        
+        new_start = seg.start_ms + self.delta_ms
+        seg.start_ms = new_start
+        
+        if idx > 0:
+            prev_seg = segs[idx - 1]
+            if new_start < prev_seg.end_ms:
+                prev_seg.end_ms = new_start
+                if prev_seg.end_ms < prev_seg.start_ms + MIN_DURATION_MS:
+                    prev_seg.end_ms = prev_seg.start_ms + MIN_DURATION_MS
+                    seg.start_ms = prev_seg.end_ms
+                    
+        self._capture_state(affected_ids, self.after_states)
         if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True
@@ -131,22 +150,40 @@ class ResizeEndCommand(TimelineEditCommand):
         self.segment_id = segment_id
         self.delta_ms = delta_ms
 
-    # BLOCKER 1 FIXED: Validation cho ResizeEnd (Giữ khoảng cách tối thiểu)
     def can_execute(self, context=None):
         seg = self.data_provider.get_segment(self.segment_id)
         if not seg: return False
         new_end = seg.end_ms + self.delta_ms
-        duration_ms = self.data_provider.get_duration_ms()
-        return (seg.start_ms + MIN_DURATION_MS) <= new_end <= duration_ms
+        if new_end < seg.start_ms + MIN_DURATION_MS: return False
+        segs = self.data_provider.get_segments()
+        idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
+        if idx < len(segs) - 1 and new_end > segs[idx + 1].end_ms - MIN_DURATION_MS: return False
+        elif idx == len(segs) - 1 and new_end > self.data_provider.get_duration_ms(): return False
+        return True
 
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity: Artifact missing.")
-        self._capture_state([self.segment_id], self.before_states)
-        
         seg = self.data_provider.get_segment(self.segment_id)
-        seg.end_ms += self.delta_ms
+        segs = self.data_provider.get_segments()
+        idx = next((i for i, s in enumerate(segs) if s.segment_id == self.segment_id), -1)
         
-        self._capture_state([self.segment_id], self.after_states)
+        affected_ids = [self.segment_id]
+        if idx < len(segs) - 1: affected_ids.append(segs[idx + 1].segment_id)
+            
+        self._capture_state(affected_ids, self.before_states)
+        
+        new_end = seg.end_ms + self.delta_ms
+        seg.end_ms = new_end
+        
+        if idx < len(segs) - 1:
+            next_seg = segs[idx + 1]
+            if new_end > next_seg.start_ms:
+                next_seg.start_ms = new_end
+                if next_seg.start_ms > next_seg.end_ms - MIN_DURATION_MS:
+                    next_seg.start_ms = next_seg.end_ms - MIN_DURATION_MS
+                    seg.end_ms = next_seg.start_ms
+                    
+        self._capture_state(affected_ids, self.after_states)
         if not self._increment_revision(): raise RuntimeError("Lỗi Integrity: Cập nhật Revision thất bại.")
         self.project_service.mark_dirty()
         return True

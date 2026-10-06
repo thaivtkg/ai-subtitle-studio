@@ -559,10 +559,6 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
     color: $TEXT_DISABLED;
 }
 
-QComboBox::drop-down {
-    border: none;
-    width: 24px;
-}
 
 QComboBox QAbstractItemView {
     background-color: $SURFACE_ELEVATED;

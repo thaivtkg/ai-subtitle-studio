@@ -78,24 +78,29 @@ class SubtitleGenerationPanel(QWidget):
         def _kv_row(label_text, widget):
             row = QHBoxLayout()
             row.setContentsMargins(0, 2, 0, 2)
-            row.setSpacing(8)
+            row.setSpacing(12)
             lbl = QLabel(label_text)
             lbl.setProperty("class", "Caption")
-            lbl.setFixedWidth(100)
+            lbl.setFixedWidth(120)
+            widget.setMinimumWidth(160)
             row.addWidget(lbl)
-            row.addWidget(widget, stretch=1)
+            row.addWidget(widget)
+            row.addStretch()
             return row
 
         mode_layout = QHBoxLayout()
         mode_layout.setContentsMargins(0, 4, 0, 4)
+        mode_layout.setSpacing(12)
         mode_lbl = QLabel("Task Mode:")
         mode_lbl.setProperty("class", "Caption")
-        mode_lbl.setFixedWidth(100)
+        mode_lbl.setFixedWidth(120)
         mode_layout.addWidget(mode_lbl)
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        mode_layout.addWidget(self.cmb_mode, stretch=1)
+        self.cmb_mode.setMinimumWidth(160)
+        mode_layout.addWidget(self.cmb_mode)
+        mode_layout.addStretch()
         settings_layout.addLayout(mode_layout)
         # Adapt Qt's int payload to the no-argument policy slot.
         self.cmb_mode.currentIndexChanged.connect(
@@ -190,6 +195,7 @@ class SubtitleGenerationPanel(QWidget):
         layout.addWidget(self.settings_scroll_area, stretch=1)
 
         self.action_footer = QWidget(self)
+        self.action_footer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         footer_layout = QVBoxLayout(self.action_footer)
         footer_layout.setContentsMargins(0, 4, 0, 0)
         footer_layout.setSpacing(6)
