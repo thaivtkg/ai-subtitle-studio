@@ -1085,7 +1085,7 @@ class MainWindow(QMainWindow):
             
         if index >= 0 and index < len(self.sub_editor.all_segments):
             seg = self.sub_editor.all_segments[index]
-            from core.export.subtitle_parser import time_str_to_ms
+            from ui.SubEditor import time_str_to_ms
             start_ms = time_str_to_ms(seg['start']) if 'start' in seg else seg.get('start_ms', 0)
             end_ms = time_str_to_ms(seg['end']) if 'end' in seg else seg.get('end_ms', 0)
             self._on_segment_focused(start_ms, end_ms)

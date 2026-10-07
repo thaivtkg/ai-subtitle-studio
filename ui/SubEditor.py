@@ -429,7 +429,6 @@ class SubtitleEditorWidget(QWidget):
         if 0 <= self.current_index < len(self.all_segments):
             current_seg_id = self.all_segments[self.current_index].get("id")
             
-        from core.export.subtitle_parser import ms_to_time_str
         
         for seg_id, new_start_ms, new_end_ms in changes:
             # 1. Cập nhật bảng CurrentSubtitleEditor
@@ -742,7 +741,6 @@ class SubtitleEditorWidget(QWidget):
         if not self.all_segments or self.current_index < 0 or self.current_index >= len(self.all_segments):
             return
         seg = self.all_segments[self.current_index]
-        from core.export.subtitle_parser import time_str_to_ms
         start_ms = time_str_to_ms(seg.get("start", "00:00:00,000"))
         end_ms = time_str_to_ms(seg.get("end", "00:00:00,000"))
         self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)
