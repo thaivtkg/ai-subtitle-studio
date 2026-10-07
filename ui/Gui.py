@@ -654,6 +654,7 @@ class MainWindow(QMainWindow):
         tl_tb_layout.addWidget(lbl_tl)
         tl_tb_layout.addStretch()
 
+        tl_tb_layout.addWidget(self.sub_editor.fix_overlap_btn)
         tl_tb_layout.addWidget(self.sub_editor.approve_btn)
         tl_tb_layout.addWidget(self.sub_editor.save_draft_btn)
         tl_tb_layout.addWidget(self.sub_editor.save_btn)

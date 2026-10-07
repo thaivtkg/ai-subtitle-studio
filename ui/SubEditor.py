@@ -322,6 +322,22 @@ class SubtitleEditorWidget(QWidget):
         self.ai_translate_btn.clicked.connect(self._on_ai_translate_clicked)
         self.ai_translate_btn.hide()
         
+        from PySide6.QtWidgets import QMenu
+        self.fix_overlap_btn = QPushButton("⚡ Sửa chồng lấn")
+        self.fix_overlap_btn.setObjectName("btn_secondary")
+        self.fix_overlap_btn.setProperty("variant", "secondary")
+        self.fix_overlap_btn.setEnabled(False)
+        self.fix_overlap_menu = QMenu(self)
+        self.action_fix_keep_prev = self.fix_overlap_menu.addAction("Giữ Sub trước, rút Sub sau")
+        self.action_fix_keep_next = self.fix_overlap_menu.addAction("Giữ Sub sau, rút Sub trước")
+        self.fix_overlap_menu.addSeparator()
+        self.action_fix_all = self.fix_overlap_menu.addAction("Sửa tất cả chồng lấn")
+        self.fix_overlap_btn.setMenu(self.fix_overlap_menu)
+        
+        self.action_fix_keep_prev.triggered.connect(lambda: self.fix_overlaps(mode="keep_prev", all_overlaps=False))
+        self.action_fix_keep_next.triggered.connect(lambda: self.fix_overlaps(mode="keep_next", all_overlaps=False))
+        self.action_fix_all.triggered.connect(lambda: self.fix_overlaps(mode="keep_prev", all_overlaps=True))
+
         self.approve_btn = QPushButton("✅ Chốt Timing")
         self.approve_btn.setProperty("variant", "success")
         self.approve_btn.clicked.connect(self.approve_timing)
@@ -536,6 +552,7 @@ class SubtitleEditorWidget(QWidget):
         self.update_empty_state()
         self._load_current_editor()
         self.sync_to_controller()
+        self.check_overlaps()
         self.is_rendering = False
 
     def _video_duration_ms(self):
@@ -569,7 +586,7 @@ class SubtitleEditorWidget(QWidget):
             start_ms = self.time_str_to_ms(seg['start'])
             end_ms = self.time_str_to_ms(seg['end'])
             raw_text = seg['text']
-            if not raw_text.strip() or raw_text == \"[ Chưa có nội dung ]\": raw_text = \"[ Chưa có nội dung ]\"
+            if not raw_text.strip() or raw_text == "[ Chưa có nội dung ]": raw_text = "[ Chưa có nội dung ]"
             try: stt = int(seg['stt'])
             except: stt = 0
             data.append((start_ms, end_ms, raw_text, stt))
@@ -1068,3 +1085,70 @@ class SubtitleEditorWidget(QWidget):
             if not seg.get('text', '').strip() or seg.get('status') == 'timing_only':
                 self.next_empty_idx = i
                 break
+
+    def check_overlaps(self):
+        overlaps = 0
+        self.overlap_pairs = []
+        for i in range(len(self.all_segments) - 1):
+            s1 = self.all_segments[i]
+            s2 = self.all_segments[i + 1]
+            end_ms = self.time_str_to_ms(s1["end"])
+            next_start_ms = self.time_str_to_ms(s2["start"])
+            if end_ms > next_start_ms:
+                overlaps += 1
+                self.overlap_pairs.append(i)
+                
+        if overlaps > 0:
+            self.fix_overlap_btn.setText(f"⚡ Sửa chồng lấn ({overlaps})")
+            self.fix_overlap_btn.setEnabled(True)
+        else:
+            self.fix_overlap_btn.setText("⚡ Sửa chồng lấn")
+            self.fix_overlap_btn.setEnabled(False)
+
+    def fix_overlaps(self, mode="keep_prev", all_overlaps=False):
+        if not self.overlap_pairs or self.undo_manager is None:
+            return
+            
+        targets = self.overlap_pairs if all_overlaps else [self.overlap_pairs[0]]
+        if not all_overlaps and self.current_index in self.overlap_pairs:
+            targets = [self.current_index]
+            
+        changes = []
+        for i in targets:
+            s1 = self.all_segments[i]
+            s2 = self.all_segments[i + 1]
+            end_ms = self.time_str_to_ms(s1["end"])
+            next_start_ms = self.time_str_to_ms(s2["start"])
+            
+            if end_ms <= next_start_ms:
+                continue
+                
+            if mode == "keep_prev":
+                new_next_start_ms = end_ms
+                next_end_ms = self.time_str_to_ms(s2["end"])
+                if new_next_start_ms > next_end_ms - 100:
+                    new_next_start_ms = next_end_ms - 100
+                changes.append({
+                    "index": i + 1,
+                    "old_start": s2["start"],
+                    "old_end": s2["end"],
+                    "new_start": self.ms_to_time_str(new_next_start_ms),
+                    "new_end": s2["end"],
+                })
+            else:
+                new_end_ms = next_start_ms
+                start_ms = self.time_str_to_ms(s1["start"])
+                if new_end_ms < start_ms + 100:
+                    new_end_ms = start_ms + 100
+                changes.append({
+                    "index": i,
+                    "old_start": s1["start"],
+                    "old_end": s1["end"],
+                    "new_start": s1["start"],
+                    "new_end": self.ms_to_time_str(new_end_ms),
+                })
+                
+        if changes:
+            self.undo_manager.push(EditTimingCommand(changes, data_provider=self.all_segments))
+            self.render_page()
+            

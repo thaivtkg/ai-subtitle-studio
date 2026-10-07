@@ -1,29 +1,36 @@
 from core.subtitle_editing.commands.base_command import SubtitleCommand
 
-
 class EditTimingCommand(SubtitleCommand):
     def __init__(
         self,
-        segment_index: int,
-        old_start,
-        old_end,
-        new_start,
-        new_end,
-        data_provider: list,
+        segment_index_or_changes,
+        old_start=None,
+        old_end=None,
+        new_start=None,
+        new_end=None,
+        data_provider=None,
     ):
-        super().__init__("Sửa thời gian", data_provider)
-        self.segment_index = segment_index
-        self.old_start = old_start
-        self.old_end = old_end
-        self.new_start = new_start
-        self.new_end = new_end
+        if isinstance(segment_index_or_changes, list):
+            super().__init__("Sửa thời gian", data_provider)
+            self.changes = segment_index_or_changes
+        else:
+            super().__init__("Sửa thời gian", data_provider)
+            self.changes = [{
+                "index": segment_index_or_changes,
+                "old_start": old_start,
+                "old_end": old_end,
+                "new_start": new_start,
+                "new_end": new_end
+            }]
 
     def undo(self):
-        segment = self.data_provider[self.segment_index]
-        segment["start"] = self.old_start
-        segment["end"] = self.old_end
+        for c in self.changes:
+            segment = self.data_provider[c["index"]]
+            segment["start"] = c["old_start"]
+            segment["end"] = c["old_end"]
 
     def redo(self):
-        segment = self.data_provider[self.segment_index]
-        segment["start"] = self.new_start
-        segment["end"] = self.new_end
+        for c in self.changes:
+            segment = self.data_provider[c["index"]]
+            segment["start"] = c["new_start"]
+            segment["end"] = c["new_end"]
