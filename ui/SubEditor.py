@@ -972,12 +972,15 @@ class SubtitleEditorWidget(QWidget):
         self.all_segments = segments
         self.srt_path = srt_path
         self.current_page = 0
-        self.render_page()
+        
         if self.undo_manager:
             self.undo_manager.clear()
         if self.selection_controller:
             self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
-        self.update_draft_progress()
+            
+        if not self.auto_resolve_overlaps():
+            self.render_page()
+            self.update_draft_progress()
 
     def save_srt(self):
         from PySide6.QtWidgets import QFileDialog
@@ -1085,6 +1088,44 @@ class SubtitleEditorWidget(QWidget):
             if not seg.get('text', '').strip() or seg.get('status') == 'timing_only':
                 self.next_empty_idx = i
                 break
+
+
+    def auto_resolve_overlaps(self):
+        if not self.all_segments or self.undo_manager is None:
+            return False
+            
+        changes = []
+        MIN_DURATION_MS = 100
+        
+        for i in range(len(self.all_segments) - 1):
+            s1 = self.all_segments[i]
+            s2 = self.all_segments[i + 1]
+            
+            end_ms = self.time_str_to_ms(s1["end"])
+            next_start_ms = self.time_str_to_ms(s2["start"])
+            next_end_ms = self.time_str_to_ms(s2["end"])
+            
+            if end_ms > next_start_ms:
+                new_next_start_ms = end_ms
+                new_duration = next_end_ms - new_next_start_ms
+                
+                if new_duration >= MIN_DURATION_MS:
+                    changes.append({
+                        "index": i + 1,
+                        "old_start": s2["start"],
+                        "old_end": s2["end"],
+                        "new_start": self.ms_to_time_str(new_next_start_ms),
+                        "new_end": s2["end"],
+                    })
+                    s2["start"] = self.ms_to_time_str(new_next_start_ms)
+                    
+        if changes:
+            from ui.Toast import Toast
+            self.undo_manager.push(EditTimingCommand(changes, data_provider=self.all_segments))
+            Toast.show_info(self.window(), f"⚡ Đã tự động sửa {len(changes)} chồng lấn.\n(Nhấn Ctrl+Z để Hoàn tác)")
+            return True
+            
+        return False
 
     def check_overlaps(self):
         overlaps = 0
