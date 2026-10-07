@@ -507,6 +507,7 @@ class MainWindow(QMainWindow):
         
         # TM Signals
         self.sub_editor.request_tm_suggestion.connect(self._on_request_tm_suggestion)
+        self.sub_editor.segment_scan_requested.connect(self._on_segment_scan_requested)
         self.sub_editor.request_ai_translate.connect(self._on_ai_translate_requested)
         self.sub_editor.segment_focused.connect(self._on_segment_focused)
         self.sub_editor.commit_segment.connect(self._on_commit_segment)
@@ -1095,6 +1096,56 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'timeline_widget') and self.timeline_widget:
             self.timeline_widget.container.waveform.set_selected_range(start_ms, end_ms)
             
+    def _on_segment_scan_requested(self, segment_id, start_ms, end_ms):
+        project = self.project_service.current_project
+        if not project or not project.active_video_path:
+            return
+            
+        settings = self.generation_panel._timing_settings()
+        
+        from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
+        request = SubtitleGenerationRequest(
+            request_id="scan_" + str(segment_id),
+            project_id=project.project_id,
+            source_fingerprint=project.active_video_path,
+            video_path=project.active_video_path,
+            model_size=settings.get("model_size", "large-v3-turbo"),
+            compute_type=settings.get("compute_type", "int8"),
+            language=settings.get("language", None),
+            use_vad=settings.get("use_vad", True),
+            min_silence_ms=settings.get("min_silence_ms", 500),
+            word_timestamps=False,
+        )
+        
+        from workers.SegmentScanWorker import SegmentScanWorker
+        self.scan_worker = SegmentScanWorker(str(segment_id), start_ms, end_ms, request, self.subtitle_whisper_service)
+        self.scan_worker.finished_signal.connect(self._on_segment_scan_finished)
+        self.scan_worker.error_signal.connect(self._on_segment_scan_error)
+        self.scan_worker.start()
+        
+        self.sub_editor.current_editor.text_edit.setPlaceholderText("Đang nhận diện âm thanh...")
+        self.sub_editor.current_editor.text_edit.setDisabled(True)
+        self.sub_editor.current_editor.btn_scan.setDisabled(True)
+
+    def _on_segment_scan_finished(self, segment_id, text):
+        self.sub_editor.current_editor.text_edit.setPlaceholderText("Nội dung phụ đề...")
+        self.sub_editor.current_editor.text_edit.setDisabled(False)
+        self.sub_editor.current_editor.btn_scan.setDisabled(False)
+        
+        # Cập nhật text vào editor
+        if self.sub_editor.all_segments:
+            seg = self.sub_editor.all_segments[self.sub_editor.current_index]
+            if str(seg.get("id")) == str(segment_id):
+                self.sub_editor.current_editor.text_edit.setText(text)
+                # Tự động apply thay đổi
+                self.sub_editor._apply_current_editor()
+
+    def _on_segment_scan_error(self, segment_id, error_msg):
+        self.sub_editor.current_editor.text_edit.setPlaceholderText("Nội dung phụ đề...")
+        self.sub_editor.current_editor.text_edit.setDisabled(False)
+        self.sub_editor.current_editor.btn_scan.setDisabled(False)
+        self.append_log(f"❌ [LỖI Scan Đoạn] {error_msg}")
+
     def _on_ai_translate_requested(self, selected_indices):
         from core.translation.agentic_prompt_builder import AgenticPromptBuilder
         from core.transcription.token_counter import ApproximateTokenCounter

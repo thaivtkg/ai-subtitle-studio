@@ -66,6 +66,7 @@ def time_str_to_ms(time_str: str) -> int:
 
 class CurrentSubtitleEditor(QWidget):
     changed = Signal(dict)
+    scan_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -105,6 +106,14 @@ class CurrentSubtitleEditor(QWidget):
         # Hidden text_original for backward compatibility
         self.text_original = QTextEdit(self)
         self.text_original.hide()
+
+
+        self.btn_scan = QPushButton("Quét lại")
+        self.btn_scan.setObjectName("btn_secondary")
+        self.btn_scan.setToolTip("Nhận diện lại âm thanh đoạn này")
+        self.btn_scan.setFixedHeight(26)
+        self.btn_scan.clicked.connect(self.scan_requested.emit)
+        layout.addWidget(self.btn_scan)
 
         self.btn_prev = QPushButton("<")
         self.btn_prev.setFixedSize(26, 26)
@@ -193,7 +202,8 @@ class SubtitleEditorWidget(QWidget):
 
     request_tm_suggestion = Signal(str)  # original_text
     commit_segment = Signal(str, str, str, str, list)  # original, translated, prev, next, qc_flags
-    request_ai_translate = Signal(list) # selected indices
+    request_ai_translate = Signal(list)
+    segment_scan_requested = Signal(str, int, int) # selected indices
 
     seek_requested = Signal(int)
     segment_focused = Signal(int, int)
@@ -290,6 +300,7 @@ class SubtitleEditorWidget(QWidget):
         self.txt_content = self.current_editor.text_edit
         self.current_editor.setEnabled(False)
         self.current_editor.changed.connect(self._apply_current_editor)
+        self.current_editor.scan_requested.connect(self._on_current_editor_scan_requested)
         left_layout.addWidget(self.current_editor)
         for widget in (
             self.current_editor.text_edit,
@@ -726,6 +737,15 @@ class SubtitleEditorWidget(QWidget):
                 original_text=seg.get("original_text", "")
             )
             self._tm_debounce.start()
+
+    def _on_current_editor_scan_requested(self):
+        if not self.all_segments or self.current_index < 0 or self.current_index >= len(self.all_segments):
+            return
+        seg = self.all_segments[self.current_index]
+        from core.export.subtitle_parser import time_str_to_ms
+        start_ms = time_str_to_ms(seg.get("start", "00:00:00,000"))
+        end_ms = time_str_to_ms(seg.get("end", "00:00:00,000"))
+        self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)
 
     def _apply_current_editor(self, values=None):
         if self._is_syncing_ui or self.current_index < 0 or self.undo_manager is None:
