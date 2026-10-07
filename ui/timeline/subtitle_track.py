@@ -383,6 +383,23 @@ class SubtitleTrack(QWidget):
             text_rect = seg_rect.adjusted(5, 0, -5, 0)
             painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, painter.fontMetrics().elidedText(seg.text, Qt.ElideRight, text_rect.width()))
 
+            # Draw OVERLAP warning if overlapping with NEXT segment
+            idx = self.segments.index(seg)
+            if idx < len(self.segments) - 1:
+                next_seg = self.segments[idx + 1]
+                if render_end_ms > next_seg.start_ms:
+                    nx = self._ms_to_x(next_seg.start_ms)
+                    overlap_width = max(2, x2 - nx)
+                    overlap_rect = QRect(nx, 5, overlap_width, self.height() - 10)
+                    painter.setBrush(QBrush(QColor(255, 0, 0, 100), Qt.DiagCrossPattern))
+                    painter.setPen(Qt.NoPen)
+                    painter.drawRect(overlap_rect)
+                    
+                    # Draw small overlap text if wide enough
+                    if overlap_width > 40:
+                        painter.setPen(QColor(255, 50, 50))
+                        painter.drawText(overlap_rect, Qt.AlignCenter, f"{render_end_ms - next_seg.start_ms:.0f}ms")
+
             # Real-time Tooltip for Dragging
             if is_dragging:
                 dur = int(render_end_ms - render_start_ms)

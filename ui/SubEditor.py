@@ -133,7 +133,7 @@ class CurrentSubtitleEditor(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
         for widget in (self.start_edit, self.end_edit):
-            widget.editingFinished.connect(self.commit_pending_edit)
+            widget.editingFinished.connect(self._emit_changed)
         self.text_edit.textChanged.connect(self._schedule_emit)
         self._debounce.timeout.connect(self._emit_changed)
 
