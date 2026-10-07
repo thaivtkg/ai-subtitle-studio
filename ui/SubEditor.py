@@ -133,7 +133,7 @@ class CurrentSubtitleEditor(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
         for widget in (self.start_edit, self.end_edit):
-            widget.textChanged.connect(self._schedule_emit)
+            widget.editingFinished.connect(self.commit_pending_edit)
         self.text_edit.textChanged.connect(self._schedule_emit)
         self._debounce.timeout.connect(self._emit_changed)
 
@@ -569,7 +569,7 @@ class SubtitleEditorWidget(QWidget):
             start_ms = self.time_str_to_ms(seg['start'])
             end_ms = self.time_str_to_ms(seg['end'])
             raw_text = seg['text']
-            if raw_text == "[ Chưa có nội dung ]": raw_text = ""
+            if not raw_text.strip() or raw_text == \"[ Chưa có nội dung ]\": raw_text = \"[ Chưa có nội dung ]\"
             try: stt = int(seg['stt'])
             except: stt = 0
             data.append((start_ms, end_ms, raw_text, stt))
@@ -772,6 +772,31 @@ class SubtitleEditorWidget(QWidget):
 
         new_start = self._coerce_time_value(segment["start"], values["start"])
         new_end = self._coerce_time_value(segment["end"], values["end"])
+        
+        # Hard clamp to prevent overlap
+        start_ms = self.time_str_to_ms(new_start)
+        end_ms = self.time_str_to_ms(new_end)
+        
+        if abs_idx > 0:
+            prev_seg = self.all_segments[abs_idx - 1]
+            prev_end_ms = self.time_str_to_ms(prev_seg["end"])
+            if start_ms < prev_end_ms:
+                start_ms = prev_end_ms
+                new_start = self.ms_to_time_str(start_ms)
+                
+        if abs_idx < len(self.all_segments) - 1:
+            next_seg = self.all_segments[abs_idx + 1]
+            next_start_ms = self.time_str_to_ms(next_seg["start"])
+            if end_ms > next_start_ms:
+                end_ms = next_start_ms
+                new_end = self.ms_to_time_str(end_ms)
+                
+        # Also ensure start < end after clamping
+        if start_ms >= end_ms:
+            # If invalid, fallback to original
+            new_start = segment["start"]
+            new_end = segment["end"]
+
         if new_start != segment["start"] or new_end != segment["end"]:
             self.undo_manager.push(
                 EditTimingCommand(
