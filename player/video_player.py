@@ -421,7 +421,7 @@ class VideoPlayerWidget(QWidget):
             # [FIX] Kích hoạt thanh Highlight của bảng Editor
             if self._last_highlighted_stt != stt_val:
                 self._last_highlighted_stt = stt_val
-                if not range_provider and hasattr(main_window, 'sub_editor'):
+                if hasattr(main_window, 'sub_editor'):
                     main_window.sub_editor.highlight_row_by_stt(stt_val)
         else:
             self.subtitle_overlay.clear_subtitle()
@@ -429,7 +429,7 @@ class VideoPlayerWidget(QWidget):
             # [FIX] Xóa Highlight khi kim thời gian rơi vào khoảng nghỉ (không có sub)
             if self._last_highlighted_stt is not None:
                 self._last_highlighted_stt = None
-                if not range_provider and hasattr(main_window, 'sub_editor'):
+                if hasattr(main_window, 'sub_editor'):
                     main_window.sub_editor.clear_highlight()
         self.timeline_position_changed.emit(position)
 

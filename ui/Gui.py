@@ -1098,7 +1098,11 @@ class MainWindow(QMainWindow):
             
     def _on_segment_scan_requested(self, segment_id, start_ms, end_ms):
         project = self.project_service.current_project
-        if not project or not project.active_video_path:
+        if not project:
+            return
+            
+        vid_path = getattr(self, "current_vid", getattr(project, "video_path", getattr(project, "source_fingerprint", "")))
+        if not vid_path:
             return
             
         settings = self.generation_panel._timing_settings()
@@ -1107,8 +1111,8 @@ class MainWindow(QMainWindow):
         request = SubtitleGenerationRequest(
             request_id="scan_" + str(segment_id),
             project_id=project.project_id,
-            source_fingerprint=project.active_video_path,
-            video_path=project.active_video_path,
+            source_fingerprint=getattr(getattr(project, "source", None), "fingerprint", vid_path),
+            video_path=vid_path,
             model_size=settings.get("model_size", "large-v3-turbo"),
             compute_type=settings.get("compute_type", "int8"),
             language=settings.get("language", None),
