@@ -1120,7 +1120,7 @@ class SubtitleEditorWidget(QWidget):
                     s2["start"] = self.ms_to_time_str(new_next_start_ms)
                     
         if changes:
-            from ui.Toast import Toast
+            from ui.toast import Toast
             self.undo_manager.push(EditTimingCommand(changes, data_provider=self.all_segments))
             Toast.show_info(self.window(), f"⚡ Đã tự động sửa {len(changes)} chồng lấn.\n(Nhấn Ctrl+Z để Hoàn tác)")
             return True
