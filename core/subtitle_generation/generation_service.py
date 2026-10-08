@@ -60,6 +60,8 @@ class SubtitleGenerationService(QObject):
         self.current_batches: List[SubtitleGenerationBatch] = []
         self.current_checkpoint: Optional[SubtitleGenerationCheckpoint] = None
         self.current_timing_ranges = []
+        self.checkpoint_history = []
+        self.initial_state = None
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -102,6 +104,12 @@ class SubtitleGenerationService(QObject):
         if video_duration_ms <= 0:
             raise ValueError("Video duration must be positive.")
 
+        if existing_segments is not None:
+            self.create_history_checkpoint(existing_segments, is_initial=True)
+        else:
+            # We can't snapshot without segments. Maybe load from artifact?
+            pass
+
         if request.range_start_ms is not None or request.range_end_ms is not None:
             self._start_range_generation(
                 request, video_duration_ms, existing_segments
@@ -132,6 +140,8 @@ class SubtitleGenerationService(QObject):
             timing_segment_count = len(segment_ranges)
         self.current_timing_ranges = list(segment_ranges or [])
 
+        self.checkpoint_history = []
+        self.initial_state = None
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -198,6 +208,8 @@ class SubtitleGenerationService(QObject):
         self._range_editor_segments = existing_segments
         self._range_duration_ms = duration_ms
         self.current_timing_ranges = []
+        self.checkpoint_history = []
+        self.initial_state = None
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -253,6 +265,8 @@ class SubtitleGenerationService(QObject):
                     "STALE_SUBTITLE_FILE: subtitle artifact was edited externally."
                 )
 
+        self.checkpoint_history = []
+        self.initial_state = None
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -360,6 +374,81 @@ class SubtitleGenerationService(QObject):
         worker.start()
 
     @Slot(object, object)
+
+    def create_history_checkpoint(self, segments, is_initial=False):
+        """Creates a snapshot of the generation state and appends to history."""
+        from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
+        project = self.project_service.current_project
+        if not project:
+            return
+            
+        cp = GenerationCheckpoint(
+            checkpoint_id=str(uuid.uuid4()),
+            project_id=project.project_id,
+            source_fingerprint=project.video_hash,
+            generated_count=len(segments),
+            segments_snapshot=segments,
+            generation_request_id=self.current_request.request_id if self.current_request else None
+        )
+        
+        if is_initial:
+            self.initial_state = cp
+            self.checkpoint_history.clear()
+        else:
+            self.checkpoint_history.append(cp)
+            
+    def get_rollback_checkpoint(self, target_count=None, checkpoint_id=None):
+        """
+        Resolves the target rollback checkpoint.
+        If target_count is 0, returns the initial_state.
+        If target_count is provided, finds the checkpoint with the exact or closest generated_count.
+        """
+        if target_count == 0:
+            return self.initial_state
+            
+        if checkpoint_id:
+            for cp in self.checkpoint_history:
+                if cp.checkpoint_id == checkpoint_id:
+                    return cp
+            if self.initial_state and self.initial_state.checkpoint_id == checkpoint_id:
+                return self.initial_state
+            return None
+            
+        if target_count is not None:
+            # Find closest valid checkpoint
+            if not self.checkpoint_history:
+                return None
+            # Return the first one matching exactly, or fallback to nearest? 
+            # The prompt implies looking for an exact match or reporting not found/closest.
+            # Let's just return exact match or closest.
+            closest = min(self.checkpoint_history, key=lambda cp: abs(cp.generated_count - target_count))
+            return closest
+            
+        return None
+
+
+    def execute_rollback(self, target_count, data_provider, undo_manager):
+        """
+        Executes a rollback to a specific target_count by pushing a RestoreGenerationCommand
+        to the provided undo_manager.
+        """
+        cp = self.get_rollback_checkpoint(target_count)
+        if cp is None:
+            raise ValueError(f"No checkpoint found near target count: {target_count}")
+            
+        from core.subtitle_editing.commands.restore_generation_command import RestoreGenerationCommand
+        
+        # Check for manual edits (for UI reporting later)
+        has_manual = cp.has_manual_edits_compared_to(data_provider)
+        
+        command = RestoreGenerationCommand(
+            before_segments=data_provider,
+            after_segments=cp.segments_snapshot,
+            data_provider=data_provider
+        )
+        undo_manager.push(command)
+        return has_manual
+
     def _commit_batch(
         self, batch: SubtitleGenerationBatch, result: SubtitleGenerationResult
     ) -> None:
@@ -413,6 +502,7 @@ class SubtitleGenerationService(QObject):
             batch.status = "COMPLETED"
             batch.updated_at = self._now()
             self.current_checkpoint.completed_batches.append(batch.batch_id)
+            self.create_history_checkpoint(existing)
             self.current_checkpoint.artifact_revision = artifact.revision
             self.current_checkpoint.artifact_content_hash = (
                 self.artifact_service.content_hash(artifact.path)
