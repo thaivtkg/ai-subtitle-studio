@@ -471,6 +471,7 @@ class SubtitleGenerationService(QObject):
 
     def create_history_checkpoint(self, segments, is_initial=False, is_range=False):
         """Creates a snapshot of the generation state and appends to history."""
+        self._ensure_history_loaded()
         from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
         project = self.project_service.current_project
         if not project:
@@ -482,9 +483,9 @@ class SubtitleGenerationService(QObject):
             c_type = "RANGE_GENERATION_BATCH" if is_range else "FULL_GENERATION_BATCH"
             
         cp = GenerationCheckpoint(
-            checkpoint_id=str(uuid.uuid4()),
+            checkpoint_id=str(__import__("uuid").uuid4()),
             project_id=project.project_id,
-            source_fingerprint=project.video_hash,
+            source_fingerprint=project.source.fingerprint if hasattr(project, "source") else "",
             generated_count=len(segments),
             segments_snapshot=segments,
             checkpoint_type=c_type,
@@ -492,50 +493,44 @@ class SubtitleGenerationService(QObject):
         )
         
         if is_initial:
-            self.initial_state = cp
-            self.checkpoint_history.clear()
-            self._save_history()
+            if not self.initial_state:
+                self.initial_state = cp
+                self._save_history()
         else:
             self.checkpoint_history.append(cp)
-        self._save_history()
+            self._save_history()
             
     def get_rollback_checkpoint(self, target_count=None, checkpoint_id=None):
         """
-        self._ensure_history_loaded()
         Resolves the target rollback checkpoint.
-        If target_count is 0, returns the initial_state.
-        If target_count is provided, finds the checkpoint with the exact or closest generated_count.
         """
-        if target_count == 0:
-            return self.initial_state
-            
+        self._ensure_history_loaded()
         if checkpoint_id:
+            if self.initial_state and self.initial_state.checkpoint_id == checkpoint_id:
+                return self.initial_state
             for cp in self.checkpoint_history:
                 if cp.checkpoint_id == checkpoint_id:
                     return cp
-            if self.initial_state and self.initial_state.checkpoint_id == checkpoint_id:
-                return self.initial_state
             return None
             
-        if target_count is not None:
-            # Find closest valid checkpoint
-            if not self.checkpoint_history:
-                return None
-            # Return the first one matching exactly, or fallback to nearest? 
-            # The prompt implies looking for an exact match or reporting not found/closest.
-            # Let's just return exact match or closest.
-            closest = min(self.checkpoint_history, key=lambda cp: abs(cp.generated_count - target_count))
-            return closest
+        if target_count == 0:
+            return self.initial_state
             
+        if target_count is not None:
+            # Exact match only
+            for cp in self.checkpoint_history:
+                if cp.generated_count == target_count:
+                    return cp
+                    
         return None
 
 
-    def execute_rollback(self, target_count, data_provider, undo_manager):
+    def execute_rollback(self, target_count, data_provider, undo_manager, checkpoint_id=None):
         """
         Executes a rollback to a specific target_count by pushing a RestoreGenerationCommand
         to the provided undo_manager.
         """
-        cp = self.get_rollback_checkpoint(target_count)
+        cp = self.get_rollback_checkpoint(target_count, checkpoint_id=checkpoint_id)
         if cp is None:
             raise ValueError(f"No checkpoint found near target count: {target_count}")
             

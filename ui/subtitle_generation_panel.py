@@ -793,7 +793,7 @@ class SubtitleGenerationPanel(QWidget):
             main_window = QApplication.instance().activeWindow()
             if main_window and hasattr(main_window, 'undo_manager'):
                 try:
-                    self.generation_service.execute_rollback(target_count, self._get_current_segments(), main_window.undo_manager)
+                    self.generation_service.execute_rollback(target_count, self._get_current_segments(), main_window.undo_manager, checkpoint_id=cp.checkpoint_id)
                     if hasattr(main_window, 'sub_editor'):
                         main_window.sub_editor.render_page()
                     # We might need to refresh history UI
