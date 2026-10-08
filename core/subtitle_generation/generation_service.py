@@ -389,12 +389,17 @@ class SubtitleGenerationService(QObject):
 
     @Slot(object, object)
 
-    def create_history_checkpoint(self, segments, is_initial=False):
+    def create_history_checkpoint(self, segments, is_initial=False, is_range=False):
         """Creates a snapshot of the generation state and appends to history."""
         from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
         project = self.project_service.current_project
         if not project:
             return
+            
+        if is_initial:
+            c_type = "INITIAL"
+        else:
+            c_type = "RANGE_GENERATION_BATCH" if is_range else "FULL_GENERATION_BATCH"
             
         cp = GenerationCheckpoint(
             checkpoint_id=str(uuid.uuid4()),
@@ -402,7 +407,7 @@ class SubtitleGenerationService(QObject):
             source_fingerprint=project.video_hash,
             generated_count=len(segments),
             segments_snapshot=segments,
-            checkpoint_type="INITIAL" if is_initial else "BATCH",
+            checkpoint_type=c_type,
             generation_request_id=self.current_request.request_id if self.current_request else None
         )
         
@@ -517,7 +522,7 @@ class SubtitleGenerationService(QObject):
             batch.status = "COMPLETED"
             batch.updated_at = self._now()
             self.current_checkpoint.completed_batches.append(batch.batch_id)
-            self.create_history_checkpoint(existing)
+            self.create_history_checkpoint(existing, is_range=self._is_range_generation)
             self.current_checkpoint.artifact_revision = artifact.revision
             self.current_checkpoint.artifact_content_hash = (
                 self.artifact_service.content_hash(artifact.path)

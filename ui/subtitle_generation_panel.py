@@ -1,7 +1,8 @@
 import uuid
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtWidgets import (
+from PySide6.QtWidgets import ( QLineEdit, QListWidget, QListWidgetItem,
+
     QCheckBox,
     QComboBox,
     QFrame,
@@ -74,6 +75,39 @@ class SubtitleGenerationPanel(QWidget):
         title = QLabel("✨ Generate Subtitle")
         title.setProperty("class", "SectionTitle")
         settings_layout.addWidget(title)
+        # --- PHASE 3: RANGE GENERATION ---
+        self.range_group = QGroupBox("🎯 Generate theo khoảng thời gian")
+        range_layout = QVBoxLayout(self.range_group)
+        range_layout.setContentsMargins(12, 12, 12, 12)
+        range_layout.setSpacing(8)
+        
+        time_row = QHBoxLayout()
+        self.txt_start = QLineEdit()
+        self.txt_start.setPlaceholderText("00:00:00,000")
+        self.txt_end = QLineEdit()
+        self.txt_end.setPlaceholderText("00:00:00,000")
+        
+        time_row.addWidget(QLabel("Từ:"))
+        time_row.addWidget(self.txt_start)
+        time_row.addWidget(QLabel("Đến:"))
+        time_row.addWidget(self.txt_end)
+        range_layout.addLayout(time_row)
+        
+        range_btn_row = QHBoxLayout()
+        self.btn_range_timeline = QPushButton("⏱ Lấy từ vùng Timeline")
+        self.btn_range_timeline.setProperty("variant", "secondary")
+        self.btn_range_preview = QPushButton("Preview Range")
+        self.btn_range_preview.setProperty("variant", "primary")
+        
+        range_btn_row.addWidget(self.btn_range_timeline)
+        range_btn_row.addWidget(self.btn_range_preview)
+        range_layout.addLayout(range_btn_row)
+        
+        settings_layout.addWidget(self.range_group)
+        
+        self.btn_range_preview.clicked.connect(self._on_preview_range_clicked)
+        # ---------------------------------
+
 
         def _kv_row(label_text, widget):
             row = QHBoxLayout()
@@ -177,6 +211,26 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_compute.currentTextChanged.connect(self._on_timing_setting_changed)
         self.chk_vad.toggled.connect(self._on_timing_setting_changed)
         settings_layout.addWidget(advanced_group)
+        # --- PHASE 3: GENERATION HISTORY ---
+        self.history_group = QGroupBox("↩ Generation History")
+        history_layout = QVBoxLayout(self.history_group)
+        history_layout.setContentsMargins(12, 12, 12, 12)
+        
+        self.history_list = QListWidget()
+        self.history_list.setMaximumHeight(150)
+        history_layout.addWidget(self.history_list)
+        
+        self.btn_rollback = QPushButton("Khôi phục (Rollback)")
+        self.btn_rollback.setProperty("variant", "danger")
+        self.btn_rollback.setEnabled(False)
+        history_layout.addWidget(self.btn_rollback)
+        
+        settings_layout.addWidget(self.history_group)
+        
+        self.history_list.itemSelectionChanged.connect(self._on_history_selection_changed)
+        self.btn_rollback.clicked.connect(self._on_rollback_clicked)
+        # -----------------------------------
+
 
         context_layout = QHBoxLayout()
         context_layout.setContentsMargins(0, 6, 0, 0)
@@ -190,6 +244,34 @@ class SubtitleGenerationPanel(QWidget):
         context_layout.addWidget(self.lbl_context_status, stretch=1)
         context_layout.addWidget(self.btn_context_edit)
         settings_layout.addLayout(context_layout)
+        
+        # --- PHASE 3: HISTORY GROUP ---
+        self.history_group = QGroupBox("↩ Generation History")
+        history_layout = QVBoxLayout(self.history_group)
+        history_layout.setContentsMargins(12, 12, 12, 12)
+        history_layout.setSpacing(8)
+        
+        self.history_list_layout = QVBoxLayout()
+        history_layout.addLayout(self.history_list_layout)
+        
+        # Quick Rollback row
+        quick_row = QHBoxLayout()
+        quick_row.addWidget(QLabel("Rollback:"))
+        self.btn_rb_10 = QPushButton("10")
+        self.btn_rb_30 = QPushButton("30")
+        self.btn_rb_50 = QPushButton("50")
+        self.btn_rb_60 = QPushButton("60")
+        self.btn_rb_initial = QPushButton("Initial")
+        for btn in (self.btn_rb_10, self.btn_rb_30, self.btn_rb_50, self.btn_rb_60, self.btn_rb_initial):
+            quick_row.addWidget(btn)
+            btn.clicked.connect(lambda checked=False, b=btn: self._on_quick_rollback_clicked(b.text()))
+            
+        quick_row.addStretch()
+        history_layout.addLayout(quick_row)
+        
+        settings_layout.addWidget(self.history_group)
+        # ------------------------------
+
         settings_layout.addStretch()
         self.settings_scroll_area.setWidget(self.settings_scroll_content)
         layout.addWidget(self.settings_scroll_area, stretch=1)
@@ -669,6 +751,89 @@ class SubtitleGenerationPanel(QWidget):
         self.progress_bar.setValue(max(0, min(100, int(percent))))
         self.lbl_status.setText(message)
 
+
+    def _on_quick_rollback_clicked(self, target_str):
+        if target_str == "Initial":
+            target_count = 0
+        else:
+            try:
+                target_count = int(target_str)
+            except ValueError:
+                return
+                
+        cp = self.generation_service.get_rollback_checkpoint(target_count=target_count)
+        if not cp:
+            self._on_error(f"Không có checkpoint nào tương ứng với {target_str} subtitles.")
+            return
+            
+        self._trigger_rollback(cp)
+
+    def _trigger_rollback(self, cp):
+        from ui.dialogs.restore_preview_dialog import RestorePreviewDialog
+        
+        current_segments = self._get_current_segments()
+        current_count = len(current_segments)
+        target_count = cp.generated_count
+        
+        manual_edits = 0
+        # Check manual edits
+        if len(current_segments) == len(cp.segments_snapshot):
+            for cur, snap in zip(current_segments, cp.segments_snapshot):
+                if cur.get("source") == "manual" and snap.get("source") != "manual":
+                    manual_edits += 1
+                elif cur.get("start") != snap.get("start") or cur.get("end") != snap.get("end") or cur.get("text") != snap.get("text"):
+                    manual_edits += 1
+        else:
+            manual_edits = sum(1 for s in current_segments if s.get("source") == "manual")
+            
+        dialog = RestorePreviewDialog(current_count, target_count, manual_edits, self)
+        if dialog.exec():
+            # Perform rollback
+            from PySide6.QtWidgets import QApplication
+            main_window = QApplication.instance().activeWindow()
+            if main_window and hasattr(main_window, 'undo_manager'):
+                try:
+                    self.generation_service.execute_rollback(target_count, self.sub_editor.all_segments, main_window.undo_manager)
+                    if hasattr(self, 'sub_editor'):
+                        self.sub_editor.render_page()
+                    # We might need to refresh history UI
+                    self.refresh_history_ui()
+                except Exception as e:
+                    self._on_error(str(e))
+            else:
+                self._on_error("Khong tim thay Undo Manager.")
+
+    def refresh_history_ui(self):
+        # Clear existing
+        if not hasattr(self, 'history_list_layout'):
+            return
+        while self.history_list_layout.count():
+            child = self.history_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
+        # Build history list
+        from PySide6.QtWidgets import QPushButton
+        
+        history = list(getattr(self.generation_service, "checkpoint_history", []))
+        initial = getattr(self.generation_service, "initial_state", None)
+        if initial:
+            history.insert(0, initial)
+            
+        # Sort newest first for display
+        history.reverse()
+        
+        for cp in history:
+            label_text = "Initial" if cp.checkpoint_type == "INITIAL" else f"#{cp.generated_count} ({cp.checkpoint_type})"
+            if cp.checkpoint_type == "RANGE" and cp.generation_range:
+                from core.export.subtitle_parser import ms_to_time_str
+                label_text += f" {ms_to_time_str(cp.generation_range.get('start_ms', 0))} -> {ms_to_time_str(cp.generation_range.get('end_ms', 0))}"
+            
+            btn = QPushButton(label_text)
+            btn.setStyleSheet("text-align: left; padding: 4px;")
+            btn.clicked.connect(lambda checked=False, c=cp: self._trigger_rollback(c))
+            self.history_list_layout.addWidget(btn)
+
     def _on_error(self, error_message: str):
         self.lbl_status.setText(f"Error: {error_message}")
         self.lbl_status.setStyleSheet(f"color: {Theme.DANGER};")
@@ -695,3 +860,129 @@ class SubtitleGenerationPanel(QWidget):
             self.lbl_status.setStyleSheet(f"color: {Theme.SUCCESS};")
             self.progress_bar.setValue(100)
         self._reset_ui_state()
+
+    # --- PHASE 3: RANGE & HISTORY LOGIC ---
+    def set_range(self, start_ms: int, end_ms: int):
+        from core.export.subtitle_parser import ms_to_time_str
+        self.txt_start.setText(ms_to_time_str(start_ms))
+        self.txt_end.setText(ms_to_time_str(end_ms))
+
+    def _on_preview_range_clicked(self):
+        from core.export.subtitle_parser import time_str_to_ms, ms_to_time_str
+        from core.subtitle_generation.range_validation import RangeValidator, RangeErrorCode
+        from ui.dialogs.preview_range_dialog import PreviewRangeDialog
+        
+        try:
+            start_ms = time_str_to_ms(self.txt_start.text().strip())
+            end_ms = time_str_to_ms(self.txt_end.text().strip())
+        except ValueError:
+            self._on_error("Format thời gian không hợp lệ. Vui lòng nhập HH:MM:SS,mmm")
+            return
+            
+        # Call Validator
+        result = RangeValidator.preview_range(
+            start_ms, end_ms, self.video_duration_ms, 
+            self._get_current_segments(), 
+            self.generation_service.is_running
+        )
+        
+        if not result.is_valid:
+            if result.suggested_end_ms:
+                # Ask user if they want to clamp
+                from PySide6.QtWidgets import QMessageBox
+                ans = QMessageBox.question(self, "Warning", f"⚠ {result.message}\nBạn có muốn tự động đưa End về {ms_to_time_str(result.suggested_end_ms)}?")
+                if ans == QMessageBox.Yes:
+                    self.txt_end.setText(ms_to_time_str(result.suggested_end_ms))
+                    self._on_preview_range_clicked() # Re-preview
+            else:
+                self._on_error(result.message)
+            return
+            
+        dialog = PreviewRangeDialog(ms_to_time_str(start_ms), ms_to_time_str(end_ms), result, self)
+        if dialog.exec():
+            # If accepted, trigger range generation
+            strategy = dialog.selected_strategy
+            # Call generation with strategy
+            self._start_generation_with_strategy(start_ms, end_ms, strategy)
+
+    def _start_generation_with_strategy(self, start_ms, end_ms, strategy):
+        request = self._build_asr_request(start_ms, end_ms)
+        if request is None:
+            return
+        self._set_ui_state_running()
+        try:
+            self.generation_service.start_generation(
+                request,
+                self.video_duration_ms,
+                existing_segments=self._get_current_segments(),
+                conflict_strategy=strategy
+            )
+        except Exception as exc:
+            self._on_error(str(exc))
+            self._set_ui_state_idle()
+        self.refresh_history_ui()
+            
+    def _get_current_segments(self):
+        # Depending on how panel accesses editor segments
+        if hasattr(self, 'parent') and hasattr(self.parent(), 'sub_editor'):
+            return self.parent().sub_editor.all_segments
+        # GUI integration usually binds this
+        # Let's try to get Gui reference safely
+        from ui.Gui import Gui
+        w = self
+        while w is not None and not isinstance(w, Gui):
+            w = w.parent()
+        if w:
+            return w.sub_editor.all_segments
+        return []
+        
+    def refresh_history(self):
+        from PySide6.QtWidgets import QListWidgetItem
+        from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
+        
+        self.history_list.clear()
+        
+        history = []
+        if self.generation_service.initial_state:
+            history.append(self.generation_service.initial_state)
+        history.extend(self.generation_service.checkpoint_history)
+        
+        for cp in reversed(history): # Latest first
+            label = f"{cp.checkpoint_type} - {cp.generated_count} subs"
+            if cp.checkpoint_type == "INITIAL":
+                label = "Initial State"
+                
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, cp.checkpoint_id)
+            self.history_list.addItem(item)
+            
+    def _on_history_selection_changed(self):
+        self.btn_rollback.setEnabled(bool(self.history_list.selectedItems()))
+
+    def _on_rollback_clicked(self):
+        selected = self.history_list.selectedItems()
+        if not selected:
+            return
+            
+        cp_id = selected[0].data(Qt.UserRole)
+        cp = self.generation_service.get_rollback_checkpoint(checkpoint_id=cp_id)
+        if not cp:
+            return
+            
+        current_segments = self._get_current_segments()
+        has_manual = cp.has_manual_edits_compared_to(current_segments)
+        
+        from ui.dialogs.rollback_preview_dialog import RollbackPreviewDialog
+        dialog = RollbackPreviewDialog(cp, has_manual, self)
+        if dialog.exec():
+            # Trigger rollback
+            w = self
+            from ui.Gui import Gui
+            while w is not None and not isinstance(w, Gui):
+                w = w.parent()
+            if w:
+                self.generation_service.execute_rollback(None, current_segments, w.undo_manager)
+                w.sub_editor.refresh_editor()
+                w.sub_editor.timeline_provider.sync_back_to_editor()
+                self.refresh_history()
+    # ----------------------------------------
