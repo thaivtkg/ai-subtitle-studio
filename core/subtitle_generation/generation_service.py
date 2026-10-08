@@ -1,3 +1,4 @@
+from core.subtitle_generation.generation_error import GenerationError, GenerationErrorCode
 import os
 import re
 import uuid
@@ -96,14 +97,27 @@ class SubtitleGenerationService(QObject):
 
     def start_generation(
         self, request: SubtitleGenerationRequest, video_duration_ms: int,
-        *, existing_segments=None,
+        *, existing_segments=None, conflict_strategy=None
     ) -> None:
+        from core.subtitle_generation.range_validation import RangeValidator, ConflictStrategy
         self._ensure_idle()
+        self._range_conflict_strategy = conflict_strategy or ConflictStrategy.REPLACE_OVERLAP
+
         project = self._require_project()
         self._validate_request_source(request, project)
         if video_duration_ms <= 0:
             raise ValueError("Video duration must be positive.")
 
+        if request.range_start_ms is not None and request.range_end_ms is not None:
+            # Phase 2: Range Validation
+            result = RangeValidator.preview_range(
+                request.range_start_ms, request.range_end_ms, video_duration_ms, existing_segments or [], False
+            )
+            if not result.is_valid:
+                raise GenerationError(GenerationErrorCode.VALIDATION_FAILED, f"{result.message}")
+            if result.overlapping_count > 0 and self._range_conflict_strategy == ConflictStrategy.CANCEL:
+                raise GenerationError(GenerationErrorCode.RANGE_CONFLICT, f"Range overlaps with {result.overlapping_count} existing subtitles.")
+                
         if existing_segments is not None:
             self.create_history_checkpoint(existing_segments, is_initial=True)
         else:
@@ -257,7 +271,7 @@ class SubtitleGenerationService(QObject):
         if artifact is None or artifact.artifact_id != checkpoint.subtitle_artifact_id:
             raise ValueError("Subtitle artifact does not match checkpoint.")
         if artifact.revision != checkpoint.artifact_revision:
-            raise RuntimeError("STALE_SUBTITLE: subtitle artifact changed externally.")
+            raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "subtitle artifact changed externally.")
         if checkpoint.artifact_content_hash:
             current_hash = self.artifact_service.content_hash(artifact.path)
             if current_hash != checkpoint.artifact_content_hash:
@@ -388,6 +402,7 @@ class SubtitleGenerationService(QObject):
             source_fingerprint=project.video_hash,
             generated_count=len(segments),
             segments_snapshot=segments,
+            checkpoint_type="INITIAL" if is_initial else "BATCH",
             generation_request_id=self.current_request.request_id if self.current_request else None
         )
         
@@ -464,9 +479,9 @@ class SubtitleGenerationService(QObject):
             if artifact is None:
                 raise RuntimeError("Subtitle artifact is unavailable.")
             if artifact.artifact_id != self.current_checkpoint.subtitle_artifact_id:
-                raise RuntimeError("STALE_SUBTITLE: artifact identity changed.")
+                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact identity changed.")
             if artifact.revision != self.current_checkpoint.artifact_revision:
-                raise RuntimeError("STALE_SUBTITLE: artifact revision changed.")
+                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact revision changed.")
             self._assert_live_artifact_hash(artifact)
 
             valid = SubtitleGenerationValidator.validate(
@@ -615,6 +630,31 @@ class SubtitleGenerationService(QObject):
             current_subtitles = self._resolve_range_coverage(
                 artifact_rows, self._range_editor_segments
             )
+            
+            # PHASE 2: Apply Conflict Strategy before reconciliation
+            from core.subtitle_generation.range_validation import ConflictStrategy
+            if getattr(self, "_range_conflict_strategy", ConflictStrategy.REPLACE_OVERLAP) == ConflictStrategy.REPLACE_OVERLAP:
+                def is_overlapping(seg, r_start, r_end):
+                    try:
+                        s_start = int(seg.get("start_ms", 0)) if "start_ms" in seg else int(seg.start_ms)
+                        s_end = int(seg.get("end_ms", 0)) if "end_ms" in seg else int(seg.end_ms)
+                        return s_start < r_end and s_end > r_start
+                    except (AttributeError, ValueError, TypeError):
+                        pass
+                    # Try string parser
+                    from core.export.subtitle_parser import time_str_to_ms
+                    try:
+                        s_start = time_str_to_ms(seg.get("start", ""))
+                        s_end = time_str_to_ms(seg.get("end", ""))
+                        return s_start < r_end and s_end > r_start
+                    except (AttributeError, ValueError, TypeError):
+                        return False
+                        
+                current_subtitles = [
+                    seg for seg in current_subtitles 
+                    if not is_overlapping(seg, batch.start_ms, batch.end_ms)
+                ]
+
             reconciled = reconcile_generated_timing(
                 GenerationRange(batch.start_ms, batch.end_ms),
                 result.segments,
@@ -623,25 +663,25 @@ class SubtitleGenerationService(QObject):
             )
             self.last_range_reconciliation = reconciled
             if reconciled.status == ReconciliationStatus.STALE_RANGE_CONFLICT:
-                raise RuntimeError(f"STALE_RANGE_CONFLICT: {reconciled.reason}")
+                raise GenerationError(GenerationErrorCode.STALE_RANGE_CONFLICT, f"{reconciled.reason}")
             if reconciled.status != ReconciliationStatus.SUCCESS:
-                raise RuntimeError(f"RECONCILIATION_UNSAFE: {reconciled.reason}")
+                raise GenerationError(GenerationErrorCode.RECONCILIATION_UNSAFE, f"{reconciled.reason}")
 
             if state_artifact_id != self._range_state_artifact_id:
-                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
+                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact identity changed during range generation.")
             if (artifact.artifact_id if artifact else None) != self._range_artifact_id:
-                raise RuntimeError("STALE_SUBTITLE: artifact identity changed during range generation.")
+                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact identity changed during range generation.")
             if artifact and artifact.revision != self._range_artifact_revision:
-                raise RuntimeError("STALE_SUBTITLE: artifact revision changed during range generation.")
+                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact revision changed during range generation.")
             if artifact and self._range_artifact_hash:
                 if self.artifact_service.content_hash(artifact.path) != self._range_artifact_hash:
-                    raise RuntimeError("STALE_SUBTITLE_FILE: artifact changed during range generation.")
+                    raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact changed during range generation.")
 
             generated = SubtitleGenerationValidator.validate(
                 list(reconciled.segments), batch.start_ms, batch.end_ms
             )
             if len(generated) != len(reconciled.segments):
-                raise RuntimeError("RECONCILIATION_UNSAFE: generated output failed subtitle validation.")
+                raise GenerationError(GenerationErrorCode.RECONCILIATION_UNSAFE, "generated output failed subtitle validation.")
             rows = copy.deepcopy([
                 segment.get_raw_dict() if hasattr(segment, "get_raw_dict") else segment
                 for segment in current_subtitles

@@ -15,6 +15,7 @@ class GenerationCheckpoint:
         segments_snapshot: List[Dict],
         generation_range: Optional[Dict] = None,
         generation_request_id: Optional[str] = None,
+        checkpoint_type: str = "BATCH",
         model_settings: Optional[Dict] = None,
     ):
         self.checkpoint_id = checkpoint_id
@@ -28,6 +29,7 @@ class GenerationCheckpoint:
         
         self.generation_range = generation_range
         self.generation_request_id = generation_request_id
+        self.checkpoint_type = checkpoint_type
         self.model_settings = model_settings or {}
 
     def has_manual_edits_compared_to(self, current_segments: List[Dict]) -> bool:
