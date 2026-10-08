@@ -793,9 +793,9 @@ class SubtitleGenerationPanel(QWidget):
             main_window = QApplication.instance().activeWindow()
             if main_window and hasattr(main_window, 'undo_manager'):
                 try:
-                    self.generation_service.execute_rollback(target_count, self.sub_editor.all_segments, main_window.undo_manager)
-                    if hasattr(self, 'sub_editor'):
-                        self.sub_editor.render_page()
+                    self.generation_service.execute_rollback(target_count, self._get_current_segments(), main_window.undo_manager)
+                    if hasattr(main_window, 'sub_editor'):
+                        main_window.sub_editor.render_page()
                     # We might need to refresh history UI
                     self.refresh_history_ui()
                 except Exception as e:
@@ -815,6 +815,9 @@ class SubtitleGenerationPanel(QWidget):
         # Build history list
         from PySide6.QtWidgets import QPushButton
         
+        if hasattr(self.generation_service, "_ensure_history_loaded"):
+            self.generation_service._ensure_history_loaded()
+            
         history = list(getattr(self.generation_service, "checkpoint_history", []))
         initial = getattr(self.generation_service, "initial_state", None)
         if initial:

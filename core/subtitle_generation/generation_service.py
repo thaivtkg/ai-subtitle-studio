@@ -389,6 +389,86 @@ class SubtitleGenerationService(QObject):
 
     @Slot(object, object)
 
+
+
+    def _ensure_history_loaded(self):
+        project = self.project_service.current_project
+        if not project:
+            return
+        if getattr(self, '_history_project_id', None) != project.project_id:
+            self.load_history()
+            self._history_project_id = project.project_id
+
+    def _get_history_path(self) -> str:
+        project = self.project_service.current_project
+        project_dir = getattr(self.project_service, "project_dir", None) or getattr(
+            project, "project_dir", None
+        )
+        if not project or not project_dir:
+            return None
+        import os
+        checkpoint_dir = os.path.join(
+            project_dir, "artifacts", "subtitle_generation"
+        )
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        return os.path.join(checkpoint_dir, "history.json")
+
+    def _save_history(self):
+        path = self._get_history_path()
+        if not path:
+            return
+            
+        import json
+        import os
+        data = {
+            "initial_state": self.initial_state.__dict__ if self.initial_state else None,
+            "history": [cp.__dict__ for cp in self.checkpoint_history]
+        }
+        
+        temp_path = f"{path}.tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def load_history(self):
+        path = self._get_history_path()
+        if not path or not __import__("os").path.exists(path):
+            return
+            
+        import json
+        from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
+        
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+                
+            def dict_to_cp(d):
+                if not d: return None
+                cp = GenerationCheckpoint(
+                    checkpoint_id=d.get("checkpoint_id"),
+                    project_id=d.get("project_id"),
+                    source_fingerprint=d.get("source_fingerprint"),
+                    generated_count=d.get("generated_count"),
+                    segments_snapshot=d.get("segments_snapshot", []),
+                    generation_range=d.get("generation_range"),
+                    generation_request_id=d.get("generation_request_id"),
+                    checkpoint_type=d.get("checkpoint_type", "BATCH"),
+                    model_settings=d.get("model_settings", {})
+                )
+                cp.created_at = d.get("created_at", __import__("time").time())
+                return cp
+                
+            self.initial_state = dict_to_cp(data.get("initial_state"))
+            self.checkpoint_history = [dict_to_cp(d) for d in data.get("history", [])]
+        except Exception:
+            pass
+
     def create_history_checkpoint(self, segments, is_initial=False, is_range=False):
         """Creates a snapshot of the generation state and appends to history."""
         from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
@@ -414,11 +494,14 @@ class SubtitleGenerationService(QObject):
         if is_initial:
             self.initial_state = cp
             self.checkpoint_history.clear()
+            self._save_history()
         else:
             self.checkpoint_history.append(cp)
+        self._save_history()
             
     def get_rollback_checkpoint(self, target_count=None, checkpoint_id=None):
         """
+        self._ensure_history_loaded()
         Resolves the target rollback checkpoint.
         If target_count is 0, returns the initial_state.
         If target_count is provided, finds the checkpoint with the exact or closest generated_count.
