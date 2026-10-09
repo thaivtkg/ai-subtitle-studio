@@ -61,8 +61,7 @@ class SubtitleGenerationService(QObject):
         self.current_batches: List[SubtitleGenerationBatch] = []
         self.current_checkpoint: Optional[SubtitleGenerationCheckpoint] = None
         self.current_timing_ranges = []
-        self.checkpoint_history = []
-        self.initial_state = None
+        self.all_checkpoints = []
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -84,6 +83,28 @@ class SubtitleGenerationService(QObject):
         self.on_batch_complete: Optional[Callable[[SubtitleGenerationBatch, list], None]] = None
         self.on_error: Optional[Callable[[str], None]] = None
         self.on_finish: Optional[Callable[[], None]] = None
+
+
+    @property
+    def checkpoint_history(self):
+        project = self.project_service.current_project
+        source_id = getattr(project.state, "active_subtitle_source_id", "default") if project else "default"
+        return [cp for cp in getattr(self, "all_checkpoints", []) if getattr(cp, "checkpoint_type", "") != "INITIAL" and getattr(cp, "source_id", "default") == source_id]
+
+    @property
+    def initial_state(self):
+        project = self.project_service.current_project
+        source_id = getattr(project.state, "active_subtitle_source_id", "default") if project else "default"
+        for cp in getattr(self, "all_checkpoints", []):
+            if getattr(cp, "checkpoint_type", "") == "INITIAL" and getattr(cp, "source_id", "default") == source_id:
+                return cp
+        return None
+
+    def _clear_current_source_history(self):
+        project = self.project_service.current_project
+        if not project: return
+        source_id = getattr(project.state, "active_subtitle_source_id", "default")
+        self.all_checkpoints = [cp for cp in getattr(self, "all_checkpoints", []) if getattr(cp, "source_id", "default") != source_id]
 
     def compile_prompt_context(
         self, context: TranscriptionContext
@@ -154,8 +175,7 @@ class SubtitleGenerationService(QObject):
             timing_segment_count = len(segment_ranges)
         self.current_timing_ranges = list(segment_ranges or [])
 
-        self.checkpoint_history = []
-        self.initial_state = None
+        self._clear_current_source_history()
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -222,8 +242,7 @@ class SubtitleGenerationService(QObject):
         self._range_editor_segments = existing_segments
         self._range_duration_ms = duration_ms
         self.current_timing_ranges = []
-        self.checkpoint_history = []
-        self.initial_state = None
+        self.all_checkpoints = []
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -279,8 +298,7 @@ class SubtitleGenerationService(QObject):
                     "STALE_SUBTITLE_FILE: subtitle artifact was edited externally."
                 )
 
-        self.checkpoint_history = []
-        self.initial_state = None
+        self._clear_current_source_history()
         self._is_cancelled = False
         self._pending_dispatch = False
         self._pending_finish = False
@@ -421,6 +439,7 @@ class SubtitleGenerationService(QObject):
         import json
         import os
         data = {
+            "all_checkpoints": [cp.__dict__ for cp in getattr(self, "all_checkpoints", [])],
             "initial_state": self.initial_state.__dict__ if self.initial_state else None,
             "history": [cp.__dict__ for cp in self.checkpoint_history]
         }
@@ -459,13 +478,19 @@ class SubtitleGenerationService(QObject):
                     generation_range=d.get("generation_range"),
                     generation_request_id=d.get("generation_request_id"),
                     checkpoint_type=d.get("checkpoint_type", "BATCH"),
-                    model_settings=d.get("model_settings", {})
-                )
+                    model_settings=d.get("model_settings", {}),
+                source_id=d.get("source_id", "default")
+            )
                 cp.created_at = d.get("created_at", __import__("time").time())
                 return cp
                 
-            self.initial_state = dict_to_cp(data.get("initial_state"))
-            self.checkpoint_history = [dict_to_cp(d) for d in data.get("history", [])]
+            if "all_checkpoints" in data:
+                self.all_checkpoints = [dict_to_cp(d) for d in data.get("all_checkpoints", [])]
+            else:
+                self.all_checkpoints = []
+                initial = dict_to_cp(data.get("initial_state"))
+                if initial: self.all_checkpoints.append(initial)
+                self.all_checkpoints.extend([dict_to_cp(d) for d in data.get("history", [])])
         except Exception:
             pass
 
@@ -489,15 +514,16 @@ class SubtitleGenerationService(QObject):
             generated_count=len(segments),
             segments_snapshot=segments,
             checkpoint_type=c_type,
-            generation_request_id=self.current_request.request_id if self.current_request else None
+            generation_request_id=self.current_request.request_id if self.current_request else None,
+            source_id=getattr(project.state, "active_subtitle_source_id", "default")
         )
         
         if is_initial:
             if not self.initial_state:
-                self.initial_state = cp
+                self.all_checkpoints.append(cp)
                 self._save_history()
         else:
-            self.checkpoint_history.append(cp)
+            self.all_checkpoints.append(cp)
             self._save_history()
             
     def get_rollback_checkpoint(self, target_count=None, checkpoint_id=None):

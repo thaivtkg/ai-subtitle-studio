@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict, Optional
-from core.export.subtitle_parser import time_str_to_ms
+from ui.SubEditor import time_str_to_ms
 
 
 class ConflictStrategy(Enum):

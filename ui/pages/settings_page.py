@@ -275,7 +275,7 @@ class SettingsCenterPage(QWidget):
             self.font_combo.addItem(font_name, font_name)
         self.size_spin = QSpinBox()
         self.size_spin.setRange(12, 72)
-        self.size_spin.setValue(28)
+        self.size_spin.setValue(20)
         self.motion_preset_combo = QComboBox()
         self.motion_preset_combo.addItem("Standard (CrossFade + Fade)", "standard")
         self.motion_preset_combo.addItem("Minimal (Fade 120ms)", "minimal")

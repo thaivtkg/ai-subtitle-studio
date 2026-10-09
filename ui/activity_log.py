@@ -6,6 +6,7 @@ import re
 import html
 
 from PySide6.QtWidgets import (
+    QWidget,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -223,13 +224,16 @@ class ActivityLogView(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        header = QHBoxLayout()
-        title = QLabel("📜 Activity Stream")
+        from ui.components.flow_layout import FlowLayout
+        
+        header_widget = QWidget()
+        header = FlowLayout(header_widget, margin=0, hSpacing=8, vSpacing=8)
+        
+        title = QLabel("📋 Activity Stream")
         title.setStyleSheet(
             f"font-weight: bold; font-size: 12px; color: {Theme.TEXT_MUTED}; border: none;"
         )
         header.addWidget(title)
-        header.addStretch()
 
         self.level_filter = QComboBox()
         self.level_filter.addItems(["All", "Debug", "Info", "Warning", "Error"])
@@ -256,7 +260,8 @@ class ActivityLogView(QFrame):
         self.clear_button.setToolTip("Clear activity log")
         self.clear_button.clicked.connect(self.model.clear)
         header.addWidget(self.clear_button)
-        layout.addLayout(header)
+
+        layout.addWidget(header_widget)
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)

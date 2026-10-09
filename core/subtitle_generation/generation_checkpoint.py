@@ -17,10 +17,12 @@ class GenerationCheckpoint:
         generation_request_id: Optional[str] = None,
         checkpoint_type: str = "BATCH",
         model_settings: Optional[Dict] = None,
+        source_id: str = "default",
     ):
         self.checkpoint_id = checkpoint_id
         self.project_id = project_id
         self.source_fingerprint = source_fingerprint
+        self.source_id = source_id
         self.created_at = time.time()
         
         self.generated_count = generated_count

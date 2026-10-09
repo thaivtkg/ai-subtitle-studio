@@ -68,6 +68,11 @@ def main():
     # 0. Khởi tạo toàn bộ cấu trúc thư mục Dữ liệu Người dùng ngay khi app mở
     RuntimePaths.ensure_user_data_dirs()
 
+    import sys
+    from PySide6.QtCore import Qt
+    if hasattr(Qt, 'HighDpiScaleFactorRoundingPolicy'):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    
     app = QApplication(sys.argv)
 
     guard = SingleInstanceGuard()

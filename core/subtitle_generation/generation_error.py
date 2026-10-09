@@ -16,7 +16,7 @@ class GenerationErrorCode(Enum):
     RECONCILIATION_UNSAFE = "RECONCILIATION_UNSAFE"
     STALE_SUBTITLE = "STALE_SUBTITLE"
 
-class GenerationError(Exception):
+class GenerationError(RuntimeError):
     def __init__(self, code: GenerationErrorCode, message: str):
         super().__init__(f"[{code.name}] {message}")
         self.code = code

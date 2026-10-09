@@ -202,6 +202,7 @@ class TimelineController(QObject):
                     if segment and mode != EditMode.NONE:
                         self.ui.timing_edit_started.emit()
                 if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    self.ui.auto_scroll_enabled = False
                     if (
                         obj is self.ui.container.waveform
                         and event.modifiers() & Qt.ShiftModifier

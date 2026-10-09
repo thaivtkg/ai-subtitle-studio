@@ -155,6 +155,89 @@ class _QtScheduler:
         timer.deleteLater()
 
 
+from PySide6.QtGui import QPainter, QColor
+from PySide6.QtCore import Qt
+
+class DrawerSurface(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, False)
+        # We need a layout
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        
+        # Add a shadow effect so it floats nicely
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        rect = self.rect()
+        
+        # Create rounded path for all corners
+        from PySide6.QtGui import QPainterPath, QPen
+        path = QPainterPath()
+        radius = 16
+        path.addRoundedRect(rect, radius, radius)
+        
+        painter.setClipPath(path)
+        
+        # Draw background using Liquid physics SharedBackdropCache if possible
+        try:
+            from ui.core.liquid_materials import SharedBackdropCache
+            cache = SharedBackdropCache.get_instance()
+            if cache and cache.is_ready():
+                bg_img = cache.crop_for(self, rect)
+                if bg_img and not bg_img.isNull():
+                    painter.drawPixmap(rect, bg_img)
+        except Exception:
+            pass
+            
+        # Draw tint
+        painter.fillPath(path, QColor(22, 22, 25, 230))
+        
+        # Draw specular edge
+        painter.setClipping(False)
+        pen = QPen(QColor(255, 255, 255, 40))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.drawPath(path)
+
+class OverlayHost(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_NoSystemBackground, False)
+        
+        self.drawer_surface = DrawerSurface(self)
+        self.drawer_surface.raise_()
+        self.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        # Dimming scrim
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
+
+    def mousePressEvent(self, event):
+        # Only close if clicked outside the drawer surface
+        if not self.drawer_surface.geometry().contains(event.position().toPoint()):
+            if hasattr(self.parent(), '_toggle_ai_drawer'):
+                self.parent()._toggle_ai_drawer()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Keep surface size exactly constant
+        margin = 16
+        w = 500
+        h = self.height() - margin * 2
+        self.drawer_surface.resize(w, h)
+
 class MainWindow(QMainWindow):
     # [FIX MẠNG] Khai báo Signal giao tiếp xuyên luồng (Cross-thread) an toàn
     waveform_ready_signal = Signal(str, int, object)
@@ -552,28 +635,71 @@ class MainWindow(QMainWindow):
             self.generation_panel.set_effective_compute_type
         )
         self.generation_panel.sync_timing_settings_from_project()
+        if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
+            self.generation_panel.sync_subtitle_sources_from_project()
         self._restore_panel_callbacks()
-        self.generation_dock = QDockWidget("AI Workspace", self)
-        self.generation_dock.setObjectName("SubtitleGenerationDock")
-        self.generation_dock.setAllowedAreas(
-            Qt.RightDockWidgetArea
-        )
-        self.generation_dock.setFeatures(
-            QDockWidget.DockWidgetMovable
-        )
-        self.generation_dock.setMinimumWidth(340)
-        self.generation_dock.setMaximumWidth(400)
-        dock_tabs = QTabWidget()
+        self.overlay_host = OverlayHost(self)
+        self.generation_drawer = self.overlay_host.drawer_surface
+        
+        from PySide6.QtWidgets import QListWidget, QStackedWidget, QListWidgetItem
+        nav_list = QListWidget(self.generation_drawer)
+        nav_list.setFixedWidth(84)
+        nav_list.setObjectName("NavRail")
+        nav_list.setFocusPolicy(Qt.NoFocus)
+        nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_list.horizontalScrollBar().setDisabled(True)
+        nav_list.verticalScrollBar().setDisabled(True)
+        nav_list.setStyleSheet("""
+                        QListWidget#NavRail {
+                background: transparent;
+                border: none;
+                border-right: 1px solid rgba(255, 255, 255, 0.1);
+                outline: none;
+            }
+            QListWidget#NavRail:focus {
+                outline: none;
+            }
+            QListWidget#NavRail::item {
+                height: 60px;
+                color: #a0a0a0;
+                padding-left: 8px;
+            }
+            QListWidget#NavRail::item:selected {
+                color: #ffffff;
+                background: transparent;
+            }
+            QListWidget#NavRail::item:hover {
+                color: #e0e0e0;
+            }
+        """)
+
+        dock_tabs = QStackedWidget(self.generation_drawer)
         dock_tabs.setObjectName("DockTabs")
-        dock_tabs.addTab(self.generation_panel, "✨ Generate")
+        
+        # Replace GenerationDrawer layout with an HBox
+        self.generation_drawer.main_layout.addWidget(nav_list)
+        self.generation_drawer.main_layout.addWidget(dock_tabs)
+
+        def add_nav_tab(widget, title):
+            dock_tabs.addWidget(widget)
+            item = QListWidgetItem(title)
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            nav_list.addItem(item)
+            widget._nav_item = item
+
+        add_nav_tab(self.generation_panel, "✨\nGenerate")
+        
         self.context_panel = TranscriptionContextPanel(self)
         self.context_panel.context_committed.connect(
             self.on_transcription_context_committed
         )
-        dock_tabs.addTab(self.context_panel, "📝 Context")
+        add_nav_tab(self.context_panel, "🧩\nContext")
+        
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
-        dock_tabs.addTab(self.inspector_panel, "🎨 Style")
+        add_nav_tab(self.inspector_panel, "🎨\nStyle")
+        
         from ui.quality_inspector_panel import QualityInspectorPanel
         self.quality_inspector_panel = QualityInspectorPanel(self)
         self.quality_inspector_panel.jump_requested.connect(self.sub_editor.select_segment)
@@ -581,14 +707,25 @@ class MainWindow(QMainWindow):
         self.sub_editor.live_edit_applied.connect(
             lambda _segments: self.quality_inspector_panel.mark_segments_stale(self.sub_editor.all_segments)
         )
-        dock_tabs.addTab(self.quality_inspector_panel, "🔎 Quality")
-        dock_tabs.addTab(self.log_box, "📜 Log")
+        add_nav_tab(self.quality_inspector_panel, "🔍\nQuality")
+        add_nav_tab(self.log_box, "📋\nLog")
+        
+        nav_list.setCurrentRow(0)
+        nav_list.currentRowChanged.connect(dock_tabs.setCurrentIndex)
+        
+        original_set_current = dock_tabs.setCurrentWidget
+        def set_current_and_nav(widget):
+            original_set_current(widget)
+            if hasattr(widget, '_nav_item'):
+                nav_list.setCurrentItem(widget._nav_item)
+        dock_tabs.setCurrentWidget = set_current_and_nav
+        
         self.dock_tabs = dock_tabs
+        self.nav_list = nav_list
 
-        # CẤY KÍNH LỎNG VÀO TABS CỦA AI WORKSPACE
         try:
             from ui.liquid_physics import LiquidOverlayWidget
-            self._dock_tab_liquid = LiquidOverlayWidget(self.dock_tabs.tabBar())
+            self._dock_tab_liquid = LiquidOverlayWidget(self.nav_list)
         except Exception:
             pass
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
@@ -601,24 +738,22 @@ class MainWindow(QMainWindow):
                 placement.mode, placement.x, placement.y, emit=False
             )
         )
-        self.generation_dock.setWidget(dock_tabs)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.generation_dock)
+        # self.generation_drawer.main_layout.addWidget(dock_tabs)
+        # self.addDockWidget is removed
 
         self.btn_drawer_toggle = QPushButton(self)
         self.btn_drawer_toggle.setFixedSize(32, 64)
-        self.btn_drawer_toggle.setIconSize(QSize(16, 16))
         self.btn_drawer_toggle.setCursor(Qt.PointingHandCursor)
-        self.btn_drawer_toggle.setToolTip("Ẩn/Hiện AI Workspace")
         self.btn_drawer_toggle.setProperty("variant", "handle")
         self.btn_drawer_toggle.clicked.connect(self._toggle_ai_drawer)
-        self.generation_dock.visibilityChanged.connect(self._sync_drawer_toggle_state)
-        self._drawer_target_width = 350
-        self.drawer_anim = QVariantAnimation(self)
-        self.drawer_anim.setDuration(250)
-        self.drawer_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._drawer_target_width = 460
+        
+        from PySide6.QtCore import QPropertyAnimation
+        self.drawer_anim = QPropertyAnimation(self.generation_drawer, b"pos", self)
         self.drawer_anim.valueChanged.connect(self._on_drawer_anim_step)
         self.drawer_anim.finished.connect(self._on_drawer_anim_finished)
         self.centralWidget().installEventFilter(self)
+        self._set_drawer_toggle_icon(False)
         self._update_drawer_handle_position()
         self._set_drawer_toggle_icon(True)
 
@@ -1292,75 +1427,79 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _toggle_ai_drawer(self):
+        from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint
         if self.drawer_anim.state() == QAbstractAnimation.Running:
             return
-        if self.generation_dock.isVisible():
-            self._drawer_target_width = max(350, self.generation_dock.width())
-            self.drawer_anim.setStartValue(self._drawer_target_width)
-            self.drawer_anim.setEndValue(0)
+            
+        margin = 16
+        w = 500
+        drawer_height = self.height() - margin * 2
+        open_x = self.width() - w - margin
+        close_x = self.width()
+        
+        # Ensure exact geometry before animating
+        self.overlay_host.resize(self.size())
+        self.generation_drawer.resize(w, drawer_height)
+        
+        if self.overlay_host.isVisible():
+            self.drawer_anim.setDirection(QAbstractAnimation.Backward)
             self._set_drawer_toggle_icon(False)
-            self.btn_drawer_toggle.setToolTip("Hiện AI Workspace")
         else:
-            # Set the collapsed geometry before showing to prevent a one-frame flash.
-            self.generation_dock.setMinimumWidth(0)
-            self.generation_dock.setMaximumWidth(0)
-            self.generation_dock.show()
-            self.drawer_anim.setStartValue(0)
-            self.drawer_anim.setEndValue(self._drawer_target_width)
+            self.generation_drawer.move(close_x, margin)
+            self.overlay_host.show()
+            self.drawer_anim.setDuration(250)
+            self.drawer_anim.setEasingCurve(QEasingCurve.OutCubic)
+            self.drawer_anim.setStartValue(QPoint(close_x, margin))
+            self.drawer_anim.setEndValue(QPoint(open_x, margin))
+            self.drawer_anim.setDirection(QAbstractAnimation.Forward)
             self._set_drawer_toggle_icon(True)
-            self.btn_drawer_toggle.setToolTip("Ẩn AI Workspace")
         self.drawer_anim.start()
 
     def _set_drawer_toggle_icon(self, drawer_visible: bool):
+        from PySide6.QtWidgets import QStyle
         arrow = (
-            QStyle.StandardPixmap.SP_ArrowLeft
+            QStyle.StandardPixmap.SP_ArrowRight
             if drawer_visible
-            else QStyle.StandardPixmap.SP_ArrowRight
+            else QStyle.StandardPixmap.SP_ArrowLeft
         )
         self.btn_drawer_toggle.setIcon(self.style().standardIcon(arrow))
-        self.btn_drawer_toggle.setText("")
 
     @Slot(object)
-    def _on_drawer_anim_step(self, current_width):
-        width = max(0, int(current_width))
-        self.generation_dock.setMinimumWidth(width)
-        self.generation_dock.setMaximumWidth(width)
+    def _on_drawer_anim_step(self, pos):
         self._update_drawer_handle_position()
 
     @Slot()
     def _on_drawer_anim_finished(self):
-        if self.drawer_anim.endValue() == 0:
-            self.generation_dock.hide()
-        self.generation_dock.setMinimumWidth(350)
-        self.generation_dock.setMaximumWidth(390)
-        self._update_drawer_handle_position()
-
-    @Slot(bool)
-    def _sync_drawer_toggle_state(self, is_visible: bool):
-        self._set_drawer_toggle_icon(is_visible)
-        self.btn_drawer_toggle.setToolTip(
-            "Ẩn AI Workspace" if is_visible else "Hiện AI Workspace"
-        )
-        self._update_drawer_handle_position()
+        from PySide6.QtCore import QAbstractAnimation
+        if self.drawer_anim.direction() == QAbstractAnimation.Backward:
+            self.overlay_host.hide()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, 'overlay_host'):
+            self.overlay_host.resize(self.size())
+            
+            # Reposition drawer surface if visible AND not animating
+            from PySide6.QtCore import QAbstractAnimation
+            if self.overlay_host.isVisible() and self.drawer_anim.state() != QAbstractAnimation.Running:
+                margin = 16
+                w = 500
+                drawer_height = self.height() - margin * 2
+                open_x = self.width() - w - margin
+                self.generation_drawer.resize(w, drawer_height)
+                self.generation_drawer.move(open_x, margin)
+                
         self._update_drawer_handle_position()
 
     def _update_drawer_handle_position(self):
         if not hasattr(self, "btn_drawer_toggle"):
             return
-        if hasattr(self, "generation_dock") and self.generation_dock.isVisible() and self.generation_dock.parentWidget():
-            try:
-                pos = self.generation_dock.mapTo(self, QPoint(0, 0))
-                x = max(0, pos.x() - self.btn_drawer_toggle.width())
-                y = max(0, pos.y() + (self.generation_dock.height() - self.btn_drawer_toggle.height()) // 2)
-            except Exception:
-                x = self.width() - self.btn_drawer_toggle.width()
-                y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 3)
+        if hasattr(self, "generation_drawer") and self.generation_drawer.isVisible():
+            x = max(0, self.generation_drawer.pos().x() - self.btn_drawer_toggle.width())
+            y = self.generation_drawer.pos().y() + max(0, (self.generation_drawer.height() - self.btn_drawer_toggle.height()) // 2)
         else:
             x = self.width() - self.btn_drawer_toggle.width()
-            y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 3)
+            y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
         self.btn_drawer_toggle.move(max(0, x), y)
         self.btn_drawer_toggle.raise_()
 
@@ -1594,7 +1733,7 @@ class MainWindow(QMainWindow):
         if event.button() == Qt.LeftButton:
             # Only the 42px topbar is a drag handle. Child widgets such as
             # dock controls must keep their native mouse interaction.
-            self._is_dragging = event.pos().y() <= 42
+            self._is_dragging = event.position().toPoint().y() <= 42
             if self._is_dragging:
                 self.old_pos = event.globalPosition().toPoint()
         else:
@@ -3053,7 +3192,7 @@ class MainWindow(QMainWindow):
             return False
 
     def _show_context_inspector(self) -> None:
-        self.generation_dock.show()
+        self.generation_drawer.show()
         self.dock_tabs.setCurrentWidget(self.context_panel)
 
     def capture_recovery_working_state(self) -> RecoveryWorkingState:
@@ -3422,6 +3561,8 @@ class MainWindow(QMainWindow):
                 self._complete_recovery_session_switch()
                 self._sync_subtitle_placement_from_project()
                 self.generation_panel.sync_timing_settings_from_project()
+                if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
+                    self.generation_panel.sync_subtitle_sources_from_project()
                 
                 self.workspace_service.restore_workspace()
                 self.generation_panel.check_resumable_state()
@@ -3452,6 +3593,8 @@ class MainWindow(QMainWindow):
             self._complete_recovery_session_switch()
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
+            if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
+                self.generation_panel.sync_subtitle_sources_from_project()
             self._queue_project_dirs[result.local_path] = project_data["bundle_path"]
             self.video_player.load_video(result.local_path)
             self.workspace_service.restore_workspace()
@@ -3695,6 +3838,8 @@ class MainWindow(QMainWindow):
             self._complete_recovery_session_switch()
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
+            if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
+                self.generation_panel.sync_subtitle_sources_from_project()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
             self.workspace_service.restore_workspace()
@@ -3764,6 +3909,8 @@ class MainWindow(QMainWindow):
                 self._complete_recovery_session_switch()
                 self._sync_subtitle_placement_from_project()
                 self.generation_panel.sync_timing_settings_from_project()
+                if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
+                    self.generation_panel.sync_subtitle_sources_from_project()
                 self.workspace_service.restore_workspace()
                 self._refresh_transcription_context_views()
                 self.activateWindow()

@@ -40,7 +40,7 @@ class SubtitleInspectorPanel(QWidget):
 
         self.spin_size = QSpinBox()
         self.spin_size.setRange(10, 150)
-        self.spin_size.setValue(40)
+        self.spin_size.setValue(20)
         form_layout.addRow("Cỡ chữ:", self.spin_size)
 
         self.btn_text_color = QPushButton()

@@ -75,6 +75,25 @@ class SubtitleGenerationPanel(QWidget):
         title = QLabel("✨ Generate Subtitle")
         title.setProperty("class", "SectionTitle")
         settings_layout.addWidget(title)
+        # --- PHASE 5: SUBTITLE SOURCE ---
+        source_title = QLabel("Subtitle Source")
+        source_title.setProperty("class", "SectionTitle")
+        settings_layout.addWidget(source_title)
+        
+        source_h_layout = QHBoxLayout()
+        self.cmb_subtitle_source = QComboBox()
+        self.cmb_subtitle_source.addItem("Auto-detected SRT", "default")
+        self.cmb_subtitle_source.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        source_h_layout.addWidget(self.cmb_subtitle_source)
+        
+        self.btn_add_external_srt = QPushButton("+ Add SRT...")
+        self.btn_add_external_srt.setObjectName("btn_add_external_srt")
+        source_h_layout.addWidget(self.btn_add_external_srt)
+        settings_layout.addLayout(source_h_layout)
+        
+        self.btn_add_external_srt.clicked.connect(self._on_add_external_srt)
+        self.cmb_subtitle_source.currentIndexChanged.connect(self._on_subtitle_source_changed)
+
         # --- PHASE 3: RANGE GENERATION ---
         self.range_group = QGroupBox("🎯 Generate theo khoảng thời gian")
         range_layout = QVBoxLayout(self.range_group)
@@ -871,7 +890,7 @@ class SubtitleGenerationPanel(QWidget):
         self.txt_end.setText(ms_to_time_str(end_ms))
 
     def _on_preview_range_clicked(self):
-        from core.export.subtitle_parser import time_str_to_ms, ms_to_time_str
+        from ui.SubEditor import time_str_to_ms, ms_to_time_str
         from core.subtitle_generation.range_validation import RangeValidator, RangeErrorCode
         from ui.dialogs.preview_range_dialog import PreviewRangeDialog
         
@@ -989,3 +1008,109 @@ class SubtitleGenerationPanel(QWidget):
                 w.sub_editor.timeline_provider.sync_back_to_editor()
                 self.refresh_history()
     # ----------------------------------------
+
+    def sync_subtitle_sources_from_project(self):
+        project_service = getattr(self.generation_service, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        if not project: return
+        sources = getattr(project.state, "subtitle_sources", [])
+        active_id = getattr(project.state, "active_subtitle_source_id", "default")
+        
+        self.cmb_subtitle_source.blockSignals(True)
+        self.cmb_subtitle_source.clear()
+        self.cmb_subtitle_source.addItem("Auto-detected SRT", "default")
+        for src in sources:
+            self.cmb_subtitle_source.addItem(src.get("name", "External SRT"), src.get("id"))
+        
+        idx = self.cmb_subtitle_source.findData(active_id)
+        if idx >= 0:
+            self.cmb_subtitle_source.setCurrentIndex(idx)
+        self.cmb_subtitle_source.blockSignals(False)
+
+    def _on_add_external_srt(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        path, _ = QFileDialog.getOpenFileName(self, "Ch?n file SRT...", "", "Subtitle Files (*.srt)")
+        if not path: return
+        
+        import uuid
+        import os
+        from core.srt_parser import SrtParser
+        
+        try:
+            segments = SrtParser.parse(path)
+            if not segments:
+                raise ValueError("File SRT tr?ng ho?c khng h?p l?.")
+                
+            source_id = f"ext_srt_{uuid.uuid4().hex[:8]}"
+            project_service = getattr(self.generation_service, "project_service", None)
+            project = getattr(project_service, "current_project", None)
+            if not project: return
+            
+            new_source = {
+                "id": source_id,
+                "name": os.path.basename(path),
+                "original_path": path,
+            }
+            if not hasattr(project.state, "subtitle_sources"):
+                project.state.subtitle_sources = []
+            project.state.subtitle_sources.append(new_source)
+            project.state.active_subtitle_source_id = source_id
+            if hasattr(project_service, "mark_dirty"):
+                project_service.mark_dirty()
+                
+            self.sync_subtitle_sources_from_project()
+            
+            # Store initial checkpoint for new source
+            self.generation_service.create_history_checkpoint(segments, is_initial=True)
+            
+            # Refresh UI
+            w = self
+            from ui.Gui import Gui
+            while w is not None and not isinstance(w, Gui):
+                w = w.parent()
+            if w:
+                w.sub_editor.all_segments.clear()
+                w.sub_editor.all_segments.extend(segments)
+                w.sub_editor.refresh_editor()
+                w.sub_editor.timeline_provider.sync_back_to_editor()
+                w.sub_editor.save_draft()
+                self.refresh_history()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "L?i import", f"Khng th? d?c file SRT:\n{e}")
+    def _on_subtitle_source_changed(self, idx):
+        if idx < 0: return
+        source_id = self.cmb_subtitle_source.itemData(idx)
+        project_service = getattr(self.generation_service, "project_service", None)
+        project = getattr(project_service, "current_project", None)
+        if not project: return
+        
+        if getattr(project.state, "active_subtitle_source_id", "default") == source_id:
+            return
+            
+        project.state.active_subtitle_source_id = source_id
+        if hasattr(project_service, "mark_dirty"):
+            project_service.mark_dirty()
+            
+        # Clear editor and reload from this source's state
+        w = self
+        from ui.Gui import Gui
+        while w is not None and not isinstance(w, Gui):
+            w = w.parent()
+        if w:
+                    cp = None
+        history = self.generation_service.checkpoint_history
+        if history:
+            cp = history[-1]
+        elif self.generation_service.initial_state:
+            cp = self.generation_service.initial_state
+            segments = []
+            if cp and hasattr(cp, "segments_snapshot"):
+                import copy
+                segments = copy.deepcopy(cp.segments_snapshot)
+            w.sub_editor.all_segments.clear()
+            w.sub_editor.all_segments.extend(segments)
+            w.sub_editor.refresh_editor()
+            w.sub_editor.timeline_provider.sync_back_to_editor()
+            w.sub_editor.save_draft()
+            self.refresh_history()
