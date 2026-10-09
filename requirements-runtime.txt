@@ -13,3 +13,4 @@ yt-dlp==2026.8.19
 urllib3==2.7.0
 requests==2.34.2
 pydantic==2.11.10
+Pillow==11.3.0
