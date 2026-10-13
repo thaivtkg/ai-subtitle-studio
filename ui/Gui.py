@@ -674,12 +674,27 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        dock_tabs = QStackedWidget(self.generation_drawer)
+        # Keep navigation tabs and the action footer in separate layout regions.
+        # The footer is a sibling of the stacked pages, so it remains visible
+        # while the user switches between Generate, Context, Style, Quality and Log.
+        drawer_content = QWidget(self.generation_drawer)
+        drawer_content.setObjectName("GenerationDrawerContent")
+        drawer_content_layout = QVBoxLayout(drawer_content)
+        drawer_content_layout.setContentsMargins(0, 0, 0, 0)
+        drawer_content_layout.setSpacing(8)
+
+        dock_tabs = QStackedWidget(drawer_content)
         dock_tabs.setObjectName("DockTabs")
-        
-        # Replace GenerationDrawer layout with an HBox
+
+        # Left navigation rail + right content (tabs above, action footer below).
         self.generation_drawer.main_layout.addWidget(nav_list)
-        self.generation_drawer.main_layout.addWidget(dock_tabs)
+        self.generation_drawer.main_layout.addWidget(drawer_content, 1)
+        drawer_content_layout.addWidget(dock_tabs, 1)
+
+        self.generation_action_footer = self.generation_panel.take_action_footer()
+        if self.generation_action_footer is not None:
+            self.generation_action_footer.setObjectName("GenerationActionFooter")
+            drawer_content_layout.addWidget(self.generation_action_footer, 0)
 
         def add_nav_tab(widget, title):
             dock_tabs.addWidget(widget)

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import ( QLineEdit, QListWidget, QListWidgetItem,
     QLabel,
     QMessageBox,
     QProgressBar,
+    QToolTip,
     QPushButton,
     QSpinBox,
     QScrollArea,
@@ -100,17 +101,40 @@ class SubtitleGenerationPanel(QWidget):
         range_layout.setContentsMargins(12, 12, 12, 12)
         range_layout.setSpacing(8)
         
+        # RANGE_TIME_INPUT_UNIT_SELECTOR: explicit units prevent 1-5 ambiguity.
+        unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Đơn vị nhập:"))
+        self.cmb_range_unit = QComboBox()
+        self.cmb_range_unit.addItem("Giây (s)", "seconds")
+        self.cmb_range_unit.addItem("Phút (min)", "minutes")
+        self._range_input_unit = "seconds"
+        self.cmb_range_unit.setToolTip(
+            "Chọn rõ đơn vị trước khi nhập để tránh nhầm 1–5 giây với 1–5 phút."
+        )
+        unit_row.addWidget(self.cmb_range_unit)
+        unit_row.addStretch()
+        range_layout.addLayout(unit_row)
+
         time_row = QHBoxLayout()
         self.txt_start = QLineEdit()
-        self.txt_start.setPlaceholderText("00:00:00,000")
+        self.txt_start.setPlaceholderText("Ví dụ: 60,5")
         self.txt_end = QLineEdit()
-        self.txt_end.setPlaceholderText("00:00:00,000")
-        
+        self.txt_end.setPlaceholderText("Ví dụ: 70")
         time_row.addWidget(QLabel("Từ:"))
         time_row.addWidget(self.txt_start)
         time_row.addWidget(QLabel("Đến:"))
         time_row.addWidget(self.txt_end)
         range_layout.addLayout(time_row)
+        self.txt_start.textChanged.connect(
+            lambda _text: self._clear_range_input_error(self.txt_start)
+        )
+        self.txt_end.textChanged.connect(
+            lambda _text: self._clear_range_input_error(self.txt_end)
+        )
+        self.cmb_range_unit.currentIndexChanged.connect(
+            lambda _index: self._on_range_unit_changed()
+        )
+        self._refresh_range_input_help()
         
         range_btn_row = QHBoxLayout()
         self.btn_range_timeline = QPushButton("⏱ Lấy từ vùng Timeline")
@@ -343,6 +367,22 @@ class SubtitleGenerationPanel(QWidget):
         self._on_batch_mode_changed()
         self.refresh_batch_mode_availability()
         self._on_mode_changed()
+
+    def take_action_footer(self):
+        """Detach the action footer so the host can pin it outside the tab stack.
+
+        The buttons remain owned by this panel logically: their signal handlers,
+        progress callbacks, and state updates continue to target this instance.
+        Only the QWidget parent/layout position changes.
+        """
+        footer = getattr(self, "action_footer", None)
+        if footer is None:
+            return None
+        panel_layout = self.layout()
+        if panel_layout is not None:
+            panel_layout.removeWidget(footer)
+        footer.setParent(None)
+        return footer
 
     @staticmethod
     def _configure_status_label(label):
@@ -848,7 +888,7 @@ class SubtitleGenerationPanel(QWidget):
         for cp in history:
             label_text = "Initial" if cp.checkpoint_type == "INITIAL" else f"#{cp.generated_count} ({cp.checkpoint_type})"
             if cp.checkpoint_type == "RANGE" and cp.generation_range:
-                from core.export.subtitle_parser import ms_to_time_str
+                from ui.SubEditor import ms_to_time_str
                 label_text += f" {ms_to_time_str(cp.generation_range.get('start_ms', 0))} -> {ms_to_time_str(cp.generation_range.get('end_ms', 0))}"
             
             btn = QPushButton(label_text)
@@ -884,23 +924,134 @@ class SubtitleGenerationPanel(QWidget):
         self._reset_ui_state()
 
     # --- PHASE 3: RANGE & HISTORY LOGIC ---
+    def _range_unit_factor_ms(self, unit=None):
+        unit = unit or self._range_input_unit
+        return 1000 if unit == "seconds" else 60000
+
+    def _range_unit_label(self, unit=None):
+        unit = unit or self._range_input_unit
+        return "giây" if unit == "seconds" else "phút"
+
+    def _range_input_help(self):
+        if self._range_input_unit == "seconds":
+            return (
+                "Nhập số giây không âm, không cần gõ s. Ví dụ: 60–70 hoặc "
+                "60,5–70. Dấu phẩy (,) và dấu chấm (.) đều dùng được cho số lẻ."
+            )
+        return (
+            "Nhập số phút không âm, không cần gõ chữ phút. Ví dụ: 1–5 hoặc "
+            "1,5–2. Dấu phẩy (,) và dấu chấm (.) đều dùng được cho số lẻ."
+        )
+
+    def _refresh_range_input_help(self):
+        help_text = self._range_input_help()
+        for widget in (self.txt_start, self.txt_end):
+            widget.setToolTip(help_text)
+        if self._range_input_unit == "seconds":
+            self.txt_start.setPlaceholderText("Ví dụ: 60,5")
+            self.txt_end.setPlaceholderText("Ví dụ: 70")
+        else:
+            self.txt_start.setPlaceholderText("Ví dụ: 1,5")
+            self.txt_end.setPlaceholderText("Ví dụ: 5")
+
+    def _clear_range_input_error(self, widget):
+        widget.setStyleSheet("")
+        if hasattr(self, "_range_input_unit"):
+            widget.setToolTip(self._range_input_help())
+
+    def _show_range_input_error(self, widget, message):
+        help_text = f"{message}\n\nCách nhập đúng: {self._range_input_help()}"
+        widget.setStyleSheet("border: 1px solid #ff5252;")
+        widget.setToolTip(help_text)
+        widget.setFocus()
+        QToolTip.showText(
+            widget.mapToGlobal(widget.rect().bottomLeft()),
+            help_text,
+            widget,
+            widget.rect(),
+            7000,
+        )
+
+    def _on_range_unit_changed(self):
+        from core.subtitle_generation.range_time_input import (
+            RangeInputError, parse_range_value_ms, format_range_value_ms,
+        )
+        old_unit = getattr(self, "_range_input_unit", "seconds")
+        new_unit = self.cmb_range_unit.currentData()
+        if new_unit == old_unit:
+            self._refresh_range_input_help()
+            return
+
+        converted = []
+        for widget in (self.txt_start, self.txt_end):
+            raw = widget.text().strip()
+            if not raw:
+                converted.append((widget, ""))
+                continue
+            try:
+                value_ms = parse_range_value_ms(raw, old_unit)
+            except RangeInputError as exc:
+                self.cmb_range_unit.blockSignals(True)
+                self.cmb_range_unit.setCurrentIndex(
+                    self.cmb_range_unit.findData(old_unit)
+                )
+                self.cmb_range_unit.blockSignals(False)
+                self._show_range_input_error(
+                    widget,
+                    f"Không thể đổi đơn vị vì giá trị đang nhập chưa hợp lệ: {exc}",
+                )
+                return
+            converted.append((widget, value_ms))
+
+        self._range_input_unit = new_unit
+        for widget, value in converted:
+            widget.setText(
+                "" if value == "" else format_range_value_ms(value, new_unit)
+            )
+        self._refresh_range_input_help()
+
     def set_range(self, start_ms: int, end_ms: int):
-        from core.export.subtitle_parser import ms_to_time_str
-        self.txt_start.setText(ms_to_time_str(start_ms))
-        self.txt_end.setText(ms_to_time_str(end_ms))
+        from core.subtitle_generation.range_time_input import format_range_value_ms
+        unit = getattr(self, "_range_input_unit", "seconds")
+        self.txt_start.setText(format_range_value_ms(start_ms, unit))
+        self.txt_end.setText(format_range_value_ms(end_ms, unit))
 
     def _on_preview_range_clicked(self):
-        from ui.SubEditor import time_str_to_ms, ms_to_time_str
+        from ui.SubEditor import ms_to_time_str
+        from core.subtitle_generation.range_time_input import (
+            RangeInputError, parse_range_value_ms, format_range_value_ms,
+        )
         from core.subtitle_generation.range_validation import RangeValidator, RangeErrorCode
         from ui.dialogs.preview_range_dialog import PreviewRangeDialog
-        
+
         try:
-            start_ms = time_str_to_ms(self.txt_start.text().strip())
-            end_ms = time_str_to_ms(self.txt_end.text().strip())
-        except ValueError:
-            self._on_error("Format thời gian không hợp lệ. Vui lòng nhập HH:MM:SS,mmm")
+            start_ms = parse_range_value_ms(
+                self.txt_start.text(), self._range_input_unit
+            )
+        except RangeInputError as exc:
+            self._show_range_input_error(
+                self.txt_start, f"Thời điểm bắt đầu không hợp lệ: {exc}"
+            )
             return
-            
+        try:
+            end_ms = parse_range_value_ms(
+                self.txt_end.text(), self._range_input_unit
+            )
+        except RangeInputError as exc:
+            self._show_range_input_error(
+                self.txt_end, f"Thời điểm kết thúc không hợp lệ: {exc}"
+            )
+            return
+
+        self._clear_range_input_error(self.txt_start)
+        self._clear_range_input_error(self.txt_end)
+        if start_ms >= end_ms:
+            self._show_range_input_error(
+                self.txt_end,
+                "Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu.",
+            )
+            return
+
         # Call Validator
         result = RangeValidator.preview_range(
             start_ms, end_ms, self.video_duration_ms, 
@@ -910,14 +1061,43 @@ class SubtitleGenerationPanel(QWidget):
         
         if not result.is_valid:
             if result.suggested_end_ms:
-                # Ask user if they want to clamp
+                # Keep the existing explicit clamp confirmation, but display the
+                # proposed value in the currently selected input unit.
                 from PySide6.QtWidgets import QMessageBox
-                ans = QMessageBox.question(self, "Warning", f"⚠ {result.message}\nBạn có muốn tự động đưa End về {ms_to_time_str(result.suggested_end_ms)}?")
+                suggested = format_range_value_ms(
+                    result.suggested_end_ms, self._range_input_unit
+                )
+                ans = QMessageBox.question(
+                    self,
+                    "Khoảng thời gian vượt video",
+                    f"⚠ {result.message}\nBạn có muốn đưa thời điểm kết thúc về {suggested} {self._range_unit_label()}?",
+                )
                 if ans == QMessageBox.Yes:
-                    self.txt_end.setText(ms_to_time_str(result.suggested_end_ms))
-                    self._on_preview_range_clicked() # Re-preview
+                    self.txt_end.setText(suggested)
+                    self._on_preview_range_clicked()  # Re-preview
+                else:
+                    self._show_range_input_error(
+                        self.txt_end,
+                        f"Thời điểm kết thúc vượt thời lượng video. Giá trị gợi ý: {suggested} {self._range_unit_label()}.",
+                    )
             else:
-                self._on_error(result.message)
+                if result.status == RangeErrorCode.START_BEYOND_END:
+                    if start_ms > self.video_duration_ms:
+                        target = self.txt_start
+                        message = "Thời điểm bắt đầu vượt quá thời lượng video. Hãy giảm giá trị bắt đầu."
+                    else:
+                        target = self.txt_end
+                        message = "Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu."
+                elif result.status == RangeErrorCode.RANGE_TOO_SHORT:
+                    target = self.txt_end
+                    message = "Khoảng chọn quá ngắn. Hãy chọn khoảng dài hơn ít nhất 0,05 giây."
+                elif result.status == RangeErrorCode.BEYOND_VIDEO_DURATION:
+                    target = self.txt_end
+                    message = "Thời điểm kết thúc vượt quá thời lượng video. Hãy nhập giá trị nhỏ hơn hoặc bằng thời lượng video."
+                else:
+                    target = self.txt_end
+                    message = result.message
+                self._show_range_input_error(target, message)
             return
             
         dialog = PreviewRangeDialog(ms_to_time_str(start_ms), ms_to_time_str(end_ms), result, self)
