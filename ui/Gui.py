@@ -1447,6 +1447,10 @@ class MainWindow(QMainWindow):
         else:
             self.generation_drawer.move(close_x, margin)
             self.overlay_host.show()
+            # Docks (e.g. timeline_dock) are created after overlay_host and would
+            # otherwise stack above it; the overlay must be the top-most child.
+            self.overlay_host.raise_()
+            self.btn_drawer_toggle.raise_()
             self.drawer_anim.setDuration(250)
             self.drawer_anim.setEasingCurve(QEasingCurve.OutCubic)
             self.drawer_anim.setStartValue(QPoint(close_x, margin))

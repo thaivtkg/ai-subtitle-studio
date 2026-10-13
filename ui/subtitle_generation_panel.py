@@ -945,18 +945,9 @@ class SubtitleGenerationPanel(QWidget):
         self.refresh_history_ui()
             
     def _get_current_segments(self):
-        # Depending on how panel accesses editor segments
-        if hasattr(self, 'parent') and hasattr(self.parent(), 'sub_editor'):
-            return self.parent().sub_editor.all_segments
-        # GUI integration usually binds this
-        # Let's try to get Gui reference safely
-        from ui.Gui import Gui
-        w = self
-        while w is not None and not isinstance(w, Gui):
-            w = w.parent()
-        if w:
-            return w.sub_editor.all_segments
-        return []
+        # The panel lives inside MainWindow's overlay drawer; window() reaches it.
+        sub_editor = getattr(self.window(), "sub_editor", None)
+        return sub_editor.all_segments if sub_editor is not None else []
         
     def refresh_history(self):
         from PySide6.QtWidgets import QListWidgetItem
@@ -997,16 +988,32 @@ class SubtitleGenerationPanel(QWidget):
         from ui.dialogs.rollback_preview_dialog import RollbackPreviewDialog
         dialog = RollbackPreviewDialog(cp, has_manual, self)
         if dialog.exec():
-            # Trigger rollback
-            w = self
-            from ui.Gui import Gui
-            while w is not None and not isinstance(w, Gui):
-                w = w.parent()
-            if w:
-                self.generation_service.execute_rollback(None, current_segments, w.undo_manager)
-                w.sub_editor.refresh_editor()
-                w.sub_editor.timeline_provider.sync_back_to_editor()
+            # Rollback goes through the undo manager, whose state_changed already
+            # re-renders the editor and the timeline.
+            undo_manager = getattr(self.window(), "undo_manager", None)
+            if undo_manager is not None:
+                self.generation_service.execute_rollback(
+                    None, current_segments, undo_manager, checkpoint_id=cp_id
+                )
                 self.refresh_history()
+
+    def _replace_editor_segments(self, segments):
+        """Load segments into MainWindow's editor, timeline and draft."""
+        win = self.window()
+        sub_editor = getattr(win, "sub_editor", None)
+        if sub_editor is None:
+            return False
+        sub_editor.all_segments.clear()
+        sub_editor.all_segments.extend(segments)
+        sub_editor.render_page()
+        provider = getattr(win, "timeline_data_provider", None)
+        if provider is not None:
+            duration_ms = self.video_duration_ms or 3600000
+            provider.load_runtime_data(sub_editor.all_segments, duration_ms)
+            win.timeline_widget.load_project_data(duration_ms, provider.get_all_segments())
+        sub_editor.save_draft(silent=True)
+        self.refresh_history()
+        return True
     # ----------------------------------------
 
     def sync_subtitle_sources_from_project(self):
@@ -1064,17 +1071,7 @@ class SubtitleGenerationPanel(QWidget):
             self.generation_service.create_history_checkpoint(segments, is_initial=True)
             
             # Refresh UI
-            w = self
-            from ui.Gui import Gui
-            while w is not None and not isinstance(w, Gui):
-                w = w.parent()
-            if w:
-                w.sub_editor.all_segments.clear()
-                w.sub_editor.all_segments.extend(segments)
-                w.sub_editor.refresh_editor()
-                w.sub_editor.timeline_provider.sync_back_to_editor()
-                w.sub_editor.save_draft()
-                self.refresh_history()
+            self._replace_editor_segments(segments)
                 
         except Exception as e:
             QMessageBox.critical(self, "L?i import", f"Khng th? d?c file SRT:\n{e}")
@@ -1092,25 +1089,9 @@ class SubtitleGenerationPanel(QWidget):
         if hasattr(project_service, "mark_dirty"):
             project_service.mark_dirty()
             
-        # Clear editor and reload from this source's state
-        w = self
-        from ui.Gui import Gui
-        while w is not None and not isinstance(w, Gui):
-            w = w.parent()
-        if w:
-                    cp = None
+        # Clear editor and reload from this source's latest checkpoint.
         history = self.generation_service.checkpoint_history
-        if history:
-            cp = history[-1]
-        elif self.generation_service.initial_state:
-            cp = self.generation_service.initial_state
-            segments = []
-            if cp and hasattr(cp, "segments_snapshot"):
-                import copy
-                segments = copy.deepcopy(cp.segments_snapshot)
-            w.sub_editor.all_segments.clear()
-            w.sub_editor.all_segments.extend(segments)
-            w.sub_editor.refresh_editor()
-            w.sub_editor.timeline_provider.sync_back_to_editor()
-            w.sub_editor.save_draft()
-            self.refresh_history()
+        cp = history[-1] if history else self.generation_service.initial_state
+        import copy
+        segments = copy.deepcopy(getattr(cp, "segments_snapshot", None) or [])
+        self._replace_editor_segments(segments)
