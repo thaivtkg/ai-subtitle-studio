@@ -35,9 +35,29 @@ def _get_check_icon_url() -> str:
     return "resources/check.svg"
 
 
+def _get_chevron_down_icon_url() -> str:
+    try:
+        from core.runtime.runtime_paths import RuntimePaths
+        res_file = RuntimePaths.get_resources_dir() / "chevron_down.svg"
+        if res_file.exists():
+            return str(res_file).replace("\\", "/")
+    except Exception:
+        pass
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "resources", "chevron_down.svg"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "assets", "chevron_down.svg"),
+    ]
+    for c in candidates:
+        norm = os.path.normpath(c)
+        if os.path.exists(norm):
+            return norm.replace("\\", "/")
+    return "resources/chevron_down.svg"
+
+
 def _vars() -> dict:
     return {
         "CHECK_ICON_URL": _get_check_icon_url(),
+        "CHEVRON_DOWN_ICON_URL": _get_chevron_down_icon_url(),
         "BG_APP": ColorToken.BG_APP,
         "SURFACE": ColorToken.SURFACE,
         "SURFACE_ELEVATED": ColorToken.SURFACE_ELEVATED,
@@ -559,6 +579,26 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
     color: $TEXT_DISABLED;
 }
 
+QComboBox {
+    padding-right: 24px;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 22px;
+    border-left: none;
+    border-top-right-radius: $RADIUS_CONTROL;
+    border-bottom-right-radius: $RADIUS_CONTROL;
+    background: transparent;
+}
+
+QComboBox::down-arrow {
+    image: url($CHEVRON_DOWN_ICON_URL);
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+}
 
 QComboBox QAbstractItemView {
     background-color: $SURFACE_ELEVATED;

@@ -232,6 +232,8 @@ class SubtitleEditorWidget(QWidget):
         self._active_time_range_ms = None
         self._visible_source_indices = []
         self._current_page_source_indices = []
+        self.ripple_shift_enabled = True
+        self._is_updating_filter = False
         self.is_rendering = False
         self._is_syncing_ui = False
         
@@ -289,12 +291,12 @@ class SubtitleEditorWidget(QWidget):
         self.btn_apply_range.setObjectName("btn_secondary")
         self.btn_apply_range.setToolTip("Chỉ hiển thị phụ đề giao với khoảng thời gian đã nhập.")
         self.btn_apply_range.clicked.connect(self.apply_time_filter)
-        page_layout.addWidget(self.btn_apply_range)
+        self.btn_apply_range.hide()
 
         self.btn_clear_range = QPushButton("Xóa lọc")
         self.btn_clear_range.setObjectName("btn_secondary")
         self.btn_clear_range.clicked.connect(self.clear_time_filter)
-        page_layout.addWidget(self.btn_clear_range)
+        self.btn_clear_range.hide()
 
         self.lbl_range_count = QLabel("0 / 0 phụ đề")
         self.lbl_range_count.setStyleSheet(f"color:{Theme.TEXT_MUTED}; font-size:11px;")
@@ -349,6 +351,7 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
+        self.table.currentCellChanged.connect(self._on_table_current_cell_changed)
         left_layout.addWidget(self.table, stretch=1)
 
         self.current_editor = CurrentSubtitleEditor(self)
@@ -371,8 +374,17 @@ class SubtitleEditorWidget(QWidget):
             elif hasattr(widget, "setUndoEnabled"):
                 widget.setUndoEnabled(False)
             widget.installEventFilter(self)
-        QShortcut(QKeySequence("Alt+Left"), self).activated.connect(self.select_previous)
-        QShortcut(QKeySequence("Alt+Right"), self).activated.connect(self.select_next)
+        self.shortcut_prev = QShortcut(QKeySequence("Alt+Left"), self)
+        self.shortcut_prev.setObjectName("previous_subtitle")
+        self.shortcut_prev.setProperty("help_label", "Previous Subtitle")
+        self.shortcut_prev.setProperty("help_context", "Timeline")
+        self.shortcut_prev.activated.connect(self.select_previous)
+
+        self.shortcut_next = QShortcut(QKeySequence("Alt+Right"), self)
+        self.shortcut_next.setObjectName("next_subtitle")
+        self.shortcut_next.setProperty("help_label", "Next Subtitle")
+        self.shortcut_next.setProperty("help_context", "Timeline")
+        self.shortcut_next.activated.connect(self.select_next)
 
         # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         self.ai_translate_btn = QPushButton("🪄 AI Translate")
@@ -466,25 +478,42 @@ class SubtitleEditorWidget(QWidget):
         return duration_ms if duration_ms > 0 else None
 
     def _on_time_range_input_changed(self, *_):
-        """Show validation feedback while typing; never change the active filter here."""
+        """Auto-apply valid end minute filter, auto-clear when both are blank."""
+        if getattr(self, "_is_updating_filter", False):
+            return
+
         start_text = self.range_start_input.text().strip()
         end_text = self.range_end_input.text().strip()
+
+        # Both inputs blank: auto-clear filter
         if not start_text and not end_text:
+            self.lbl_range_validation.clear()
+            self.lbl_range_validation.hide()
             if self._active_time_range_ms is not None:
-                self.lbl_range_validation.setStyleSheet(
-                    f"color: {Theme.TEXT_MUTED}; font-size: 11px; padding-left: 8px;"
-                )
-                self.lbl_range_validation.setText(
-                    "Để bỏ lọc thời gian, nhấn Áp dụng khi cả hai ô đều trống hoặc nhấn Xóa lọc."
-                )
-                self.lbl_range_validation.show()
-            else:
-                self.lbl_range_validation.clear()
-                self.lbl_range_validation.hide()
+                self._is_updating_filter = True
+                try:
+                    self._active_time_range_ms = None
+                    self.current_page = 0
+                    self.render_page()
+                finally:
+                    self._is_updating_filter = False
             return
+
+        # If end_text is blank, user is still typing start
+        if not end_text:
+            self.lbl_range_validation.clear()
+            self.lbl_range_validation.hide()
+            return
+
+        # If start input changed while no filter is active, wait for end input
+        if self.sender() is self.range_start_input and self._active_time_range_ms is None:
+            return
+
+        effective_start = start_text if start_text else "0"
         try:
-            parse_minute_range(
-                start_text, end_text,
+            time_range = parse_minute_range(
+                effective_start,
+                end_text,
                 max_duration_ms=self._time_range_duration_limit_ms(),
             )
         except TimeRangeValidationError as exc:
@@ -496,13 +525,28 @@ class SubtitleEditorWidget(QWidget):
         else:
             self.lbl_range_validation.clear()
             self.lbl_range_validation.hide()
+            new_range = (time_range.start_ms, time_range.end_ms) if time_range is not None else None
+            if self._active_time_range_ms != new_range:
+                self._is_updating_filter = True
+                try:
+                    self._active_time_range_ms = new_range
+                    self.current_page = 0
+                    self.render_page()
+                finally:
+                    self._is_updating_filter = False
 
     def apply_time_filter(self):
         """Validate both minute fields before committing a display-only time filter."""
+        start_text = self.range_start_input.text().strip()
+        end_text = self.range_end_input.text().strip()
+        if not start_text and not end_text:
+            self.clear_time_filter()
+            return
+
         try:
             time_range = parse_minute_range(
-                self.range_start_input.text(),
-                self.range_end_input.text(),
+                start_text,
+                end_text,
                 max_duration_ms=self._time_range_duration_limit_ms(),
             )
         except TimeRangeValidationError as exc:
@@ -753,6 +797,12 @@ class SubtitleEditorWidget(QWidget):
         self._load_current_editor()
         self.sync_to_controller()
         self.check_overlaps()
+        if 0 <= self.current_index < len(self.all_segments):
+            row = self._get_row_by_source_index(self.current_index)
+            if row >= 0:
+                self.table.blockSignals(True)
+                self.table.selectRow(row)
+                self.table.blockSignals(False)
         self.is_rendering = False
 
     def _video_duration_ms(self):
@@ -840,11 +890,11 @@ class SubtitleEditorWidget(QWidget):
             raw_text = it_text.text()
             if raw_text == "[ Chưa có nội dung ]": raw_text = ""
             if new_start != old_start or new_end != old_end:
+                changes = self._build_timing_changes(abs_idx, old_start, old_end, new_start, new_end)
                 self.undo_manager.push(
-                    EditTimingCommand(
-                        abs_idx, old_start, old_end, new_start, new_end, self.all_segments
-                    )
+                    EditTimingCommand(changes, data_provider=self.all_segments)
                 )
+                self.live_edit_applied.emit(self.all_segments)
 
             if segment['text'] != raw_text:
                 self.undo_manager.push(
@@ -864,6 +914,12 @@ class SubtitleEditorWidget(QWidget):
         abs_idx = self._source_index_for_row(row)
         if 0 <= abs_idx < len(self.all_segments):
             self.select_segment(abs_idx)
+
+    def _on_table_current_cell_changed(self, currentRow, _currentColumn, _previousRow, _previousColumn):
+        if not self.is_rendering and currentRow >= 0:
+            abs_idx = self._source_index_for_row(currentRow)
+            if 0 <= abs_idx < len(self.all_segments) and abs_idx != self.current_index:
+                self.select_segment(abs_idx)
 
     def select_previous(self):
         if self.current_index > 0:
@@ -889,9 +945,18 @@ class SubtitleEditorWidget(QWidget):
         self._select_segment_ui(index)
 
     def sync_selection(self, index, segment_id, source=None):
-        if 0 <= index < len(self.all_segments):
+        target_idx = -1
+        if segment_id:
+            target_idx = next(
+                (i for i, seg in enumerate(self.all_segments) if seg.get("id") == segment_id),
+                -1,
+            )
+        if target_idx < 0 and 0 <= index < len(self.all_segments):
+            target_idx = index
+
+        if 0 <= target_idx < len(self.all_segments):
             self._is_syncing_ui = True
-            self._select_segment_ui(index)
+            self._select_segment_ui(target_idx)
             self._is_syncing_ui = False
         else:
             self.current_index = -1
@@ -1026,7 +1091,8 @@ class SubtitleEditorWidget(QWidget):
                 start_ms = prev_end_ms
                 new_start = self.ms_to_time_str(start_ms)
                 
-        if abs_idx < len(self.all_segments) - 1:
+        ripple = getattr(self, "ripple_shift_enabled", True)
+        if not ripple and abs_idx < len(self.all_segments) - 1:
             next_seg = self.all_segments[abs_idx + 1]
             next_start_ms = self.time_str_to_ms(next_seg["start"])
             if end_ms > next_start_ms:
@@ -1040,16 +1106,20 @@ class SubtitleEditorWidget(QWidget):
             new_end = segment["end"]
 
         if new_start != segment["start"] or new_end != segment["end"]:
+            changes = self._build_timing_changes(
+                abs_idx,
+                segment["start"],
+                segment["end"],
+                new_start,
+                new_end,
+            )
             self.undo_manager.push(
                 EditTimingCommand(
-                    abs_idx,
-                    segment["start"],
-                    segment["end"],
-                    new_start,
-                    new_end,
-                    self.all_segments,
+                    changes,
+                    data_provider=self.all_segments,
                 )
             )
+            self.live_edit_applied.emit(self.all_segments)
         if values["text"] != segment["text"]:
             self.undo_manager.push(
                 EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments)
@@ -1062,6 +1132,45 @@ class SubtitleEditorWidget(QWidget):
             next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
             qc_flags = segment.get("metadata", {}).get("qc_flags", [])
             self.commit_segment.emit(orig, values["text"], prev_orig, next_orig, qc_flags)
+
+    def _build_timing_changes(self, abs_idx: int, old_start, old_end, new_start, new_end) -> list:
+        changes = [{
+            "index": abs_idx,
+            "old_start": old_start,
+            "old_end": old_end,
+            "new_start": new_start,
+            "new_end": new_end,
+        }]
+
+        if not getattr(self, "ripple_shift_enabled", True):
+            return changes
+
+        old_end_ms = self.time_str_to_ms(old_end)
+        new_end_ms = self.time_str_to_ms(new_end)
+        ripple_delta_ms = new_end_ms - old_end_ms
+
+        if ripple_delta_ms == 0:
+            return changes
+
+        for i in range(abs_idx + 1, len(self.all_segments)):
+            seg = self.all_segments[i]
+            cur_s = seg["start"]
+            cur_e = seg["end"]
+            s_ms = self.time_str_to_ms(cur_s)
+            e_ms = self.time_str_to_ms(cur_e)
+
+            shifted_s_ms = max(0, s_ms + ripple_delta_ms)
+            shifted_e_ms = max(shifted_s_ms + 50, e_ms + ripple_delta_ms)
+
+            changes.append({
+                "index": i,
+                "old_start": cur_s,
+                "old_end": cur_e,
+                "new_start": self._coerce_time_value(cur_s, self.ms_to_time_str(shifted_s_ms)),
+                "new_end": self._coerce_time_value(cur_e, self.ms_to_time_str(shifted_e_ms)),
+            })
+
+        return changes
 
 
     @staticmethod
@@ -1098,6 +1207,62 @@ class SubtitleEditorWidget(QWidget):
             self.undo_manager.push(
                 SplitCommand(self.current_index, playhead_ms, self.all_segments)
             )
+
+    def nudge_selected_segment(self, delta_ms: int, target: str = "both"):
+        if self.current_index < 0:
+            if hasattr(self, "table") and self.table.currentRow() >= 0:
+                self.current_index = self._source_index_for_row(self.table.currentRow())
+            elif getattr(self, "selection_controller", None) and self.selection_controller.selected_segment_id:
+                sid = self.selection_controller.selected_segment_id
+                self.current_index = next((i for i, s in enumerate(self.all_segments) if s.get("id") == sid), -1)
+
+        if self.current_index < 0 or self.current_index >= len(self.all_segments):
+            return
+        if self.undo_manager is None:
+            return
+
+        if hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
+
+        abs_idx = self.current_index
+        segment = self.all_segments[abs_idx]
+        old_start = segment["start"]
+        old_end = segment["end"]
+        start_ms = self.time_str_to_ms(old_start)
+        end_ms = self.time_str_to_ms(old_end)
+
+        if target == "start":
+            start_ms = max(0, start_ms + delta_ms)
+            if start_ms >= end_ms:
+                start_ms = max(0, end_ms - 50)
+        elif target == "end":
+            end_ms = max(start_ms + 50, end_ms + delta_ms)
+        else:  # "both" (shift entire segment)
+            shift = delta_ms
+            if start_ms + shift < 0:
+                shift = -start_ms
+            start_ms += shift
+            end_ms += shift
+
+        new_start = self._coerce_time_value(old_start, self.ms_to_time_str(start_ms))
+        new_end = self._coerce_time_value(old_end, self.ms_to_time_str(end_ms))
+
+        if new_start != old_start or new_end != old_end:
+            changes = self._build_timing_changes(
+                abs_idx, old_start, old_end, new_start, new_end
+            )
+            self.undo_manager.push(
+                EditTimingCommand(
+                    changes, data_provider=self.all_segments
+                )
+            )
+            self.current_editor.set_time(start_ms, end_ms)
+            self.live_edit_applied.emit(self.all_segments)
+            if getattr(self, "selection_controller", None) and isinstance(segment, dict):
+                # Trigger global selection focus to update waveform highlight
+                self.selection_controller.selection_changed.emit(
+                    abs_idx, segment.get("id"), SelectionSource.EDITOR
+                )
 
     def trigger_add(self, playhead_ms: int, video_duration_ms: int):
         if self.undo_manager is None:

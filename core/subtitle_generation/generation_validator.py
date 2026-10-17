@@ -15,6 +15,10 @@ class SubtitleGenerationValidator:
         "translated by",
         "subs by",
         "đăng ký kênh",
+        "ご視聴ありがとうございました",
+        "視聴ありがとうございました",
+        "チャンネル登録",
+        "thank you for watching",
     )
 
     @staticmethod

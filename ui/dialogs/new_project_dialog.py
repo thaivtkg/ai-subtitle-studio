@@ -21,7 +21,7 @@ class NewProjectDialog(QDialog):
         layout.addWidget(self.name_input)
         
         # 2. File Video Gốc
-        layout.addWidget(QLabel("File Video gốc (.mp4, .mkv):"))
+        layout.addWidget(QLabel("File Video gốc (.mp4, .mkv, .avi, .mov, .wmv):"))
         video_layout = QHBoxLayout()
         self.video_input = QLineEdit()
         self.video_input.setReadOnly(True)
@@ -85,7 +85,12 @@ class NewProjectDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _browse_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Chọn Video Nguồn", "", "Video Files (*.mp4 *.mkv *.avi *.mov)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn Video Nguồn",
+            "",
+            "Video Files (*.mp4 *.mkv *.avi *.mov *.wmv);;All Files (*.*)",
+        )
         if path:
             self.video_input.setText(path)
 

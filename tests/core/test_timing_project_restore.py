@@ -42,7 +42,12 @@ class TestTimingProjectRestore(unittest.TestCase):
     @staticmethod
     def _configure_timing(panel):
         panel.cmb_mode.setCurrentIndex(1)
-        panel.cmb_model.setCurrentText("large-v3-turbo")
+        for i in range(panel.cmb_model.count()):
+            if panel.cmb_model.itemData(i) == "large-v3-turbo":
+                panel.cmb_model.setCurrentIndex(i)
+                break
+        else:
+            panel.cmb_model.setCurrentText("large-v3-turbo")
         panel.cmb_compute.setCurrentText("float16")
         panel.chk_fix_overlap.setChecked(True)
         panel.spin_overlap_gap.setValue(80)
@@ -305,7 +310,7 @@ class TestTimingProjectRestore(unittest.TestCase):
             restored_panel.sync_timing_settings_from_project()
 
             self.assertEqual(restored_panel.cmb_mode.currentData(), "timing")
-            self.assertEqual(restored_panel.cmb_model.currentText(), "large-v3-turbo")
+            self.assertEqual(restored_panel.cmb_model.currentData(), "large-v3-turbo")
             self.assertEqual(restored_panel.cmb_compute.currentText(), "float16")
             self.assertTrue(restored_panel.chk_fix_overlap.isChecked())
             self.assertEqual(restored_panel.spin_overlap_gap.value(), 80)
@@ -371,7 +376,7 @@ class TestTimingProjectRestore(unittest.TestCase):
             self._configure_timing(panel)
             panel.cmb_mode.setCurrentIndex(0)
             panel.cmb_mode.setCurrentIndex(1)
-            self.assertEqual(panel.cmb_model.currentText(), "large-v3-turbo")
+            self.assertEqual(panel.cmb_model.currentData(), "large-v3-turbo")
             self.assertEqual(panel.cmb_compute.currentText(), "float16")
             self.assertEqual(panel.spin_overlap_gap.value(), 80)
         finally:

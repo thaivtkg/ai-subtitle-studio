@@ -185,7 +185,7 @@ class TestGenerationRangeContract(unittest.TestCase):
 
 class TestRangeGenerationTransaction(unittest.TestCase):
     def setUp(self):
-        from tests.test_subtitle_generation import MockProjectService, MockWhisperService
+        from tests.subtitle_generation.test_subtitle_generation import MockProjectService, MockWhisperService
         from core.subtitle_generation.generation_service import SubtitleGenerationService
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         from workers.subtitle_generation_worker import SubtitleGenerationWorker

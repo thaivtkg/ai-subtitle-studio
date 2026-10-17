@@ -152,14 +152,15 @@ class SubtitleGenerationPanel(QWidget):
         # ---------------------------------
 
 
-        def _kv_row(label_text, widget):
+        def _kv_row(label_text, widget, min_width=None):
             row = QHBoxLayout()
             row.setContentsMargins(0, 2, 0, 2)
             row.setSpacing(12)
             lbl = QLabel(label_text)
             lbl.setProperty("class", "Caption")
-            lbl.setFixedWidth(120)
-            widget.setMinimumWidth(160)
+            lbl.setFixedWidth(100)
+            target_min_width = min_width if min_width is not None else max(widget.minimumWidth(), 160)
+            widget.setMinimumWidth(target_min_width)
             row.addWidget(lbl)
             row.addWidget(widget)
             row.addStretch()
@@ -170,12 +171,12 @@ class SubtitleGenerationPanel(QWidget):
         mode_layout.setSpacing(12)
         mode_lbl = QLabel("Task Mode:")
         mode_lbl.setProperty("class", "Caption")
-        mode_lbl.setFixedWidth(120)
+        mode_lbl.setFixedWidth(100)
         mode_layout.addWidget(mode_lbl)
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        self.cmb_mode.setMinimumWidth(160)
+        self.cmb_mode.setMinimumWidth(210)
         mode_layout.addWidget(self.cmb_mode)
         mode_layout.addStretch()
         settings_layout.addLayout(mode_layout)
@@ -190,16 +191,30 @@ class SubtitleGenerationPanel(QWidget):
         model_layout.setContentsMargins(0, 6, 0, 6)
         model_layout.setSpacing(8)
 
+        # --- Model Size row: combo + Download button ---
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 2, 0, 2)
+        model_row.setSpacing(8)
+        model_lbl = QLabel("Model Size:")
+        model_lbl.setProperty("class", "Caption")
+        model_lbl.setFixedWidth(100)
         self.cmb_model = QComboBox()
-        self.cmb_model.addItems(
-            ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
-        )
-        self.cmb_model.setCurrentText("large-v3-turbo")
-        model_layout.addLayout(_kv_row("Model Size:", self.cmb_model))
+        self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_download_model = QPushButton("⬇ Download")
+        self.btn_download_model.setProperty("variant", "secondary")
+        self.btn_download_model.setFixedHeight(28)
+        self.btn_download_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_download_model.setToolTip("Download model from HuggingFace")
+        self.btn_download_model.clicked.connect(self._on_download_model_clicked)
+        model_row.addWidget(model_lbl)
+        model_row.addWidget(self.cmb_model)
+        model_row.addWidget(self.btn_download_model)
+        model_layout.addLayout(model_row)
 
+        # --- Compute Type row with recommendation ---
         self.cmb_compute = QComboBox()
-        self.cmb_compute.addItems(["float16", "int8_float16", "int8"])
-        self.cmb_compute.setCurrentText("float16")
+        self.cmb_compute.setMinimumWidth(160)
+        self._populate_compute_combo()
         model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute))
 
         self.lbl_effective_compute = QLabel("Effective: not run")
@@ -210,6 +225,9 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
         model_layout.addLayout(_kv_row("Language:", self.cmb_language))
         settings_layout.addWidget(self.model_group)
+
+        # Populate model combo after widget tree is ready
+        self._populate_model_combo()
 
         advanced_group = QGroupBox("Advanced Settings")
         advanced_layout = QVBoxLayout(advanced_group)
@@ -236,7 +254,8 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_batch_mode = QComboBox()
         self.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
         self.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
-        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode))
+        self.cmb_batch_mode.setMinimumWidth(210)
+        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode, min_width=210))
 
         self.spin_batch_val = QSpinBox()
         self.spin_batch_val.setRange(1, 30)
@@ -397,6 +416,139 @@ class SubtitleGenerationPanel(QWidget):
         self.generation_service.on_progress = self._update_progress
         self.generation_service.on_error = self._on_error
         self.generation_service.on_finish = self._on_finish
+        self.cmb_model.currentIndexChanged.connect(self._on_model_selection_changed)
+
+    # ── Model list helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _combo_value(combo):
+        if hasattr(combo, "currentData"):
+            val = combo.currentData()
+            if val is not None:
+                return val
+        return combo.currentText() if hasattr(combo, "currentText") else ""
+
+    _ALL_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
+
+    def _populate_model_combo(self, preferred: str = "large-v3-turbo") -> None:
+        """Fill cmb_model with install-status icons; keep previous selection if valid."""
+        from core.services.model_manager import ModelManager
+        prev = self.cmb_model.currentData() or preferred
+        self.cmb_model.blockSignals(True)
+        self.cmb_model.clear()
+        try:
+            info = {m["size"]: m["installed"] for m in ModelManager.get_discovery_list()}
+        except Exception:
+            info = {m: False for m in self._ALL_MODELS}
+        for size in self._ALL_MODELS:
+            installed = info.get(size, False)
+            icon = "✅" if installed else "⬇"
+            weight = ModelManager.SUPPORTED_MODELS.get(size, "")
+            label = f"{icon} {size}  ({weight})"
+            self.cmb_model.addItem(label, size)  # userData = bare model size
+        self.cmb_model.blockSignals(False)
+        # Restore previous or preferred
+        for i in range(self.cmb_model.count()):
+            if self.cmb_model.itemData(i) == prev:
+                self.cmb_model.setCurrentIndex(i)
+                break
+        else:
+            # fall back to preferred
+            for i in range(self.cmb_model.count()):
+                if self.cmb_model.itemData(i) == preferred:
+                    self.cmb_model.setCurrentIndex(i)
+                    break
+        self._on_model_selection_changed()
+
+    def _on_model_selection_changed(self) -> None:
+        """Show/hide Download button based on whether selected model is installed."""
+        from core.services.model_manager import ModelManager
+        size = self.cmb_model.currentData()
+        installed = ModelManager.is_installed(size) if size else False
+        self.btn_download_model.setVisible(not installed)
+
+    def _on_download_model_clicked(self) -> None:
+        """Trigger background download for the currently selected uninstalled model."""
+        from PySide6.QtCore import QThread
+        from core.services.model_manager import ModelManager
+
+        size = self.cmb_model.currentData()
+        if not size:
+            return
+        if ModelManager.is_installed(size):
+            self._populate_model_combo(preferred=size)
+            return
+
+        self.btn_download_model.setEnabled(False)
+        self.btn_download_model.setText("Downloading…")
+        self.lbl_effective_compute.setText(f"Downloading {size}…")
+
+        class _DlThread(QThread):
+            def __init__(self, model_size):
+                super().__init__()
+                self._size = model_size
+            def run(self):
+                ModelManager.download_model_sync(self._size)
+
+        thread = _DlThread(size)
+        thread.setParent(self)
+
+        def _done():
+            self.btn_download_model.setEnabled(True)
+            self.btn_download_model.setText("⬇ Download")
+            self.lbl_effective_compute.setText("Effective: not run")
+            self._populate_model_combo(preferred=size)
+
+        thread.finished.connect(_done)
+        thread.start()
+
+    # ── Compute type recommendation ───────────────────────────────────────────
+
+    def _populate_compute_combo(self) -> None:
+        """Populate compute combo with ★ marker on the option best for this machine."""
+        try:
+            import torch
+            has_cuda = torch.cuda.is_available()
+            vram_gb = (
+                torch.cuda.get_device_properties(0).total_memory // (1024 ** 3)
+                if has_cuda else 0
+            )
+        except Exception:
+            has_cuda = False
+            vram_gb = 0
+
+        # Determine recommended option:
+        # GPU >=4 GB VRAM → float16 (fastest, full precision)
+        # GPU 2-3 GB VRAM → int8_float16 (saves VRAM, still GPU)
+        # CPU only         → int8 (CPU only option)
+        if has_cuda and vram_gb >= 4:
+            recommended = "float16"
+        elif has_cuda:
+            recommended = "int8_float16"
+        else:
+            recommended = "int8"
+
+        options = ["float16", "int8_float16", "int8"]
+        self.cmb_compute.clear()
+        for opt in options:
+            label = f"★ {opt}  (Recommended)" if opt == recommended else opt
+            self.cmb_compute.addItem(label, opt)
+        # Select recommended by default
+        for i in range(self.cmb_compute.count()):
+            if self.cmb_compute.itemData(i) == recommended:
+                self.cmb_compute.setCurrentIndex(i)
+                break
+
+    def apply_recommended_settings(self, model: str, compute: str) -> None:
+        """Apply recommended model and compute type to panel combos."""
+        for i in range(self.cmb_model.count()):
+            if self.cmb_model.itemData(i) == model:
+                self.cmb_model.setCurrentIndex(i)
+                break
+        for i in range(self.cmb_compute.count()):
+            if self.cmb_compute.itemData(i) == compute:
+                self.cmb_compute.setCurrentIndex(i)
+                break
 
     def set_context_status(self, compiled, configured: bool) -> None:
         self._context_compiled = compiled
@@ -481,11 +633,23 @@ class SubtitleGenerationPanel(QWidget):
             and not self._is_timing_mode()
             and not self._timing_segments_available()
         ):
-            QMessageBox.warning(
+            res = QMessageBox.question(
                 self,
-                "Timing Draft required",
-                "Chế độ băm theo câu yêu cầu Timing Draft đã hoàn tất.",
+                "Yêu cầu Timing Draft",
+                "Chế độ băm theo số câu (Segment-based) cần mốc câu có sẵn từ Timing Draft để Whisper biết vị trí từng câu.\n\n"
+                "Bạn có muốn chuyển sang chế độ 'Timing Draft (VAD Only)' để tạo mốc câu trước không (chỉ mất vài giây)?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
             )
+            if res == QMessageBox.Yes:
+                idx = self.cmb_mode.findData("timing") if hasattr(self.cmb_mode, "findData") else -1
+                if idx >= 0:
+                    self.cmb_mode.setCurrentIndex(idx)
+                    if hasattr(self.spin_batch_val, "setRange"):
+                        self.spin_batch_val.setRange(5, 50)
+                        self.spin_batch_val.setValue(10)
+                        self.spin_batch_val.setSuffix(" segs")
+                    return
             self.cmb_batch_mode.setCurrentIndex(0)
             return
         if self.cmb_batch_mode.currentData() == "time":
@@ -519,10 +683,19 @@ class SubtitleGenerationPanel(QWidget):
         return timing_status in {"DRAFT", "READY"} and self._has_timing_artifact()
 
     def refresh_batch_mode_availability(self):
-        """Allow true segment-count batching only when Timing ranges exist."""
+        """Allow true segment-count batching only when Timing ranges exist; hide otherwise."""
         if not hasattr(self, "cmb_batch_mode"):
             return
-        item = self.cmb_batch_mode.model().item(1)
+        seg_idx = -1
+        if hasattr(self.cmb_batch_mode, "findData"):
+            seg_idx = self.cmb_batch_mode.findData("segments")
+        if seg_idx < 0:
+            seg_idx = 1
+        item = (
+            self.cmb_batch_mode.model().item(seg_idx)
+            if hasattr(self.cmb_batch_mode, "model")
+            else None
+        )
         if item is None:
             return
         # Timing Draft is what creates the Timing Artifact, so it must be
@@ -530,7 +703,13 @@ class SubtitleGenerationPanel(QWidget):
         enabled = self._is_timing_mode() or (
             self._timing_segments_available()
         )
-        item.setEnabled(enabled)
+        if hasattr(item, "setEnabled"):
+            item.setEnabled(enabled)
+        view = getattr(self.cmb_batch_mode, "view", None)
+        if callable(view):
+            v = view()
+            if hasattr(v, "setRowHidden"):
+                v.setRowHidden(seg_idx, not enabled)
         if not enabled and self.cmb_batch_mode.currentData() == "segments":
             self.cmb_batch_mode.setCurrentIndex(0)
 
@@ -575,6 +754,23 @@ class SubtitleGenerationPanel(QWidget):
 
     @Slot()
     def _on_generate_clicked(self):
+        if self.video_duration_ms <= 0:
+            project = getattr(
+                getattr(self.generation_service, "project_service", None),
+                "current_project",
+                None,
+            )
+            video_path = getattr(getattr(project, "source", None), "path", "")
+            if video_path and os.path.exists(video_path):
+                try:
+                    from workers.TaskQueue import get_video_duration
+
+                    dur_sec = get_video_duration(video_path)
+                    if dur_sec > 0:
+                        self.set_video_duration(int(dur_sec * 1000))
+                except Exception:
+                    pass
+
         if self.video_duration_ms <= 0:
             QMessageBox.warning(self, "Lỗi", "Chưa tải Video hoặc không đọc được thời lượng.")
             return
@@ -621,8 +817,8 @@ class SubtitleGenerationPanel(QWidget):
             project_id=project.project_id,
             source_fingerprint=getattr(source, "fingerprint", ""),
             video_path=video_path,
-            model_size=self.cmb_model.currentText(),
-            compute_type=self.cmb_compute.currentText(),
+            model_size=self._combo_value(self.cmb_model),
+            compute_type=self._combo_value(self.cmb_compute),
             language=None if language == "Auto Detect" else language,
             use_vad=self.chk_vad.isChecked(),
             min_silence_ms=500,
@@ -741,8 +937,8 @@ class SubtitleGenerationPanel(QWidget):
                 values["use_vad"] = True
             return values
         return {
-            "model_size": self.cmb_model.currentText(),
-            "compute_type": self.cmb_compute.currentText(),
+            "model_size": self._combo_value(self.cmb_model),
+            "compute_type": self._combo_value(self.cmb_compute),
             "use_vad": True,
             "min_silence_ms": 500,
             "fix_overlap": getattr(self, "chk_fix_overlap", None).isChecked()
@@ -764,8 +960,8 @@ class SubtitleGenerationPanel(QWidget):
         values = self._timing_settings()
         values.update(
             {
-                "model_size": self.cmb_model.currentText(),
-                "compute_type": self.cmb_compute.currentText(),
+                "model_size": self._combo_value(self.cmb_model),
+                "compute_type": self._combo_value(self.cmb_compute),
                 "use_vad": True,
                 "fix_overlap": self.chk_fix_overlap.isChecked(),
                 "overlap_gap_ms": self.spin_overlap_gap.value(),
@@ -792,8 +988,14 @@ class SubtitleGenerationPanel(QWidget):
             mode_index = self.cmb_mode.findData(task_mode)
             if mode_index >= 0:
                 self.cmb_mode.setCurrentIndex(mode_index)
-            self.cmb_model.setCurrentText(timing.model_size)
-            self.cmb_compute.setCurrentText(timing.compute_type)
+            for i in range(self.cmb_model.count()):
+                if self.cmb_model.itemData(i) == timing.model_size:
+                    self.cmb_model.setCurrentIndex(i)
+                    break
+            for i in range(self.cmb_compute.count()):
+                if self.cmb_compute.itemData(i) == timing.compute_type:
+                    self.cmb_compute.setCurrentIndex(i)
+                    break
             self.chk_vad.setChecked(timing.use_vad)
             self.chk_fix_overlap.setChecked(timing.fix_overlap)
             self.spin_overlap_gap.setValue(timing.overlap_gap_ms)

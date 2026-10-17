@@ -72,7 +72,7 @@ def translate_error(error: MediaImportError) -> str:
 class MediaImportDialog(QDialog):
     def __init__(self, service, parent=None, mode=MODE_NEW_PROJECT):
         super().__init__(parent)
-        self.setStyleSheet(f"background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG_APP}; color: {Theme.TEXT_PRIMARY}; }} QPushButton {{ font-weight: 600; }}")
         if mode not in {MODE_NEW_PROJECT, MODE_QUEUE}:
             raise ValueError(f"Unsupported media import mode: {mode}")
         self.service = service
@@ -117,7 +117,25 @@ class MediaImportDialog(QDialog):
         layout.addWidget(self.status_label)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFixedHeight(18)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                min-height: 18px;
+                max-height: 18px;
+                border-radius: 9px;
+                text-align: center;
+                font-size: 11px;
+                font-weight: 600;
+                color: #FFFFFF;
+                background-color: rgba(255, 255, 255, 0.08);
+            }
+            QProgressBar::chunk {
+                border-radius: 9px;
+            }
+        """)
         layout.addWidget(self.progress_bar)
+        layout.addSpacing(6)
         buttons = QHBoxLayout()
         buttons.addStretch()
         self.import_btn = QPushButton("Import")

@@ -26,6 +26,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDockWidget,
     QFileDialog,
@@ -151,8 +153,11 @@ class _QtScheduler:
 
     @staticmethod
     def cancel(timer):
-        timer.stop()
-        timer.deleteLater()
+        try:
+            timer.stop()
+            timer.deleteLater()
+        except (RuntimeError, AttributeError):
+            pass
 
 
 from PySide6.QtGui import QPainter, QColor
@@ -234,7 +239,7 @@ class OverlayHost(QWidget):
         super().resizeEvent(event)
         # Keep surface size exactly constant
         margin = 16
-        w = 500
+        w = 580
         h = self.height() - margin * 2
         self.drawer_surface.resize(w, h)
 
@@ -432,7 +437,7 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        topbar = QFrame()
+        self.topbar = topbar = QFrame()
         topbar.setObjectName("TopbarFrame")
         topbar.setFixedHeight(42)
         topbar_layout = QHBoxLayout(topbar)
@@ -541,6 +546,7 @@ class MainWindow(QMainWindow):
         # Page 0: Dashboard
         self.page_dashboard = DashboardPage()
         self.page_dashboard.navigate_requested.connect(self.switch_page)
+        self.page_dashboard.apply_recommended_config.connect(self._on_apply_recommended_hardware_config)
         self.stack.addWidget(self.page_dashboard)
 
         # ========================================================
@@ -637,6 +643,8 @@ class MainWindow(QMainWindow):
         self.generation_panel.sync_timing_settings_from_project()
         if hasattr(self.generation_panel, 'sync_subtitle_sources_from_project'):
             self.generation_panel.sync_subtitle_sources_from_project()
+        if hasattr(self.video_player, "player") and hasattr(self.video_player.player, "durationChanged"):
+            self.video_player.player.durationChanged.connect(self._on_player_duration_changed)
         self._restore_panel_callbacks()
         self.overlay_host = OverlayHost(self)
         self.generation_drawer = self.overlay_host.drawer_surface
@@ -664,13 +672,19 @@ class MainWindow(QMainWindow):
                 height: 60px;
                 color: #a0a0a0;
                 padding-left: 8px;
+                border: none;
+                outline: none;
             }
             QListWidget#NavRail::item:selected {
                 color: #ffffff;
                 background: transparent;
+                border: none;
+                outline: none;
             }
             QListWidget#NavRail::item:hover {
                 color: #e0e0e0;
+                background: transparent;
+                border: none;
             }
         """)
 
@@ -796,18 +810,128 @@ class MainWindow(QMainWindow):
         timeline_toolbar.setObjectName("TimelineToolbar")
         timeline_toolbar.setFixedHeight(38)
         tl_tb_layout = QHBoxLayout(timeline_toolbar)
-        tl_tb_layout.setContentsMargins(12, 3, 12, 3)
+        tl_tb_layout.setContentsMargins(12, 0, 12, 0)
+        tl_tb_layout.setAlignment(Qt.AlignVCenter)
         tl_tb_layout.setSpacing(8)
 
         lbl_tl = QLabel("⏱️ TIMELINE")
         lbl_tl.setProperty("class", "SectionTitle")
-        tl_tb_layout.addWidget(lbl_tl)
+        tl_tb_layout.addWidget(lbl_tl, alignment=Qt.AlignVCenter)
+
+        # Timing Nudge Controls
+        nudge_group = QWidget()
+        nudge_group.setFixedHeight(28)
+        nudge_layout = QHBoxLayout(nudge_group)
+        nudge_layout.setContentsMargins(0, 0, 0, 0)
+        nudge_layout.setAlignment(Qt.AlignVCenter)
+        nudge_layout.setSpacing(6)
+
+        lbl_nudge = QLabel("Chỉnh timing:")
+        lbl_nudge.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px;")
+        nudge_layout.addWidget(lbl_nudge, alignment=Qt.AlignVCenter)
+
+        self.nudge_target_combo = QComboBox()
+        self.nudge_target_combo.setObjectName("NudgeTargetCombo")
+        self.nudge_target_combo.setFixedHeight(28)
+        self.nudge_target_combo.setFixedWidth(100)
+        self.nudge_target_combo.setStyleSheet(f"""
+            QComboBox#NudgeTargetCombo {{
+                height: 26px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px 20px 0px 8px;
+                font-size: 11px;
+                font-weight: 600;
+                border-radius: 8px;
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid {Theme.BORDER};
+                color: {Theme.TEXT_PRIMARY};
+            }}
+            QComboBox#NudgeTargetCombo:hover {{
+                border-color: {Theme.CYAN};
+                background-color: {Theme.SURFACE_SOFT};
+            }}
+            QComboBox#NudgeTargetCombo::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 18px;
+                border: none;
+            }}
+        """)
+        self.nudge_target_combo.addItem("Cả đoạn", "both")
+        self.nudge_target_combo.addItem("Mốc đầu", "start")
+        self.nudge_target_combo.addItem("Mốc cuối", "end")
+        self.nudge_target_combo.setToolTip("Chọn mốc thời gian muốn điều chỉnh")
+        nudge_layout.addWidget(self.nudge_target_combo, alignment=Qt.AlignVCenter)
+
+        nudge_btn_style = f"""
+            QPushButton.nudge_btn {{
+                height: 26px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px 4px;
+                font-size: 11px;
+                font-weight: 600;
+                border-radius: 8px;
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid {Theme.BORDER};
+                color: {Theme.TEXT_PRIMARY};
+            }}
+            QPushButton.nudge_btn:hover {{
+                border-color: {Theme.CYAN};
+                background-color: {Theme.SURFACE_SOFT};
+            }}
+        """
+
+        for text, delta, tip in (
+            ("-1s", -1000, "Lùi 1 giây (-1000ms)"),
+            ("-100ms", -100, "Lùi 100 mili giây"),
+            ("+100ms", 100, "Tiến 100 mili giây"),
+            ("+1s", 1000, "Tiến 1 giây (+1000ms)"),
+        ):
+            btn = QPushButton(text)
+            btn.setProperty("class", "nudge_btn")
+            btn.setStyleSheet(nudge_btn_style)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(56)
+            btn.setToolTip(tip)
+            btn.clicked.connect(
+                lambda checked=False, d=delta: self.sub_editor.nudge_selected_segment(
+                    d, target=self.nudge_target_combo.currentData() or "both"
+                )
+            )
+            nudge_layout.addWidget(btn, alignment=Qt.AlignVCenter)
+
+        self.chk_ripple = QCheckBox("Ripple Shift")
+        self.chk_ripple.setObjectName("chk_ripple")
+        self.chk_ripple.setChecked(True)
+        self.chk_ripple.setStyleSheet(f"""
+            QCheckBox#chk_ripple {{
+                color: {Theme.TEXT_MUTED};
+                font-size: 11px;
+                font-weight: 500;
+                spacing: 4px;
+            }}
+            QCheckBox#chk_ripple:hover {{
+                color: {Theme.TEXT_PRIMARY};
+            }}
+        """)
+        self.chk_ripple.setToolTip("Khi bật, việc tăng/giảm thời gian của phụ đề sẽ tự động cuốn (dịch chuyển) toàn bộ các phụ đề phía sau để giữ nguyên khoảng cách.")
+        self.chk_ripple.toggled.connect(lambda checked: setattr(self.sub_editor, "ripple_shift_enabled", checked))
+        nudge_layout.addWidget(self.chk_ripple, alignment=Qt.AlignVCenter)
+
+        tl_tb_layout.addSpacing(16)
+        tl_tb_layout.addWidget(nudge_group, alignment=Qt.AlignVCenter)
         tl_tb_layout.addStretch()
 
-        tl_tb_layout.addWidget(self.sub_editor.fix_overlap_btn)
-        tl_tb_layout.addWidget(self.sub_editor.approve_btn)
-        tl_tb_layout.addWidget(self.sub_editor.save_draft_btn)
-        tl_tb_layout.addWidget(self.sub_editor.save_btn)
+        for action_btn in (
+            self.sub_editor.fix_overlap_btn,
+            self.sub_editor.approve_btn,
+            self.sub_editor.save_draft_btn,
+            self.sub_editor.save_btn,
+        ):
+            action_btn.setFixedHeight(28)
+            tl_tb_layout.addWidget(action_btn, alignment=Qt.AlignVCenter)
 
         timeline_container_layout.addWidget(timeline_toolbar)
         timeline_container_layout.addWidget(self.timeline_widget)
@@ -1151,8 +1275,15 @@ class MainWindow(QMainWindow):
     def _on_preview_toggled(self, is_visible: bool):
         self.set_subtitle_preview_enabled(is_visible)
 
+    def _on_player_duration_changed(self, duration_ms: int):
+        if duration_ms > 0 and getattr(self, "generation_panel", None):
+            if self.generation_panel.video_duration_ms <= 0:
+                self.generation_panel.set_video_duration(duration_ms)
+
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
-        if req_vid_path != self.queue_mgr.active_vid:
+        req_norm = os.path.normpath(req_vid_path).casefold()
+        active_norm = os.path.normpath(self.queue_mgr.active_vid or "").casefold()
+        if req_norm != active_norm:
             self._emit_debug_event(
                 "waveform",
                 f"stale waveform result ignored after video switch: {req_vid_path}",
@@ -1437,8 +1568,18 @@ class MainWindow(QMainWindow):
             (self.shortcut_merge, "merge", "Merge"),
             (self.shortcut_split, "split", "Split"),
             (self.shortcut_help, "help.center", "Open Help Center"),
+            (self.sub_editor.shortcut_prev, "previous_subtitle", "Previous Subtitle"),
+            (self.sub_editor.shortcut_next, "next_subtitle", "Next Subtitle"),
         ):
             self.shortcut_provider.register_shortcut(shortcut, action_id, label)
+
+    @property
+    def generation_dock(self):
+        return getattr(self, "overlay_host", None)
+
+    @generation_dock.setter
+    def generation_dock(self, val):
+        self.overlay_host = val
 
     @Slot()
     def _toggle_ai_drawer(self):
@@ -1446,14 +1587,17 @@ class MainWindow(QMainWindow):
         if self.drawer_anim.state() == QAbstractAnimation.Running:
             return
             
+        top_offset = self.topbar.height() if hasattr(self, 'topbar') and self.topbar.isVisible() else 42
+        avail_h = self.height() - top_offset
         margin = 16
-        w = 500
-        drawer_height = self.height() - margin * 2
+        w = 580
+        drawer_height = avail_h - margin * 2
         open_x = self.width() - w - margin
         close_x = self.width()
         
         # Ensure exact geometry before animating
-        self.overlay_host.resize(self.size())
+        self.overlay_host.move(0, top_offset)
+        self.overlay_host.resize(self.width(), avail_h)
         self.generation_drawer.resize(w, drawer_height)
         
         if self.overlay_host.isVisible():
@@ -1495,15 +1639,18 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        top_offset = self.topbar.height() if hasattr(self, 'topbar') and self.topbar.isVisible() else 42
+        avail_h = self.height() - top_offset
         if hasattr(self, 'overlay_host'):
-            self.overlay_host.resize(self.size())
+            self.overlay_host.move(0, top_offset)
+            self.overlay_host.resize(self.width(), avail_h)
             
             # Reposition drawer surface if visible AND not animating
             from PySide6.QtCore import QAbstractAnimation
             if self.overlay_host.isVisible() and self.drawer_anim.state() != QAbstractAnimation.Running:
                 margin = 16
-                w = 500
-                drawer_height = self.height() - margin * 2
+                w = 580
+                drawer_height = avail_h - margin * 2
                 open_x = self.width() - w - margin
                 self.generation_drawer.resize(w, drawer_height)
                 self.generation_drawer.move(open_x, margin)
@@ -1514,8 +1661,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "btn_drawer_toggle"):
             return
         if hasattr(self, "generation_drawer") and self.generation_drawer.isVisible():
-            x = max(0, self.generation_drawer.pos().x() - self.btn_drawer_toggle.width())
-            y = self.generation_drawer.pos().y() + max(0, (self.generation_drawer.height() - self.btn_drawer_toggle.height()) // 2)
+            drawer_x = (self.overlay_host.x() if hasattr(self, 'overlay_host') else 0) + self.generation_drawer.x()
+            drawer_y = (self.overlay_host.y() if hasattr(self, 'overlay_host') else 0) + self.generation_drawer.y()
+            x = max(0, drawer_x - self.btn_drawer_toggle.width())
+            y = drawer_y + max(0, (self.generation_drawer.height() - self.btn_drawer_toggle.height()) // 2)
         else:
             x = self.width() - self.btn_drawer_toggle.width()
             y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
@@ -1695,6 +1844,12 @@ class MainWindow(QMainWindow):
 
         # Tự động cấy kính lỏng cho các danh sách trên trang mới
         self._apply_liquid_to_all_listboxes()
+
+    def _on_apply_recommended_hardware_config(self, model: str, compute: str):
+        if hasattr(self, "generation_panel"):
+            self.generation_panel.apply_recommended_settings(model, compute)
+            self.append_log(f"[HARDWARE] Đã áp dụng cấu hình đề xuất: Model={model}, Compute={compute}")
+            self.switch_page(1)
 
     def _apply_liquid_to_all_listboxes(self):
         """Tự động cấy hiệu ứng kính lỏng đàn hồi cho toàn bộ QListWidget trong ứng dụng."""
@@ -2859,6 +3014,12 @@ class MainWindow(QMainWindow):
             self.append_log(f"[SYNC] Không tạo được Shadow SRT: {exc}")
             return None
 
+        if batch is not None and shadow_srt_path:
+            try:
+                self._load_generated_subtitles_into_ui(shadow_srt_path)
+            except Exception as exc:
+                self.append_log(f"[SYNC] Không đồng bộ realtime lên Editor: {exc}")
+
         return shadow_srt_path
 
     def _on_interactive_generation_finished(self):
@@ -3666,6 +3827,8 @@ class MainWindow(QMainWindow):
             return False
 
         sub_editor = getattr(self, "sub_editor", None)
+        if reason == "autosave" and bool(getattr(getattr(self, "subtitle_generation_service", None), "is_running", False)):
+            return True
         commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
         if commit_pending_edit:
             commit_pending_edit()
@@ -3774,11 +3937,12 @@ class MainWindow(QMainWindow):
                                 raise
                                 
                         elif artifact.artifact_id == project.state.subtitle_artifact_id:
-                            subtitle_store = self.subtitle_generation_service.artifact_service
-                            data = subtitle_store.load_data(artifact.path)
-                            data["segments"] = copy.deepcopy(self.sub_editor.all_segments)
-                            subtitle_store._save_atomic(artifact_path, data)
-                            artifact.path = artifact_path
+                            if not bool(getattr(getattr(self, "subtitle_generation_service", None), "is_running", False)):
+                                subtitle_store = self.subtitle_generation_service.artifact_service
+                                data = subtitle_store.load_data(artifact.path)
+                                data["segments"] = copy.deepcopy(self.sub_editor.all_segments)
+                                subtitle_store._save_atomic(artifact_path, data)
+                                artifact.path = artifact_path
                         # Draft artifacts retain their existing save path.
                         else:
                             self.sub_editor.srt_path = artifact_path

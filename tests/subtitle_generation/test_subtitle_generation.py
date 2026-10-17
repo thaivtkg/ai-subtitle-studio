@@ -1138,6 +1138,35 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
 
         self.assertTrue(panel.cmb_batch_mode.item_enabled)
 
+    def test_refresh_batch_mode_availability_hides_row_when_no_timing(self):
+        project_service = types.SimpleNamespace(
+            current_project=types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    timing_status=None,
+                    timing=types.SimpleNamespace(timing_artifact_id=None),
+                )
+            ),
+            artifact_store=types.SimpleNamespace(get=lambda artifact_id: None),
+        )
+        panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
+        panel.cmb_mode = types.SimpleNamespace(currentData=lambda: "asr")
+        from PySide6.QtWidgets import QComboBox
+        panel.cmb_batch_mode = QComboBox()
+        panel.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
+        panel.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
+        panel.generation_service = types.SimpleNamespace(project_service=project_service)
+
+        panel.refresh_batch_mode_availability()
+
+        self.assertFalse(panel.cmb_batch_mode.model().item(1).isEnabled())
+        self.assertTrue(panel.cmb_batch_mode.view().isRowHidden(1))
+
+        # When switched to timing mode, it should unhide and enable
+        panel.cmb_mode = types.SimpleNamespace(currentData=lambda: "timing")
+        panel.refresh_batch_mode_availability()
+        self.assertTrue(panel.cmb_batch_mode.model().item(1).isEnabled())
+        self.assertFalse(panel.cmb_batch_mode.view().isRowHidden(1))
+
 
 class TestTimingDraftSettingsContract(unittest.TestCase):
     def _panel(self, mode="timing"):

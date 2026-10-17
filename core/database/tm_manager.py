@@ -27,6 +27,7 @@ class TranslationMemoryManager:
             self.db_path = ":memory:"
         else:
             self.db_path = str(RuntimePaths.get_tm_db_file())
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
