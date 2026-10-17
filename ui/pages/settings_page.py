@@ -230,8 +230,44 @@ class SettingsCenterPage(QWidget):
 
         self.nav_list = QListWidget()
         self.nav_list.setFixedWidth(180)
+        self.nav_list.setObjectName("SettingsNav")
+        self.nav_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.nav_list.setFocusPolicy(Qt.NoFocus)
+        self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_list.setStyleSheet(f"""
+            QListWidget#SettingsNav {{
+                background: transparent;
+                border: none;
+                border-right: 1px solid rgba(255, 255, 255, 0.1);
+                outline: none;
+            }}
+            QListWidget#SettingsNav:focus {{
+                outline: none;
+            }}
+            QListWidget#SettingsNav::item {{
+                height: 42px;
+                color: #a0a0a0;
+                padding-left: 12px;
+                border: none;
+                outline: none;
+                border-radius: 6px;
+                margin-right: 8px;
+                margin-bottom: 2px;
+            }}
+            QListWidget#SettingsNav::item:selected {{
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.08);
+                border: none;
+                outline: none;
+            }}
+            QListWidget#SettingsNav::item:hover {{
+                color: #e0e0e0;
+                background: rgba(255, 255, 255, 0.04);
+                border: none;
+            }}
+        """)
         for label in (
-            "🤖 Whisper AI",
             "🎨 Kiểu phụ đề",
             "🎬 Hardsub FFmpeg",
             "⚙️ Chung & Giao diện",
@@ -246,6 +282,7 @@ class SettingsCenterPage(QWidget):
         self.stack.setMaximumWidth(SETTINGS_CONTENT_MAX_WIDTH)
         self.sections = []
 
+        # Keep attributes for serialization & backward compatibility
         self.model_combo = QComboBox()
         self.model_combo.addItem("Large V3 Turbo (Khuyên dùng - Nhanh)", "large-v3-turbo")
         self.model_combo.addItem("Large V3 (Chuẩn gốc)", "large-v3")
@@ -257,18 +294,6 @@ class SettingsCenterPage(QWidget):
         self.silence_spin.setRange(100, 2000)
         self.silence_spin.setValue(500)
         self.silence_spin.setSingleStep(100)
-        self._add_page((
-            self._section(
-                "Whisper AI",
-                "Nhận dạng giọng nói và thiết lập xử lý.",
-                (
-                    self._row("Kích thước mô hình", "Chọn mô hình dùng để phiên âm.", self.model_combo),
-                    self._row("Kiểu tính toán", "Chọn độ chính xác và thiết bị xử lý.", self.compute_combo),
-                    self._checkbox_row(self.chk_vad, "Tự động phát hiện các đoạn có giọng nói."),
-                    self._row("Im lặng tối thiểu", "Thời lượng im lặng tối thiểu, tính bằng mili giây.", self.silence_spin),
-                ),
-            ),
-        ))
 
         self.font_combo = QComboBox()
         for font_name in ("Arial", "Noto Sans JP", "Segoe UI", "Tahoma"):

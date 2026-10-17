@@ -33,31 +33,38 @@ def test_drawer_interaction_and_z_order(gui_app):
     
     assert nav_list is not None
     assert dock_tabs is not None
-    
-    # 2. Click through tabs
+    assert window.generation_action_footer is not None
+    assert window.generation_action_footer.isVisible()
+    assert window.generation_panel.btn_generate.isVisible()
+
+    # 2. Click through tabs - action footer must remain pinned and visible in all tabs
     # Click Context (index 1)
     context_item_rect = nav_list.visualItemRect(nav_list.item(1))
     QTest.mouseClick(nav_list.viewport(), Qt.LeftButton, pos=context_item_rect.center())
     QTest.qWait(100)
     assert dock_tabs.currentIndex() == 1
-    
+    assert window.generation_action_footer.isVisible()
+
     # Click Style (index 2)
     style_item_rect = nav_list.visualItemRect(nav_list.item(2))
     QTest.mouseClick(nav_list.viewport(), Qt.LeftButton, pos=style_item_rect.center())
     QTest.qWait(100)
     assert dock_tabs.currentIndex() == 2
-    
+    assert window.generation_action_footer.isVisible()
+
     # Click Quality (index 3)
     quality_item_rect = nav_list.visualItemRect(nav_list.item(3))
     QTest.mouseClick(nav_list.viewport(), Qt.LeftButton, pos=quality_item_rect.center())
     QTest.qWait(100)
     assert dock_tabs.currentIndex() == 3
-    
+    assert window.generation_action_footer.isVisible()
+
     # Click Log (index 4)
     log_item_rect = nav_list.visualItemRect(nav_list.item(4))
     QTest.mouseClick(nav_list.viewport(), Qt.LeftButton, pos=log_item_rect.center())
     QTest.qWait(100)
     assert dock_tabs.currentIndex() == 4
+    assert window.generation_action_footer.isVisible()
     
     # 3. Test Combobox interaction (in Style tab)
     # Go back to style tab

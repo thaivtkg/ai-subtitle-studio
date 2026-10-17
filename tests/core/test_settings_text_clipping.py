@@ -34,7 +34,7 @@ class SettingsTextClippingContracts(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication(sys.argv)
         cls.app.setStyleSheet(Theme.get_global_stylesheet())
 
-    def _settings_at_size(self, size, category=3):
+    def _settings_at_size(self, size, category=2):
         host = QWidget()
         host.setFixedSize(*size)
         layout = QVBoxLayout(host)
@@ -216,9 +216,8 @@ class SettingsTextClippingContracts(unittest.TestCase):
         self.addCleanup(host.close)
 
         for category, controls in (
-            (0, (page.model_combo, page.compute_combo, page.silence_spin)),
             (
-                1,
+                0,
                 (
                     page.font_combo,
                     page.size_spin,
@@ -243,13 +242,12 @@ class SettingsTextClippingContracts(unittest.TestCase):
 
         self.assertEqual(
             [page.nav_list.item(index).text() for index in range(page.nav_list.count())],
-            ["🤖 Whisper AI", "🎨 Kiểu phụ đề", "🎬 Hardsub FFmpeg", "⚙️ Chung & Giao diện"],
+            ["🎨 Kiểu phụ đề", "🎬 Hardsub FFmpeg", "⚙️ Chung & Giao diện"],
         )
         for category, expected in (
-            (0, "Nhận dạng giọng nói và thiết lập xử lý."),
-            (1, "Thiết lập mặc định cho hiển thị và chuyển động phụ đề."),
-            (2, "Thiết lập xuất video và burn-in phụ đề."),
-            (3, "Thiết lập giao diện và lưu project."),
+            (0, "Thiết lập mặc định cho hiển thị và chuyển động phụ đề."),
+            (1, "Thiết lập xuất video và burn-in phụ đề."),
+            (2, "Thiết lập giao diện và lưu project."),
         ):
             page.nav_list.setCurrentRow(category)
             self.app.processEvents()
@@ -258,10 +256,9 @@ class SettingsTextClippingContracts(unittest.TestCase):
             self.assertEqual(labels[1].text(), expected)
 
         expected_controls = {
-            0: {"Kích hoạt bộ lọc Silero VAD"},
-            1: set(),
-            2: {"Bật tạo Hardsub tự động"},
-            3: {
+            0: set(),
+            1: {"Bật tạo Hardsub tự động"},
+            2: {
                 "Tự động lưu project",
                 "Bật nhật ký gỡ lỗi",
                 "Khôi phục",
@@ -273,8 +270,7 @@ class SettingsTextClippingContracts(unittest.TestCase):
             },
         }
         expected_rows = {
-            0: {"Kích thước mô hình", "Kiểu tính toán", "Im lặng tối thiểu"},
-            1: {
+            0: {
                 "Font chữ mặc định",
                 "Cỡ chữ mặc định",
                 "Kiểu chuyển động",
@@ -282,8 +278,8 @@ class SettingsTextClippingContracts(unittest.TestCase):
                 "Hiệu ứng biến mất",
                 "Hiệu ứng chữ",
             },
-            2: set(),
-            3: {"Giao diện", "Độ trễ lưu"},
+            1: set(),
+            2: {"Giao diện", "Độ trễ lưu"},
         }
         for category in range(page.stack.count()):
             page.nav_list.setCurrentRow(category)
@@ -309,21 +305,12 @@ class SettingsTextClippingContracts(unittest.TestCase):
             return labels[0].mapTo(section, QPoint(0, 0)).x()
 
         for size in self.VIEWPORTS:
-            host, page, _section = self._settings_at_size(size, category=0)
+            host, page, _section = self._settings_at_size(size, category=2)
             self.addCleanup(host.close)
 
-            whisper = self._assert_page_has_sections(page.stack.widget(0))[0]
-            whisper_title_x = label_x(whisper, "Kích thước mô hình")
-            self.assertEqual(label_x(whisper, "Kích hoạt bộ lọc Silero VAD"), whisper_title_x)
-            whisper_helper_x = label_x(whisper, "Chọn mô hình dùng để phiên âm.")
-            self.assertEqual(
-                label_x(whisper, "Tự động phát hiện các đoạn có giọng nói."),
-                whisper_helper_x,
-            )
-
-            page.nav_list.setCurrentRow(3)
+            page.nav_list.setCurrentRow(2)
             self.app.processEvents()
-            sections = self._assert_page_has_sections(page.stack.widget(3))
+            sections = self._assert_page_has_sections(page.stack.widget(2))
             general, debug = sections
             general_x = label_x(general, "Giao diện")
             for title in ("Tự động lưu project", "Độ trễ lưu"):
@@ -348,7 +335,7 @@ class SettingsTextClippingContracts(unittest.TestCase):
             for section in page.sections
             for checkbox in section.findChildren(QCheckBox)
         ]
-        self.assertEqual(len(checkboxes), 10)
+        self.assertEqual(len(checkboxes), 9)
         for checkbox in checkboxes:
             with self.subTest(title=checkbox.accessibleName()):
                 self.assertEqual(checkbox.text(), "")
@@ -357,9 +344,9 @@ class SettingsTextClippingContracts(unittest.TestCase):
 
     def test_general_sections_share_meta_and_body_origins(self):
         for size, compact in ((self.VIEWPORTS[0], False), (self.VIEWPORTS[1], True)):
-            host, page, _section = self._settings_at_size(size, category=3)
+            host, page, _section = self._settings_at_size(size, category=2)
             self.addCleanup(host.close)
-            page_widget = page.stack.widget(3)
+            page_widget = page.stack.widget(2)
             general, debug = self._assert_page_has_sections(page_widget)
 
             general_body_x = general.body.mapTo(page_widget, QPoint(0, 0)).x()
@@ -386,9 +373,9 @@ class SettingsTextClippingContracts(unittest.TestCase):
                 self.assertEqual(debug.body.x(), 0)
 
     def test_hardsub_checkbox_and_title_share_natural_row_height(self):
-        host, page, _section = self._settings_at_size(self.VIEWPORTS[0], category=2)
+        host, page, _section = self._settings_at_size(self.VIEWPORTS[0], category=1)
         self.addCleanup(host.close)
-        section = self._assert_page_has_sections(page.stack.widget(2))[0]
+        section = self._assert_page_has_sections(page.stack.widget(1))[0]
         row = section._rows[0]
         checkbox = row._checkbox
         option = QStyleOptionButton()
@@ -409,9 +396,9 @@ class SettingsTextClippingContracts(unittest.TestCase):
         self.assertLessEqual(row.height(), row.sizeHint().height() + 3)
 
     def test_debug_section_has_space_on_both_sides_of_separator(self):
-        host, page, _section = self._settings_at_size(self.VIEWPORTS[0], category=3)
+        host, page, _section = self._settings_at_size(self.VIEWPORTS[0], category=2)
         self.addCleanup(host.close)
-        page_widget = page.stack.widget(3)
+        page_widget = page.stack.widget(2)
         general, debug = self._assert_page_has_sections(page_widget)
         separator = next(
             frame for frame in page_widget.findChildren(QFrame)

@@ -28,6 +28,7 @@ class URLClassifier:
         ".wav",
         ".webm",
         ".wma",
+        ".wmv",
     }
 
     def classify(self, url: str) -> MediaURLType:

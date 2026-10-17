@@ -91,6 +91,8 @@ class MediaProbe:
             extension = ".ts"
         elif "mpeg" in format_name_lower:
             extension = ".mpg"
+        elif "asf" in format_name_lower or "wmv" in format_name_lower:
+            extension = ".wmv"
         else:
             extension = ".mp4"
         return ProbeResult(

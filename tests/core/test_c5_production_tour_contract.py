@@ -9,7 +9,7 @@ from core.tutorial.models import InteractionKind, TargetPolicy, TourStepType
 class TestC5ProductionTourContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).parents[1] / "resources" / "tutorials"
+        cls.root = Path(__file__).resolve().parents[2] / "resources" / "tutorials"
         cls.guide_path = cls.root / "getting_started.json"
 
     def _load(self):

@@ -40,6 +40,11 @@ from core.subtitle_editing.commands.split_command import SplitCommand
 from core.subtitle_validation.subtitle_validator import SubtitleValidator
 from core.subtitle_validation.validation_issue import Severity
 from core.subtitle_editing.selection_controller import SelectionSource
+from core.subtitle_editing.subtitle_time_range_filter import (
+    TimeRangeValidationError,
+    indices_for_time_range,
+    parse_minute_range,
+)
 from core.export.subtitle_parser import parse_srt_content
 
 
@@ -221,7 +226,14 @@ class SubtitleEditorWidget(QWidget):
         self.selection_controller = None
         self.current_page = 0
         self.current_index = -1
-        self.group_size = 0     
+        self.group_size = 0
+        # Display-only time filter. all_segments remains the canonical full source.
+        # The filter is expressed as a half-open millisecond interval [start, end).
+        self._active_time_range_ms = None
+        self._visible_source_indices = []
+        self._current_page_source_indices = []
+        self.ripple_shift_enabled = True
+        self._is_updating_filter = False
         self.is_rendering = False
         self._is_syncing_ui = False
         
@@ -247,9 +259,49 @@ class SubtitleEditorWidget(QWidget):
         page_layout.addWidget(QLabel("Hiển thị:", styleSheet=f"font-weight:bold; color:{Theme.TEXT_MUTED};"))
         
         self.group_combo = QComboBox()
+        self.group_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.group_combo.setMinimumWidth(100)
         self.group_combo.addItems(["Tất cả", "1 dòng", "5 dòng", "10 dòng", "20 dòng", "50 dòng"])
         self.group_combo.currentIndexChanged.connect(self.change_group_size)
         page_layout.addWidget(self.group_combo)
+
+        page_layout.addWidget(QLabel("Phút bắt đầu:"))
+        self.range_start_input = QLineEdit()
+        self.range_start_input.setObjectName("subtitleTimeRangeStart")
+        self.range_start_input.setPlaceholderText("0")
+        self.range_start_input.setToolTip("Thời điểm bắt đầu lọc, tính bằng phút. Có thể nhập số thập phân, ví dụ 1.5.")
+        self.range_start_input.setAlignment(Qt.AlignCenter)
+        self.range_start_input.setFixedWidth(72)
+        self.range_start_input.textChanged.connect(self._on_time_range_input_changed)
+        self.range_start_input.returnPressed.connect(self.apply_time_filter)
+        page_layout.addWidget(self.range_start_input)
+
+        page_layout.addWidget(QLabel("Phút kết thúc:"))
+        self.range_end_input = QLineEdit()
+        self.range_end_input.setObjectName("subtitleTimeRangeEnd")
+        self.range_end_input.setPlaceholderText("5")
+        self.range_end_input.setToolTip("Thời điểm kết thúc lọc, tính bằng phút; phải lớn hơn phút bắt đầu.")
+        self.range_end_input.setAlignment(Qt.AlignCenter)
+        self.range_end_input.setFixedWidth(72)
+        self.range_end_input.textChanged.connect(self._on_time_range_input_changed)
+        self.range_end_input.returnPressed.connect(self.apply_time_filter)
+        page_layout.addWidget(self.range_end_input)
+
+        self.btn_apply_range = QPushButton("Áp dụng")
+        self.btn_apply_range.setObjectName("btn_secondary")
+        self.btn_apply_range.setToolTip("Chỉ hiển thị phụ đề giao với khoảng thời gian đã nhập.")
+        self.btn_apply_range.clicked.connect(self.apply_time_filter)
+        self.btn_apply_range.hide()
+
+        self.btn_clear_range = QPushButton("Xóa lọc")
+        self.btn_clear_range.setObjectName("btn_secondary")
+        self.btn_clear_range.clicked.connect(self.clear_time_filter)
+        self.btn_clear_range.hide()
+
+        self.lbl_range_count = QLabel("0 / 0 phụ đề")
+        self.lbl_range_count.setStyleSheet(f"color:{Theme.TEXT_MUTED}; font-size:11px;")
+        self.lbl_range_count.setToolTip("Số phụ đề đang hiển thị / tổng số phụ đề trong dữ liệu chuẩn.")
+        page_layout.addWidget(self.lbl_range_count)
         page_layout.addStretch()
         
         self.btn_prev = QPushButton("◀ Trước")
@@ -267,6 +319,15 @@ class SubtitleEditorWidget(QWidget):
         page_layout.addWidget(self.btn_next)
         
         left_layout.addLayout(page_layout)
+
+        self.lbl_range_validation = QLabel("")
+        self.lbl_range_validation.setObjectName("subtitleTimeRangeValidation")
+        self.lbl_range_validation.setStyleSheet(
+            "color: #ff7373; font-size: 11px; padding-left: 8px;"
+        )
+        self.lbl_range_validation.setWordWrap(True)
+        self.lbl_range_validation.hide()
+        left_layout.addWidget(self.lbl_range_validation)
         
         # --- BẢNG DỮ LIỆU (MODERN CARD-ROW DESIGN, EDGE-TO-EDGE) ---
         self.table = QTableWidget()
@@ -290,6 +351,7 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
+        self.table.currentCellChanged.connect(self._on_table_current_cell_changed)
         left_layout.addWidget(self.table, stretch=1)
 
         self.current_editor = CurrentSubtitleEditor(self)
@@ -312,8 +374,17 @@ class SubtitleEditorWidget(QWidget):
             elif hasattr(widget, "setUndoEnabled"):
                 widget.setUndoEnabled(False)
             widget.installEventFilter(self)
-        QShortcut(QKeySequence("Alt+Left"), self).activated.connect(self.select_previous)
-        QShortcut(QKeySequence("Alt+Right"), self).activated.connect(self.select_next)
+        self.shortcut_prev = QShortcut(QKeySequence("Alt+Left"), self)
+        self.shortcut_prev.setObjectName("previous_subtitle")
+        self.shortcut_prev.setProperty("help_label", "Previous Subtitle")
+        self.shortcut_prev.setProperty("help_context", "Timeline")
+        self.shortcut_prev.activated.connect(self.select_previous)
+
+        self.shortcut_next = QShortcut(QKeySequence("Alt+Right"), self)
+        self.shortcut_next.setObjectName("next_subtitle")
+        self.shortcut_next.setProperty("help_label", "Next Subtitle")
+        self.shortcut_next.setProperty("help_context", "Timeline")
+        self.shortcut_next.activated.connect(self.select_next)
 
         # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         self.ai_translate_btn = QPushButton("🪄 AI Translate")
@@ -362,17 +433,15 @@ class SubtitleEditorWidget(QWidget):
         # Identify selected segments
         selected_ranges = self.table.selectedRanges()
         if not selected_ranges:
-            # If nothing selected, default to all segments
-            indices = list(range(len(self.all_segments)))
+            # Without an explicit selection, operate on the current view. With no
+            # active filter this still means every subtitle, as before.
+            indices = self._get_visible_source_indices()
         else:
             indices = set()
             for r in selected_ranges:
                 for i in range(r.topRow(), r.bottomRow() + 1):
-                    # Convert visual row to actual index
-                    if self.group_size > 0:
-                        actual_idx = self.current_page * self.group_size + i
-                    else:
-                        actual_idx = i
+                    # Resolve the displayed row through its stable segment ID.
+                    actual_idx = self._source_index_for_row(i)
                     if 0 <= actual_idx < len(self.all_segments):
                         indices.add(actual_idx)
             indices = sorted(list(indices))
@@ -400,6 +469,112 @@ class SubtitleEditorWidget(QWidget):
             self.current_index < len(self.all_segments) - 1 and has_selection
         )
 
+    def _get_visible_source_indices(self):
+        """Return source indices matching the active time interval without slicing data."""
+        return indices_for_time_range(self.all_segments, self._active_time_range_ms)
+
+    def _time_range_duration_limit_ms(self):
+        duration_ms = self._video_duration_ms()
+        return duration_ms if duration_ms > 0 else None
+
+    def _on_time_range_input_changed(self, *_):
+        """Auto-apply valid end minute filter, auto-clear when both are blank."""
+        if getattr(self, "_is_updating_filter", False):
+            return
+
+        start_text = self.range_start_input.text().strip()
+        end_text = self.range_end_input.text().strip()
+
+        # Both inputs blank: auto-clear filter
+        if not start_text and not end_text:
+            self.lbl_range_validation.clear()
+            self.lbl_range_validation.hide()
+            if self._active_time_range_ms is not None:
+                self._is_updating_filter = True
+                try:
+                    self._active_time_range_ms = None
+                    self.current_page = 0
+                    self.render_page()
+                finally:
+                    self._is_updating_filter = False
+            return
+
+        # If end_text is blank, user is still typing start
+        if not end_text:
+            self.lbl_range_validation.clear()
+            self.lbl_range_validation.hide()
+            return
+
+        # If start input changed while no filter is active, wait for end input
+        if self.sender() is self.range_start_input and self._active_time_range_ms is None:
+            return
+
+        effective_start = start_text if start_text else "0"
+        try:
+            time_range = parse_minute_range(
+                effective_start,
+                end_text,
+                max_duration_ms=self._time_range_duration_limit_ms(),
+            )
+        except TimeRangeValidationError as exc:
+            self.lbl_range_validation.setStyleSheet(
+                "color: #ff7373; font-size: 11px; padding-left: 8px;"
+            )
+            self.lbl_range_validation.setText(str(exc))
+            self.lbl_range_validation.show()
+        else:
+            self.lbl_range_validation.clear()
+            self.lbl_range_validation.hide()
+            new_range = (time_range.start_ms, time_range.end_ms) if time_range is not None else None
+            if self._active_time_range_ms != new_range:
+                self._is_updating_filter = True
+                try:
+                    self._active_time_range_ms = new_range
+                    self.current_page = 0
+                    self.render_page()
+                finally:
+                    self._is_updating_filter = False
+
+    def apply_time_filter(self):
+        """Validate both minute fields before committing a display-only time filter."""
+        start_text = self.range_start_input.text().strip()
+        end_text = self.range_end_input.text().strip()
+        if not start_text and not end_text:
+            self.clear_time_filter()
+            return
+
+        try:
+            time_range = parse_minute_range(
+                start_text,
+                end_text,
+                max_duration_ms=self._time_range_duration_limit_ms(),
+            )
+        except TimeRangeValidationError as exc:
+            self.lbl_range_validation.setStyleSheet(
+                "color: #ff7373; font-size: 11px; padding-left: 8px;"
+            )
+            self.lbl_range_validation.setText(str(exc))
+            self.lbl_range_validation.show()
+            Toast.show_error(self.window(), str(exc))
+            return
+
+        self._active_time_range_ms = (
+            (time_range.start_ms, time_range.end_ms) if time_range is not None else None
+        )
+        self.lbl_range_validation.clear()
+        self.lbl_range_validation.hide()
+        self.current_page = 0
+        self.render_page()
+
+    def clear_time_filter(self):
+        self.range_start_input.clear()
+        self.range_end_input.clear()
+        self._active_time_range_ms = None
+        self.lbl_range_validation.clear()
+        self.lbl_range_validation.hide()
+        self.current_page = 0
+        self.render_page()
+
     def change_group_size(self):
         txt = self.group_combo.currentText()
         if "Tất cả" in txt:
@@ -415,20 +590,51 @@ class SubtitleEditorWidget(QWidget):
             self.render_page()
 
     def next_page(self):
-        max_page = max(0, (len(self.all_segments) - 1) // self.group_size) if self.group_size > 0 else 0
+        visible_count = len(self._get_visible_source_indices())
+        max_page = max(0, (visible_count - 1) // self.group_size) if self.group_size > 0 else 0
         if self.current_page < max_page:
             self.current_page += 1
             self.render_page()
 
-    def _get_row_by_id(self, segment_id: str) -> int:
-        for idx, seg in enumerate(self.all_segments):
-            if seg.get("id") == segment_id:
-                if self.group_size > 0:
-                    page = idx // self.group_size
-                    if page == self.current_page:
-                        return idx % self.group_size
-                else:
+    def _source_index_for_row(self, row: int) -> int:
+        """Map a visible table row to the canonical source index, preferring stable ID."""
+        if not (0 <= row < len(self._current_page_source_indices)):
+            return -1
+        item = self.table.item(row, self.COL_STT)
+        source_index = self._current_page_source_indices[row]
+        if item is None:
+            return source_index if 0 <= source_index < len(self.all_segments) else -1
+
+        segment_id = item.data(Qt.UserRole)
+        stored_index = item.data(Qt.UserRole + 1)
+        if segment_id is not None:
+            if (isinstance(stored_index, int) and 0 <= stored_index < len(self.all_segments)
+                    and self.all_segments[stored_index].get("id") == segment_id):
+                return stored_index
+            for idx, seg in enumerate(self.all_segments):
+                if seg.get("id") == segment_id:
                     return idx
+            return -1
+        if isinstance(stored_index, int) and 0 <= stored_index < len(self.all_segments):
+            return stored_index
+        return source_index if 0 <= source_index < len(self.all_segments) else -1
+
+    def _get_row_by_source_index(self, source_index: int) -> int:
+        try:
+            visible_position = self._visible_source_indices.index(source_index)
+        except ValueError:
+            return -1
+        page = visible_position // self.group_size if self.group_size > 0 else 0
+        if page != self.current_page:
+            return -1
+        return visible_position % self.group_size if self.group_size > 0 else visible_position
+
+    def _get_row_by_id(self, segment_id: str) -> int:
+        if segment_id is None:
+            return -1
+        for source_index, seg in enumerate(self.all_segments):
+            if seg.get("id") == segment_id:
+                return self._get_row_by_source_index(source_index)
         return -1
 
     def _set_table_item(self, row: int, col: int, text: str):
@@ -476,10 +682,14 @@ class SubtitleEditorWidget(QWidget):
         self.is_rendering = True
         self.table.blockSignals(True)
         self.table.setRowCount(0)
-        
+
         if not self.all_segments:
+            self._visible_source_indices = []
+            self._current_page_source_indices = []
             self.current_index = -1
             self.lbl_page.setText("1 / 1")
+            self.lbl_range_count.setText("0 / 0 phụ đề")
+            self.lbl_range_count.setToolTip("")
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
             self.table.clearSelection()
@@ -488,30 +698,64 @@ class SubtitleEditorWidget(QWidget):
             self.is_rendering = False
             return
 
+        # This mapping is display-only. all_segments is never replaced or sliced.
+        self._visible_source_indices = self._get_visible_source_indices()
+        visible_count = len(self._visible_source_indices)
+        total_count = len(self.all_segments)
+        count_text = f"{visible_count} / {total_count} phụ đề"
+        if self._active_time_range_ms is not None:
+            range_start_ms, range_end_ms = self._active_time_range_ms
+            count_text += f"  •  {range_start_ms / 60000:g}–{range_end_ms / 60000:g} phút"
+            duration_ms = self._video_duration_ms()
+            if duration_ms > 0 and range_end_ms > duration_ms:
+                self.lbl_range_count.setToolTip(
+                    "Cảnh báo: khoảng lọc đã áp dụng vượt thời lượng video hiện tại. "
+                    "Hãy điều chỉnh Phút kết thúc."
+                )
+            else:
+                self.lbl_range_count.setToolTip(
+                    "Chỉ hiển thị phụ đề có thời gian giao với khoảng [phút bắt đầu, phút kết thúc). "
+                    "Dữ liệu gốc và Timeline không bị cắt."
+                )
+        else:
+            self.lbl_range_count.setToolTip(
+                "Số hàng đang hiển thị / tổng số phụ đề trong dữ liệu chuẩn."
+            )
+        self.lbl_range_count.setText(count_text)
+        if self.range_start_input.text().strip() or self.range_end_input.text().strip():
+            self._on_time_range_input_changed()
+
         if self.group_size == 0:
-            start_idx, end_idx = 0, len(self.all_segments)
+            self.current_page = 0
+            page_start, page_end = 0, visible_count
             self.lbl_page.setText("Tất cả")
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
         else:
-            start_idx = self.current_page * self.group_size
-            end_idx = min(start_idx + self.group_size, len(self.all_segments))
-            max_page = max(1, (len(self.all_segments) + self.group_size - 1) // self.group_size)
+            max_page = max(1, (visible_count + self.group_size - 1) // self.group_size)
+            self.current_page = max(0, min(self.current_page, max_page - 1))
+            page_start = self.current_page * self.group_size
+            page_end = min(page_start + self.group_size, visible_count)
             self.lbl_page.setText(f"{self.current_page + 1} / {max_page}")
             self.btn_prev.setEnabled(self.current_page > 0)
             self.btn_next.setEnabled(self.current_page < max_page - 1)
 
-        display_segments = self.all_segments[start_idx:end_idx]
+        page_source_indices = self._visible_source_indices[page_start:page_end]
+        self._current_page_source_indices = list(page_source_indices)
         all_issues = SubtitleValidator.validate_all(self.all_segments, self._video_duration_ms())
-        self.table.setRowCount(len(display_segments))
+        self.table.setRowCount(len(page_source_indices))
 
-        for row, seg in enumerate(display_segments):
-            global_index = start_idx + row
+        for row, global_index in enumerate(page_source_indices):
+            seg = self.all_segments[global_index]
             start_text = self.ms_to_time_str(seg['start']) if isinstance(seg['start'], (int, float)) else seg['start']
             end_text = self.ms_to_time_str(seg['end']) if isinstance(seg['end'], (int, float)) else seg['end']
             item_id = QTableWidgetItem(str(seg.get('stt', global_index + 1)))
             item_id.setTextAlignment(Qt.AlignCenter)
             item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
+            # Store the identity and canonical index on the item; never infer identity
+            # from a row number after filtering or pagination.
+            item_id.setData(Qt.UserRole, seg.get("id"))
+            item_id.setData(Qt.UserRole + 1, global_index)
             issues = all_issues.get(global_index, [])
             if issues:
                 has_error = any(issue.severity is Severity.ERROR for issue in issues)
@@ -526,26 +770,26 @@ class SubtitleEditorWidget(QWidget):
             except ValueError:
                 duration_text = "--"
             self._set_table_item(row, self.COL_DUR, duration_text, readonly=True)
-            
+
             display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
-            
+
             if not seg['text'].strip():
                 text_item.setForeground(QColor(Theme.TEXT_DISABLED))
                 font = text_item.font()
                 font.setItalic(True)
                 text_item.setFont(font)
-                
-            # --- GATE 3 & 4: Render Auto-QC Flags ---
+
+            # Render existing Auto-QC flags without changing underlying data.
             qc_flags = seg.get('metadata', {}).get('qc_flags', [])
             if qc_flags:
                 if 'alignment_failed_fallback' in qc_flags:
-                    text_item.setBackground(QColor('#5c1a1a')) # Dark red
+                    text_item.setBackground(QColor('#5c1a1a'))
                     text_item.setToolTip('Lỗi gộp dòng: Hệ thống tự động trả về câu gốc để tránh gãy cấu trúc.')
                 else:
-                    text_item.setBackground(QColor('#5c4a1a')) # Dark yellow/orange
+                    text_item.setBackground(QColor('#5c4a1a'))
                     text_item.setToolTip('Cảnh báo Auto-QC:\n' + '\n'.join(f'- {f}' for f in qc_flags))
-                    
+
             self.table.setItem(row, self.COL_TEXT, text_item)
 
         self.table.blockSignals(False)
@@ -553,6 +797,12 @@ class SubtitleEditorWidget(QWidget):
         self._load_current_editor()
         self.sync_to_controller()
         self.check_overlaps()
+        if 0 <= self.current_index < len(self.all_segments):
+            row = self._get_row_by_source_index(self.current_index)
+            if row >= 0:
+                self.table.blockSignals(True)
+                self.table.selectRow(row)
+                self.table.blockSignals(False)
         self.is_rendering = False
 
     def _video_duration_ms(self):
@@ -607,8 +857,8 @@ class SubtitleEditorWidget(QWidget):
     def on_table_edit(self, row, col):
         if self.is_rendering or self.undo_manager is None: return
         
-        abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
-        if abs_idx >= len(self.all_segments): return
+        abs_idx = self._source_index_for_row(row)
+        if not (0 <= abs_idx < len(self.all_segments)): return
 
         segment = self.all_segments[abs_idx]
         old_start = segment['start']
@@ -640,11 +890,11 @@ class SubtitleEditorWidget(QWidget):
             raw_text = it_text.text()
             if raw_text == "[ Chưa có nội dung ]": raw_text = ""
             if new_start != old_start or new_end != old_end:
+                changes = self._build_timing_changes(abs_idx, old_start, old_end, new_start, new_end)
                 self.undo_manager.push(
-                    EditTimingCommand(
-                        abs_idx, old_start, old_end, new_start, new_end, self.all_segments
-                    )
+                    EditTimingCommand(changes, data_provider=self.all_segments)
                 )
+                self.live_edit_applied.emit(self.all_segments)
 
             if segment['text'] != raw_text:
                 self.undo_manager.push(
@@ -661,9 +911,15 @@ class SubtitleEditorWidget(QWidget):
 
 
     def _on_row_selected(self, row, _column):
-        abs_idx = self.current_page * self.group_size + row if self.group_size > 0 else row
+        abs_idx = self._source_index_for_row(row)
         if 0 <= abs_idx < len(self.all_segments):
             self.select_segment(abs_idx)
+
+    def _on_table_current_cell_changed(self, currentRow, _currentColumn, _previousRow, _previousColumn):
+        if not self.is_rendering and currentRow >= 0:
+            abs_idx = self._source_index_for_row(currentRow)
+            if 0 <= abs_idx < len(self.all_segments) and abs_idx != self.current_index:
+                self.select_segment(abs_idx)
 
     def select_previous(self):
         if self.current_index > 0:
@@ -689,9 +945,18 @@ class SubtitleEditorWidget(QWidget):
         self._select_segment_ui(index)
 
     def sync_selection(self, index, segment_id, source=None):
-        if 0 <= index < len(self.all_segments):
+        target_idx = -1
+        if segment_id:
+            target_idx = next(
+                (i for i, seg in enumerate(self.all_segments) if seg.get("id") == segment_id),
+                -1,
+            )
+        if target_idx < 0 and 0 <= index < len(self.all_segments):
+            target_idx = index
+
+        if 0 <= target_idx < len(self.all_segments):
             self._is_syncing_ui = True
-            self._select_segment_ui(index)
+            self._select_segment_ui(target_idx)
             self._is_syncing_ui = False
         else:
             self.current_index = -1
@@ -703,13 +968,31 @@ class SubtitleEditorWidget(QWidget):
         self.current_editor.setEnabled(True)
         self.current_editor.setTitle(f"Current Subtitle: #{index + 1}")
         self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
+
+        # If the selected ID is included by the active range but is on another
+        # filtered page, navigate to that page. If it is outside the filter, keep
+        # the filter and show the current editor without falsely selecting another row.
+        try:
+            visible_pos = self._visible_source_indices.index(index)
+        except ValueError:
+            visible_pos = -1
+        if visible_pos >= 0:
+            target_page = visible_pos // self.group_size if self.group_size > 0 else 0
+            if target_page != self.current_page:
+                self.current_page = target_page
+                self.render_page()
+
         self.table.blockSignals(True)
-        row = index % self.group_size if self.group_size > 0 else index
-        self.table.selectRow(row)
+        row = self._get_row_by_source_index(index)
+        if row >= 0:
+            self.table.selectRow(row)
+        else:
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
         self.table.blockSignals(False)
 
     def sync_playback_highlight(self, absolute_index: int):
-        """Select the subtitle currently playing without issuing a seek."""
+        """Select the playing subtitle without assuming visible row == source index."""
         if not (0 <= absolute_index < len(self.all_segments)):
             return
         if self.selection_controller and not self._is_syncing_ui:
@@ -717,22 +1000,29 @@ class SubtitleEditorWidget(QWidget):
                 absolute_index, self.all_segments[absolute_index].get("id"), SelectionSource.PLAYBACK
             )
             return
+
         self.current_index = absolute_index
-        items_per_page = self.group_size or len(self.all_segments)
-        if items_per_page > 0 and items_per_page != len(self.all_segments):
-            target_page = absolute_index // items_per_page
-            if target_page != self.current_page:
-                self.current_page = target_page
-                self.render_page()
-            row_in_table = absolute_index % items_per_page
-        else:
-            row_in_table = absolute_index
+        try:
+            visible_pos = self._visible_source_indices.index(absolute_index)
+        except ValueError:
+            self._is_syncing_ui = True
+            self.table.clearSelection()
+            self._load_current_editor()
+            self.update_empty_state()
+            self._is_syncing_ui = False
+            return
+
+        # Translate the filtered-list position into the page-local table row.
+        target_page = visible_pos // self.group_size if self.group_size > 0 else 0
+        if target_page != self.current_page:
+            self.current_page = target_page
+            self.render_page()
+        row_in_table = visible_pos % self.group_size if self.group_size > 0 else visible_pos
         self._is_syncing_ui = True
         self.table.selectRow(row_in_table)
         self._load_current_editor()
         self.update_empty_state()
         self._is_syncing_ui = False
-
 
     def _emit_tm_suggestion(self):
         if 0 <= self.current_index < len(self.all_segments):
@@ -801,7 +1091,8 @@ class SubtitleEditorWidget(QWidget):
                 start_ms = prev_end_ms
                 new_start = self.ms_to_time_str(start_ms)
                 
-        if abs_idx < len(self.all_segments) - 1:
+        ripple = getattr(self, "ripple_shift_enabled", True)
+        if not ripple and abs_idx < len(self.all_segments) - 1:
             next_seg = self.all_segments[abs_idx + 1]
             next_start_ms = self.time_str_to_ms(next_seg["start"])
             if end_ms > next_start_ms:
@@ -815,16 +1106,20 @@ class SubtitleEditorWidget(QWidget):
             new_end = segment["end"]
 
         if new_start != segment["start"] or new_end != segment["end"]:
+            changes = self._build_timing_changes(
+                abs_idx,
+                segment["start"],
+                segment["end"],
+                new_start,
+                new_end,
+            )
             self.undo_manager.push(
                 EditTimingCommand(
-                    abs_idx,
-                    segment["start"],
-                    segment["end"],
-                    new_start,
-                    new_end,
-                    self.all_segments,
+                    changes,
+                    data_provider=self.all_segments,
                 )
             )
+            self.live_edit_applied.emit(self.all_segments)
         if values["text"] != segment["text"]:
             self.undo_manager.push(
                 EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments)
@@ -837,6 +1132,45 @@ class SubtitleEditorWidget(QWidget):
             next_orig = self.all_segments[abs_idx + 1].get("original_text", "") if abs_idx < len(self.all_segments) - 1 else ""
             qc_flags = segment.get("metadata", {}).get("qc_flags", [])
             self.commit_segment.emit(orig, values["text"], prev_orig, next_orig, qc_flags)
+
+    def _build_timing_changes(self, abs_idx: int, old_start, old_end, new_start, new_end) -> list:
+        changes = [{
+            "index": abs_idx,
+            "old_start": old_start,
+            "old_end": old_end,
+            "new_start": new_start,
+            "new_end": new_end,
+        }]
+
+        if not getattr(self, "ripple_shift_enabled", True):
+            return changes
+
+        old_end_ms = self.time_str_to_ms(old_end)
+        new_end_ms = self.time_str_to_ms(new_end)
+        ripple_delta_ms = new_end_ms - old_end_ms
+
+        if ripple_delta_ms == 0:
+            return changes
+
+        for i in range(abs_idx + 1, len(self.all_segments)):
+            seg = self.all_segments[i]
+            cur_s = seg["start"]
+            cur_e = seg["end"]
+            s_ms = self.time_str_to_ms(cur_s)
+            e_ms = self.time_str_to_ms(cur_e)
+
+            shifted_s_ms = max(0, s_ms + ripple_delta_ms)
+            shifted_e_ms = max(shifted_s_ms + 50, e_ms + ripple_delta_ms)
+
+            changes.append({
+                "index": i,
+                "old_start": cur_s,
+                "old_end": cur_e,
+                "new_start": self._coerce_time_value(cur_s, self.ms_to_time_str(shifted_s_ms)),
+                "new_end": self._coerce_time_value(cur_e, self.ms_to_time_str(shifted_e_ms)),
+            })
+
+        return changes
 
 
     @staticmethod
@@ -873,6 +1207,62 @@ class SubtitleEditorWidget(QWidget):
             self.undo_manager.push(
                 SplitCommand(self.current_index, playhead_ms, self.all_segments)
             )
+
+    def nudge_selected_segment(self, delta_ms: int, target: str = "both"):
+        if self.current_index < 0:
+            if hasattr(self, "table") and self.table.currentRow() >= 0:
+                self.current_index = self._source_index_for_row(self.table.currentRow())
+            elif getattr(self, "selection_controller", None) and self.selection_controller.selected_segment_id:
+                sid = self.selection_controller.selected_segment_id
+                self.current_index = next((i for i, s in enumerate(self.all_segments) if s.get("id") == sid), -1)
+
+        if self.current_index < 0 or self.current_index >= len(self.all_segments):
+            return
+        if self.undo_manager is None:
+            return
+
+        if hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
+
+        abs_idx = self.current_index
+        segment = self.all_segments[abs_idx]
+        old_start = segment["start"]
+        old_end = segment["end"]
+        start_ms = self.time_str_to_ms(old_start)
+        end_ms = self.time_str_to_ms(old_end)
+
+        if target == "start":
+            start_ms = max(0, start_ms + delta_ms)
+            if start_ms >= end_ms:
+                start_ms = max(0, end_ms - 50)
+        elif target == "end":
+            end_ms = max(start_ms + 50, end_ms + delta_ms)
+        else:  # "both" (shift entire segment)
+            shift = delta_ms
+            if start_ms + shift < 0:
+                shift = -start_ms
+            start_ms += shift
+            end_ms += shift
+
+        new_start = self._coerce_time_value(old_start, self.ms_to_time_str(start_ms))
+        new_end = self._coerce_time_value(old_end, self.ms_to_time_str(end_ms))
+
+        if new_start != old_start or new_end != old_end:
+            changes = self._build_timing_changes(
+                abs_idx, old_start, old_end, new_start, new_end
+            )
+            self.undo_manager.push(
+                EditTimingCommand(
+                    changes, data_provider=self.all_segments
+                )
+            )
+            self.current_editor.set_time(start_ms, end_ms)
+            self.live_edit_applied.emit(self.all_segments)
+            if getattr(self, "selection_controller", None) and isinstance(segment, dict):
+                # Trigger global selection focus to update waveform highlight
+                self.selection_controller.selection_changed.emit(
+                    abs_idx, segment.get("id"), SelectionSource.EDITOR
+                )
 
     def trigger_add(self, playhead_ms: int, video_duration_ms: int):
         if self.undo_manager is None:
@@ -916,28 +1306,34 @@ class SubtitleEditorWidget(QWidget):
 
     def highlight_row_by_stt(self, stt):
         target_idx = -1
+        target_id = None
         for i, seg in enumerate(self.all_segments):
-            if str(seg['stt']).strip() == str(stt).strip():
+            if str(seg.get('stt', i + 1)).strip() == str(stt).strip():
                 target_idx = i
+                target_id = seg.get("id")
                 break
-                
-        if target_idx == -1: return
 
-        if self.group_size > 0:
-            target_page = target_idx // self.group_size
-            if target_page != self.current_page:
-                self.current_page = target_page
-                self.render_page()
+        if target_idx == -1:
+            return
 
-        row_in_table = target_idx % self.group_size if self.group_size > 0 else target_idx
+        try:
+            visible_pos = self._visible_source_indices.index(target_idx)
+        except ValueError:
+            self.table.clearSelection()
+            return
+
+        target_page = visible_pos // self.group_size if self.group_size > 0 else 0
+        if target_page != self.current_page:
+            self.current_page = target_page
+            self.render_page()
+
+        row_in_table = visible_pos % self.group_size if self.group_size > 0 else visible_pos
         self.table.blockSignals(True)
         self.table.clearSelection()
         self.table.selectRow(row_in_table)
-        
-        item = self.table.item(row_in_table, 0)
+        item = self.table.item(row_in_table, self.COL_STT)
         if item:
             self.table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
-            
         self.table.blockSignals(False)
 
     def clear_highlight(self):

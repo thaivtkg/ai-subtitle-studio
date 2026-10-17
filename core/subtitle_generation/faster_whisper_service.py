@@ -174,6 +174,7 @@ class FasterWhisperService:
                 check=True,
                 capture_output=True,
                 text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except Exception as exc:
             shutil.rmtree(temp_dir, ignore_errors=True)
