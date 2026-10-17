@@ -21,7 +21,10 @@ class TestPackagingConstraints(unittest.TestCase):
         )
 
     def test_active_spec_excludes_curl_cffi(self):
-        spec = Path(__file__).resolve().parents[1] / "build" / "ai_subtitle_studio.spec"
+        repo_root = Path(__file__).resolve().parents[2]
+        spec = repo_root / "deployment" / "build" / "ai_subtitle_studio.spec"
+        if not spec.exists():
+            spec = repo_root / "build" / "ai_subtitle_studio.spec"
         tree = ast.parse(spec.read_text(encoding="utf-8"), filename=str(spec))
         analyses = [
             node for node in ast.walk(tree)

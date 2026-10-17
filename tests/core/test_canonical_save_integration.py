@@ -5,7 +5,7 @@ from pathlib import Path
 class CanonicalSaveIntegrationContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.gui_source = Path(__file__).parents[1].joinpath("ui", "Gui.py").read_text(
+        cls.gui_source = Path(__file__).resolve().parents[2].joinpath("ui", "Gui.py").read_text(
             encoding="utf-8"
         )
 
