@@ -143,7 +143,7 @@ class MainWindowRouter(AppRouter):
     """Concrete adapter for MainWindow, AnimatedStack, and workspace dock tabs."""
 
     INDEX_TO_NAV_INDEX = {0: 0, 1: 1, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
-    SUBROUTE_TO_TAB = {"generate": 0, "context": 1, "style": 2, "log": 3}
+    SUBROUTE_TO_TAB = {"generate": 0, "context": 1, "style": 2, "quality": 3, "log": 4}
     TAB_TO_SUBROUTE = {index: name for name, index in SUBROUTE_TO_TAB.items()}
 
     def __init__(self, window: QObject, parent: Optional[QObject] = None) -> None:
@@ -158,13 +158,16 @@ class MainWindowRouter(AppRouter):
         self._settle_timer.timeout.connect(self._check_settled)
         self._settle_target: Optional[Tuple[str, int, Optional[str]]] = None
 
+    def _get_drawer(self):
+        return getattr(self._window, "overlay_host", getattr(self._window, "generation_dock", None))
+
     def current_index(self) -> int:
         return self._stack.current_index
 
     def current_subroute(self) -> Optional[str]:
         if self.current_index() != NavigationAdapter.ROUTE_MAP["workspace"]:
             return None
-        dock = getattr(self._window, "generation_dock", None)
+        dock = self._get_drawer()
         drawer_anim = getattr(self._window, "drawer_anim", None)
         if dock is None or not dock.isVisible():
             return None
@@ -178,8 +181,11 @@ class MainWindowRouter(AppRouter):
         self._settle_timer.stop()
         self._settle_target = (operation_id, index, subroute)
         if index == NavigationAdapter.ROUTE_MAP["workspace"] and subroute in self.SUBROUTE_TO_TAB:
-            self._window.dock_tabs.setCurrentIndex(self.SUBROUTE_TO_TAB[subroute])
-            dock = getattr(self._window, "generation_dock", None)
+            tab_index = self.SUBROUTE_TO_TAB[subroute]
+            self._window.dock_tabs.setCurrentIndex(tab_index)
+            if hasattr(self._window, "nav_list"):
+                self._window.nav_list.setCurrentRow(tab_index)
+            dock = self._get_drawer()
             if dock is not None and not dock.isVisible():
                 toggle = getattr(self._window, "_toggle_ai_drawer", None)
                 if toggle is not None:
@@ -212,7 +218,7 @@ class MainWindowRouter(AppRouter):
             drawer_anim is not None
             and drawer_anim.state() == QAbstractAnimation.Running
         )
-        dock = getattr(self._window, "generation_dock", None)
+        dock = self._get_drawer()
         drawer_settled = subroute is None or (
             dock is not None
             and dock.isVisible()

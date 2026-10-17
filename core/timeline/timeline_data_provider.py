@@ -50,7 +50,10 @@ class TimelineSegmentWrapper:
     def segment_id(self): return self._raw.get('id')
     
     @property
-    def start_ms(self): return self._raw.get('start_ms', 0)
+    def start_ms(self):
+        if 'start' in self._raw and self.provider:
+            return self.provider._time_str_to_ms(self._raw['start'])
+        return self._raw.get('start_ms', 0)
     
     @start_ms.setter
     def start_ms(self, val):
@@ -59,7 +62,10 @@ class TimelineSegmentWrapper:
         self._raw['start'] = self.provider._ms_to_time_str(val)
 
     @property
-    def end_ms(self): return self._raw.get('end_ms', 0)
+    def end_ms(self):
+        if 'end' in self._raw and self.provider:
+            return self.provider._time_str_to_ms(self._raw['end'])
+        return self._raw.get('end_ms', 0)
     
     @end_ms.setter
     def end_ms(self, val):

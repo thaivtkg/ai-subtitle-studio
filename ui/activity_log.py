@@ -5,6 +5,7 @@ import re
 
 import html
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
     QCheckBox,
@@ -219,46 +220,74 @@ class ActivityLogModel:
 class ActivityLogView(QFrame):
     def __init__(self, model: ActivityLogModel, parent=None):
         super().__init__(parent)
+        self.setObjectName("ActivityLogView")
+        self.setStyleSheet("QFrame#ActivityLogView { border: none; background: transparent; }")
         self.model = model
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        from ui.components.flow_layout import FlowLayout
-        
         header_widget = QWidget()
-        header = FlowLayout(header_widget, margin=0, hSpacing=8, vSpacing=8)
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(0, 0, 0, 4)
+        header.setSpacing(6)
+        header.setAlignment(Qt.AlignVCenter)
         
         title = QLabel("📋 Activity Stream")
         title.setStyleSheet(
             f"font-weight: bold; font-size: 12px; color: {Theme.TEXT_MUTED}; border: none;"
         )
+        title.setFixedHeight(26)
+        title.setMinimumWidth(title.sizeHint().width())
         header.addWidget(title)
 
         self.level_filter = QComboBox()
         self.level_filter.addItems(["All", "Debug", "Info", "Warning", "Error"])
         self.level_filter.currentTextChanged.connect(self._on_level_filter_changed)
+        self.level_filter.setFixedWidth(68)
+        self.level_filter.setFixedHeight(26)
+        self.level_filter.setStyleSheet("font-size: 11px;")
         header.addWidget(self.level_filter)
 
         self.source_filter = QComboBox()
         self.source_filter.addItem("All")
         self.source_filter.currentTextChanged.connect(self._on_source_filter_changed)
+        self.source_filter.setMinimumWidth(64)
+        self.source_filter.setMaximumWidth(84)
+        self.source_filter.setFixedHeight(26)
+        self.source_filter.setStyleSheet("font-size: 11px;")
         header.addWidget(self.source_filter)
 
-        self.technical_reports_control = QCheckBox("Hiện log kỹ thuật")
+        header.addStretch(1)
+
+        self.technical_reports_control = QCheckBox("Log kỹ thuật")
         self.technical_reports_control.setObjectName("activity_technical_reports")
+        self.technical_reports_control.setToolTip("Hiện log kỹ thuật chi tiết")
         self.technical_reports_control.setChecked(model.show_technical_reports)
         self.technical_reports_control.toggled.connect(model.set_show_technical_reports)
+        self.technical_reports_control.setFixedHeight(26)
+        self.technical_reports_control.setMinimumWidth(self.technical_reports_control.sizeHint().width())
+        self.technical_reports_control.setStyleSheet("font-size: 11px;")
         header.addWidget(self.technical_reports_control)
 
         self.auto_scroll_control = QCheckBox("Auto-scroll")
         self.auto_scroll_control.setChecked(True)
         self.auto_scroll_control.toggled.connect(self.model.set_auto_scroll)
+        self.auto_scroll_control.setFixedHeight(26)
+        self.auto_scroll_control.setMinimumWidth(self.auto_scroll_control.sizeHint().width())
+        self.auto_scroll_control.setStyleSheet("font-size: 11px;")
         header.addWidget(self.auto_scroll_control)
 
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip("Clear activity log")
         self.clear_button.clicked.connect(self.model.clear)
+        self.clear_button.setFixedHeight(26)
+        self.clear_button.setFixedWidth(48)
+        self.clear_button.setStyleSheet(
+            f"QPushButton {{ background-color: {Theme.SURFACE_ELEVATED}; color: {Theme.TEXT_PRIMARY}; "
+            f"border: 1px solid {Theme.BORDER}; border-radius: 6px; font-size: 11px; font-weight: 600; padding: 0 4px; }} "
+            f"QPushButton:hover {{ background-color: {Theme.SURFACE_SOFT}; border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}"
+        )
         header.addWidget(self.clear_button)
 
         layout.addWidget(header_widget)
@@ -266,6 +295,7 @@ class ActivityLogView(QFrame):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         self.text_edit.setPlaceholderText("Hệ thống sẵn sàng...")
+        self.text_edit.setStyleSheet("border: none; background-color: transparent;")
         layout.addWidget(self.text_edit)
         self.model.subscribe(self._on_model_changed)
         self._render()

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import ( QLineEdit, QListWidget, QListWidgetItem,
     QLabel,
     QMessageBox,
     QProgressBar,
+    QToolTip,
     QPushButton,
     QSpinBox,
     QScrollArea,
@@ -100,17 +101,40 @@ class SubtitleGenerationPanel(QWidget):
         range_layout.setContentsMargins(12, 12, 12, 12)
         range_layout.setSpacing(8)
         
+        # RANGE_TIME_INPUT_UNIT_SELECTOR: explicit units prevent 1-5 ambiguity.
+        unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Đơn vị nhập:"))
+        self.cmb_range_unit = QComboBox()
+        self.cmb_range_unit.addItem("Giây (s)", "seconds")
+        self.cmb_range_unit.addItem("Phút (min)", "minutes")
+        self._range_input_unit = "seconds"
+        self.cmb_range_unit.setToolTip(
+            "Chọn rõ đơn vị trước khi nhập để tránh nhầm 1–5 giây với 1–5 phút."
+        )
+        unit_row.addWidget(self.cmb_range_unit)
+        unit_row.addStretch()
+        range_layout.addLayout(unit_row)
+
         time_row = QHBoxLayout()
         self.txt_start = QLineEdit()
-        self.txt_start.setPlaceholderText("00:00:00,000")
+        self.txt_start.setPlaceholderText("Ví dụ: 60,5")
         self.txt_end = QLineEdit()
-        self.txt_end.setPlaceholderText("00:00:00,000")
-        
+        self.txt_end.setPlaceholderText("Ví dụ: 70")
         time_row.addWidget(QLabel("Từ:"))
         time_row.addWidget(self.txt_start)
         time_row.addWidget(QLabel("Đến:"))
         time_row.addWidget(self.txt_end)
         range_layout.addLayout(time_row)
+        self.txt_start.textChanged.connect(
+            lambda _text: self._clear_range_input_error(self.txt_start)
+        )
+        self.txt_end.textChanged.connect(
+            lambda _text: self._clear_range_input_error(self.txt_end)
+        )
+        self.cmb_range_unit.currentIndexChanged.connect(
+            lambda _index: self._on_range_unit_changed()
+        )
+        self._refresh_range_input_help()
         
         range_btn_row = QHBoxLayout()
         self.btn_range_timeline = QPushButton("⏱ Lấy từ vùng Timeline")
@@ -128,14 +152,15 @@ class SubtitleGenerationPanel(QWidget):
         # ---------------------------------
 
 
-        def _kv_row(label_text, widget):
+        def _kv_row(label_text, widget, min_width=None):
             row = QHBoxLayout()
             row.setContentsMargins(0, 2, 0, 2)
             row.setSpacing(12)
             lbl = QLabel(label_text)
             lbl.setProperty("class", "Caption")
-            lbl.setFixedWidth(120)
-            widget.setMinimumWidth(160)
+            lbl.setFixedWidth(100)
+            target_min_width = min_width if min_width is not None else max(widget.minimumWidth(), 160)
+            widget.setMinimumWidth(target_min_width)
             row.addWidget(lbl)
             row.addWidget(widget)
             row.addStretch()
@@ -146,12 +171,12 @@ class SubtitleGenerationPanel(QWidget):
         mode_layout.setSpacing(12)
         mode_lbl = QLabel("Task Mode:")
         mode_lbl.setProperty("class", "Caption")
-        mode_lbl.setFixedWidth(120)
+        mode_lbl.setFixedWidth(100)
         mode_layout.addWidget(mode_lbl)
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        self.cmb_mode.setMinimumWidth(160)
+        self.cmb_mode.setMinimumWidth(210)
         mode_layout.addWidget(self.cmb_mode)
         mode_layout.addStretch()
         settings_layout.addLayout(mode_layout)
@@ -166,16 +191,30 @@ class SubtitleGenerationPanel(QWidget):
         model_layout.setContentsMargins(0, 6, 0, 6)
         model_layout.setSpacing(8)
 
+        # --- Model Size row: combo + Download button ---
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 2, 0, 2)
+        model_row.setSpacing(8)
+        model_lbl = QLabel("Model Size:")
+        model_lbl.setProperty("class", "Caption")
+        model_lbl.setFixedWidth(100)
         self.cmb_model = QComboBox()
-        self.cmb_model.addItems(
-            ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
-        )
-        self.cmb_model.setCurrentText("large-v3-turbo")
-        model_layout.addLayout(_kv_row("Model Size:", self.cmb_model))
+        self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_download_model = QPushButton("⬇ Download")
+        self.btn_download_model.setProperty("variant", "secondary")
+        self.btn_download_model.setFixedHeight(28)
+        self.btn_download_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_download_model.setToolTip("Download model from HuggingFace")
+        self.btn_download_model.clicked.connect(self._on_download_model_clicked)
+        model_row.addWidget(model_lbl)
+        model_row.addWidget(self.cmb_model)
+        model_row.addWidget(self.btn_download_model)
+        model_layout.addLayout(model_row)
 
+        # --- Compute Type row with recommendation ---
         self.cmb_compute = QComboBox()
-        self.cmb_compute.addItems(["float16", "int8_float16", "int8"])
-        self.cmb_compute.setCurrentText("float16")
+        self.cmb_compute.setMinimumWidth(160)
+        self._populate_compute_combo()
         model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute))
 
         self.lbl_effective_compute = QLabel("Effective: not run")
@@ -186,6 +225,9 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
         model_layout.addLayout(_kv_row("Language:", self.cmb_language))
         settings_layout.addWidget(self.model_group)
+
+        # Populate model combo after widget tree is ready
+        self._populate_model_combo()
 
         advanced_group = QGroupBox("Advanced Settings")
         advanced_layout = QVBoxLayout(advanced_group)
@@ -212,7 +254,8 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_batch_mode = QComboBox()
         self.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
         self.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
-        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode))
+        self.cmb_batch_mode.setMinimumWidth(210)
+        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode, min_width=210))
 
         self.spin_batch_val = QSpinBox()
         self.spin_batch_val.setRange(1, 30)
@@ -344,6 +387,22 @@ class SubtitleGenerationPanel(QWidget):
         self.refresh_batch_mode_availability()
         self._on_mode_changed()
 
+    def take_action_footer(self):
+        """Detach the action footer so the host can pin it outside the tab stack.
+
+        The buttons remain owned by this panel logically: their signal handlers,
+        progress callbacks, and state updates continue to target this instance.
+        Only the QWidget parent/layout position changes.
+        """
+        footer = getattr(self, "action_footer", None)
+        if footer is None:
+            return None
+        panel_layout = self.layout()
+        if panel_layout is not None:
+            panel_layout.removeWidget(footer)
+        footer.setParent(None)
+        return footer
+
     @staticmethod
     def _configure_status_label(label):
         """Keep long errors inside the drawer's existing width."""
@@ -357,6 +416,139 @@ class SubtitleGenerationPanel(QWidget):
         self.generation_service.on_progress = self._update_progress
         self.generation_service.on_error = self._on_error
         self.generation_service.on_finish = self._on_finish
+        self.cmb_model.currentIndexChanged.connect(self._on_model_selection_changed)
+
+    # ── Model list helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _combo_value(combo):
+        if hasattr(combo, "currentData"):
+            val = combo.currentData()
+            if val is not None:
+                return val
+        return combo.currentText() if hasattr(combo, "currentText") else ""
+
+    _ALL_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
+
+    def _populate_model_combo(self, preferred: str = "large-v3-turbo") -> None:
+        """Fill cmb_model with install-status icons; keep previous selection if valid."""
+        from core.services.model_manager import ModelManager
+        prev = self.cmb_model.currentData() or preferred
+        self.cmb_model.blockSignals(True)
+        self.cmb_model.clear()
+        try:
+            info = {m["size"]: m["installed"] for m in ModelManager.get_discovery_list()}
+        except Exception:
+            info = {m: False for m in self._ALL_MODELS}
+        for size in self._ALL_MODELS:
+            installed = info.get(size, False)
+            icon = "✅" if installed else "⬇"
+            weight = ModelManager.SUPPORTED_MODELS.get(size, "")
+            label = f"{icon} {size}  ({weight})"
+            self.cmb_model.addItem(label, size)  # userData = bare model size
+        self.cmb_model.blockSignals(False)
+        # Restore previous or preferred
+        for i in range(self.cmb_model.count()):
+            if self.cmb_model.itemData(i) == prev:
+                self.cmb_model.setCurrentIndex(i)
+                break
+        else:
+            # fall back to preferred
+            for i in range(self.cmb_model.count()):
+                if self.cmb_model.itemData(i) == preferred:
+                    self.cmb_model.setCurrentIndex(i)
+                    break
+        self._on_model_selection_changed()
+
+    def _on_model_selection_changed(self) -> None:
+        """Show/hide Download button based on whether selected model is installed."""
+        from core.services.model_manager import ModelManager
+        size = self.cmb_model.currentData()
+        installed = ModelManager.is_installed(size) if size else False
+        self.btn_download_model.setVisible(not installed)
+
+    def _on_download_model_clicked(self) -> None:
+        """Trigger background download for the currently selected uninstalled model."""
+        from PySide6.QtCore import QThread
+        from core.services.model_manager import ModelManager
+
+        size = self.cmb_model.currentData()
+        if not size:
+            return
+        if ModelManager.is_installed(size):
+            self._populate_model_combo(preferred=size)
+            return
+
+        self.btn_download_model.setEnabled(False)
+        self.btn_download_model.setText("Downloading…")
+        self.lbl_effective_compute.setText(f"Downloading {size}…")
+
+        class _DlThread(QThread):
+            def __init__(self, model_size):
+                super().__init__()
+                self._size = model_size
+            def run(self):
+                ModelManager.download_model_sync(self._size)
+
+        thread = _DlThread(size)
+        thread.setParent(self)
+
+        def _done():
+            self.btn_download_model.setEnabled(True)
+            self.btn_download_model.setText("⬇ Download")
+            self.lbl_effective_compute.setText("Effective: not run")
+            self._populate_model_combo(preferred=size)
+
+        thread.finished.connect(_done)
+        thread.start()
+
+    # ── Compute type recommendation ───────────────────────────────────────────
+
+    def _populate_compute_combo(self) -> None:
+        """Populate compute combo with ★ marker on the option best for this machine."""
+        try:
+            import torch
+            has_cuda = torch.cuda.is_available()
+            vram_gb = (
+                torch.cuda.get_device_properties(0).total_memory // (1024 ** 3)
+                if has_cuda else 0
+            )
+        except Exception:
+            has_cuda = False
+            vram_gb = 0
+
+        # Determine recommended option:
+        # GPU >=4 GB VRAM → float16 (fastest, full precision)
+        # GPU 2-3 GB VRAM → int8_float16 (saves VRAM, still GPU)
+        # CPU only         → int8 (CPU only option)
+        if has_cuda and vram_gb >= 4:
+            recommended = "float16"
+        elif has_cuda:
+            recommended = "int8_float16"
+        else:
+            recommended = "int8"
+
+        options = ["float16", "int8_float16", "int8"]
+        self.cmb_compute.clear()
+        for opt in options:
+            label = f"★ {opt}  (Recommended)" if opt == recommended else opt
+            self.cmb_compute.addItem(label, opt)
+        # Select recommended by default
+        for i in range(self.cmb_compute.count()):
+            if self.cmb_compute.itemData(i) == recommended:
+                self.cmb_compute.setCurrentIndex(i)
+                break
+
+    def apply_recommended_settings(self, model: str, compute: str) -> None:
+        """Apply recommended model and compute type to panel combos."""
+        for i in range(self.cmb_model.count()):
+            if self.cmb_model.itemData(i) == model:
+                self.cmb_model.setCurrentIndex(i)
+                break
+        for i in range(self.cmb_compute.count()):
+            if self.cmb_compute.itemData(i) == compute:
+                self.cmb_compute.setCurrentIndex(i)
+                break
 
     def set_context_status(self, compiled, configured: bool) -> None:
         self._context_compiled = compiled
@@ -441,11 +633,23 @@ class SubtitleGenerationPanel(QWidget):
             and not self._is_timing_mode()
             and not self._timing_segments_available()
         ):
-            QMessageBox.warning(
+            res = QMessageBox.question(
                 self,
-                "Timing Draft required",
-                "Chế độ băm theo câu yêu cầu Timing Draft đã hoàn tất.",
+                "Yêu cầu Timing Draft",
+                "Chế độ băm theo số câu (Segment-based) cần mốc câu có sẵn từ Timing Draft để Whisper biết vị trí từng câu.\n\n"
+                "Bạn có muốn chuyển sang chế độ 'Timing Draft (VAD Only)' để tạo mốc câu trước không (chỉ mất vài giây)?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
             )
+            if res == QMessageBox.Yes:
+                idx = self.cmb_mode.findData("timing") if hasattr(self.cmb_mode, "findData") else -1
+                if idx >= 0:
+                    self.cmb_mode.setCurrentIndex(idx)
+                    if hasattr(self.spin_batch_val, "setRange"):
+                        self.spin_batch_val.setRange(5, 50)
+                        self.spin_batch_val.setValue(10)
+                        self.spin_batch_val.setSuffix(" segs")
+                    return
             self.cmb_batch_mode.setCurrentIndex(0)
             return
         if self.cmb_batch_mode.currentData() == "time":
@@ -479,10 +683,19 @@ class SubtitleGenerationPanel(QWidget):
         return timing_status in {"DRAFT", "READY"} and self._has_timing_artifact()
 
     def refresh_batch_mode_availability(self):
-        """Allow true segment-count batching only when Timing ranges exist."""
+        """Allow true segment-count batching only when Timing ranges exist; hide otherwise."""
         if not hasattr(self, "cmb_batch_mode"):
             return
-        item = self.cmb_batch_mode.model().item(1)
+        seg_idx = -1
+        if hasattr(self.cmb_batch_mode, "findData"):
+            seg_idx = self.cmb_batch_mode.findData("segments")
+        if seg_idx < 0:
+            seg_idx = 1
+        item = (
+            self.cmb_batch_mode.model().item(seg_idx)
+            if hasattr(self.cmb_batch_mode, "model")
+            else None
+        )
         if item is None:
             return
         # Timing Draft is what creates the Timing Artifact, so it must be
@@ -490,7 +703,13 @@ class SubtitleGenerationPanel(QWidget):
         enabled = self._is_timing_mode() or (
             self._timing_segments_available()
         )
-        item.setEnabled(enabled)
+        if hasattr(item, "setEnabled"):
+            item.setEnabled(enabled)
+        view = getattr(self.cmb_batch_mode, "view", None)
+        if callable(view):
+            v = view()
+            if hasattr(v, "setRowHidden"):
+                v.setRowHidden(seg_idx, not enabled)
         if not enabled and self.cmb_batch_mode.currentData() == "segments":
             self.cmb_batch_mode.setCurrentIndex(0)
 
@@ -535,6 +754,23 @@ class SubtitleGenerationPanel(QWidget):
 
     @Slot()
     def _on_generate_clicked(self):
+        if self.video_duration_ms <= 0:
+            project = getattr(
+                getattr(self.generation_service, "project_service", None),
+                "current_project",
+                None,
+            )
+            video_path = getattr(getattr(project, "source", None), "path", "")
+            if video_path and os.path.exists(video_path):
+                try:
+                    from workers.TaskQueue import get_video_duration
+
+                    dur_sec = get_video_duration(video_path)
+                    if dur_sec > 0:
+                        self.set_video_duration(int(dur_sec * 1000))
+                except Exception:
+                    pass
+
         if self.video_duration_ms <= 0:
             QMessageBox.warning(self, "Lỗi", "Chưa tải Video hoặc không đọc được thời lượng.")
             return
@@ -581,8 +817,8 @@ class SubtitleGenerationPanel(QWidget):
             project_id=project.project_id,
             source_fingerprint=getattr(source, "fingerprint", ""),
             video_path=video_path,
-            model_size=self.cmb_model.currentText(),
-            compute_type=self.cmb_compute.currentText(),
+            model_size=self._combo_value(self.cmb_model),
+            compute_type=self._combo_value(self.cmb_compute),
             language=None if language == "Auto Detect" else language,
             use_vad=self.chk_vad.isChecked(),
             min_silence_ms=500,
@@ -701,8 +937,8 @@ class SubtitleGenerationPanel(QWidget):
                 values["use_vad"] = True
             return values
         return {
-            "model_size": self.cmb_model.currentText(),
-            "compute_type": self.cmb_compute.currentText(),
+            "model_size": self._combo_value(self.cmb_model),
+            "compute_type": self._combo_value(self.cmb_compute),
             "use_vad": True,
             "min_silence_ms": 500,
             "fix_overlap": getattr(self, "chk_fix_overlap", None).isChecked()
@@ -724,8 +960,8 @@ class SubtitleGenerationPanel(QWidget):
         values = self._timing_settings()
         values.update(
             {
-                "model_size": self.cmb_model.currentText(),
-                "compute_type": self.cmb_compute.currentText(),
+                "model_size": self._combo_value(self.cmb_model),
+                "compute_type": self._combo_value(self.cmb_compute),
                 "use_vad": True,
                 "fix_overlap": self.chk_fix_overlap.isChecked(),
                 "overlap_gap_ms": self.spin_overlap_gap.value(),
@@ -752,8 +988,14 @@ class SubtitleGenerationPanel(QWidget):
             mode_index = self.cmb_mode.findData(task_mode)
             if mode_index >= 0:
                 self.cmb_mode.setCurrentIndex(mode_index)
-            self.cmb_model.setCurrentText(timing.model_size)
-            self.cmb_compute.setCurrentText(timing.compute_type)
+            for i in range(self.cmb_model.count()):
+                if self.cmb_model.itemData(i) == timing.model_size:
+                    self.cmb_model.setCurrentIndex(i)
+                    break
+            for i in range(self.cmb_compute.count()):
+                if self.cmb_compute.itemData(i) == timing.compute_type:
+                    self.cmb_compute.setCurrentIndex(i)
+                    break
             self.chk_vad.setChecked(timing.use_vad)
             self.chk_fix_overlap.setChecked(timing.fix_overlap)
             self.spin_overlap_gap.setValue(timing.overlap_gap_ms)
@@ -848,7 +1090,7 @@ class SubtitleGenerationPanel(QWidget):
         for cp in history:
             label_text = "Initial" if cp.checkpoint_type == "INITIAL" else f"#{cp.generated_count} ({cp.checkpoint_type})"
             if cp.checkpoint_type == "RANGE" and cp.generation_range:
-                from core.export.subtitle_parser import ms_to_time_str
+                from ui.SubEditor import ms_to_time_str
                 label_text += f" {ms_to_time_str(cp.generation_range.get('start_ms', 0))} -> {ms_to_time_str(cp.generation_range.get('end_ms', 0))}"
             
             btn = QPushButton(label_text)
@@ -884,23 +1126,134 @@ class SubtitleGenerationPanel(QWidget):
         self._reset_ui_state()
 
     # --- PHASE 3: RANGE & HISTORY LOGIC ---
+    def _range_unit_factor_ms(self, unit=None):
+        unit = unit or self._range_input_unit
+        return 1000 if unit == "seconds" else 60000
+
+    def _range_unit_label(self, unit=None):
+        unit = unit or self._range_input_unit
+        return "giây" if unit == "seconds" else "phút"
+
+    def _range_input_help(self):
+        if self._range_input_unit == "seconds":
+            return (
+                "Nhập số giây không âm, không cần gõ s. Ví dụ: 60–70 hoặc "
+                "60,5–70. Dấu phẩy (,) và dấu chấm (.) đều dùng được cho số lẻ."
+            )
+        return (
+            "Nhập số phút không âm, không cần gõ chữ phút. Ví dụ: 1–5 hoặc "
+            "1,5–2. Dấu phẩy (,) và dấu chấm (.) đều dùng được cho số lẻ."
+        )
+
+    def _refresh_range_input_help(self):
+        help_text = self._range_input_help()
+        for widget in (self.txt_start, self.txt_end):
+            widget.setToolTip(help_text)
+        if self._range_input_unit == "seconds":
+            self.txt_start.setPlaceholderText("Ví dụ: 60,5")
+            self.txt_end.setPlaceholderText("Ví dụ: 70")
+        else:
+            self.txt_start.setPlaceholderText("Ví dụ: 1,5")
+            self.txt_end.setPlaceholderText("Ví dụ: 5")
+
+    def _clear_range_input_error(self, widget):
+        widget.setStyleSheet("")
+        if hasattr(self, "_range_input_unit"):
+            widget.setToolTip(self._range_input_help())
+
+    def _show_range_input_error(self, widget, message):
+        help_text = f"{message}\n\nCách nhập đúng: {self._range_input_help()}"
+        widget.setStyleSheet("border: 1px solid #ff5252;")
+        widget.setToolTip(help_text)
+        widget.setFocus()
+        QToolTip.showText(
+            widget.mapToGlobal(widget.rect().bottomLeft()),
+            help_text,
+            widget,
+            widget.rect(),
+            7000,
+        )
+
+    def _on_range_unit_changed(self):
+        from core.subtitle_generation.range_time_input import (
+            RangeInputError, parse_range_value_ms, format_range_value_ms,
+        )
+        old_unit = getattr(self, "_range_input_unit", "seconds")
+        new_unit = self.cmb_range_unit.currentData()
+        if new_unit == old_unit:
+            self._refresh_range_input_help()
+            return
+
+        converted = []
+        for widget in (self.txt_start, self.txt_end):
+            raw = widget.text().strip()
+            if not raw:
+                converted.append((widget, ""))
+                continue
+            try:
+                value_ms = parse_range_value_ms(raw, old_unit)
+            except RangeInputError as exc:
+                self.cmb_range_unit.blockSignals(True)
+                self.cmb_range_unit.setCurrentIndex(
+                    self.cmb_range_unit.findData(old_unit)
+                )
+                self.cmb_range_unit.blockSignals(False)
+                self._show_range_input_error(
+                    widget,
+                    f"Không thể đổi đơn vị vì giá trị đang nhập chưa hợp lệ: {exc}",
+                )
+                return
+            converted.append((widget, value_ms))
+
+        self._range_input_unit = new_unit
+        for widget, value in converted:
+            widget.setText(
+                "" if value == "" else format_range_value_ms(value, new_unit)
+            )
+        self._refresh_range_input_help()
+
     def set_range(self, start_ms: int, end_ms: int):
-        from core.export.subtitle_parser import ms_to_time_str
-        self.txt_start.setText(ms_to_time_str(start_ms))
-        self.txt_end.setText(ms_to_time_str(end_ms))
+        from core.subtitle_generation.range_time_input import format_range_value_ms
+        unit = getattr(self, "_range_input_unit", "seconds")
+        self.txt_start.setText(format_range_value_ms(start_ms, unit))
+        self.txt_end.setText(format_range_value_ms(end_ms, unit))
 
     def _on_preview_range_clicked(self):
-        from ui.SubEditor import time_str_to_ms, ms_to_time_str
+        from ui.SubEditor import ms_to_time_str
+        from core.subtitle_generation.range_time_input import (
+            RangeInputError, parse_range_value_ms, format_range_value_ms,
+        )
         from core.subtitle_generation.range_validation import RangeValidator, RangeErrorCode
         from ui.dialogs.preview_range_dialog import PreviewRangeDialog
-        
+
         try:
-            start_ms = time_str_to_ms(self.txt_start.text().strip())
-            end_ms = time_str_to_ms(self.txt_end.text().strip())
-        except ValueError:
-            self._on_error("Format thời gian không hợp lệ. Vui lòng nhập HH:MM:SS,mmm")
+            start_ms = parse_range_value_ms(
+                self.txt_start.text(), self._range_input_unit
+            )
+        except RangeInputError as exc:
+            self._show_range_input_error(
+                self.txt_start, f"Thời điểm bắt đầu không hợp lệ: {exc}"
+            )
             return
-            
+        try:
+            end_ms = parse_range_value_ms(
+                self.txt_end.text(), self._range_input_unit
+            )
+        except RangeInputError as exc:
+            self._show_range_input_error(
+                self.txt_end, f"Thời điểm kết thúc không hợp lệ: {exc}"
+            )
+            return
+
+        self._clear_range_input_error(self.txt_start)
+        self._clear_range_input_error(self.txt_end)
+        if start_ms >= end_ms:
+            self._show_range_input_error(
+                self.txt_end,
+                "Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu.",
+            )
+            return
+
         # Call Validator
         result = RangeValidator.preview_range(
             start_ms, end_ms, self.video_duration_ms, 
@@ -910,14 +1263,43 @@ class SubtitleGenerationPanel(QWidget):
         
         if not result.is_valid:
             if result.suggested_end_ms:
-                # Ask user if they want to clamp
+                # Keep the existing explicit clamp confirmation, but display the
+                # proposed value in the currently selected input unit.
                 from PySide6.QtWidgets import QMessageBox
-                ans = QMessageBox.question(self, "Warning", f"⚠ {result.message}\nBạn có muốn tự động đưa End về {ms_to_time_str(result.suggested_end_ms)}?")
+                suggested = format_range_value_ms(
+                    result.suggested_end_ms, self._range_input_unit
+                )
+                ans = QMessageBox.question(
+                    self,
+                    "Khoảng thời gian vượt video",
+                    f"⚠ {result.message}\nBạn có muốn đưa thời điểm kết thúc về {suggested} {self._range_unit_label()}?",
+                )
                 if ans == QMessageBox.Yes:
-                    self.txt_end.setText(ms_to_time_str(result.suggested_end_ms))
-                    self._on_preview_range_clicked() # Re-preview
+                    self.txt_end.setText(suggested)
+                    self._on_preview_range_clicked()  # Re-preview
+                else:
+                    self._show_range_input_error(
+                        self.txt_end,
+                        f"Thời điểm kết thúc vượt thời lượng video. Giá trị gợi ý: {suggested} {self._range_unit_label()}.",
+                    )
             else:
-                self._on_error(result.message)
+                if result.status == RangeErrorCode.START_BEYOND_END:
+                    if start_ms > self.video_duration_ms:
+                        target = self.txt_start
+                        message = "Thời điểm bắt đầu vượt quá thời lượng video. Hãy giảm giá trị bắt đầu."
+                    else:
+                        target = self.txt_end
+                        message = "Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu."
+                elif result.status == RangeErrorCode.RANGE_TOO_SHORT:
+                    target = self.txt_end
+                    message = "Khoảng chọn quá ngắn. Hãy chọn khoảng dài hơn ít nhất 0,05 giây."
+                elif result.status == RangeErrorCode.BEYOND_VIDEO_DURATION:
+                    target = self.txt_end
+                    message = "Thời điểm kết thúc vượt quá thời lượng video. Hãy nhập giá trị nhỏ hơn hoặc bằng thời lượng video."
+                else:
+                    target = self.txt_end
+                    message = result.message
+                self._show_range_input_error(target, message)
             return
             
         dialog = PreviewRangeDialog(ms_to_time_str(start_ms), ms_to_time_str(end_ms), result, self)
@@ -945,18 +1327,9 @@ class SubtitleGenerationPanel(QWidget):
         self.refresh_history_ui()
             
     def _get_current_segments(self):
-        # Depending on how panel accesses editor segments
-        if hasattr(self, 'parent') and hasattr(self.parent(), 'sub_editor'):
-            return self.parent().sub_editor.all_segments
-        # GUI integration usually binds this
-        # Let's try to get Gui reference safely
-        from ui.Gui import Gui
-        w = self
-        while w is not None and not isinstance(w, Gui):
-            w = w.parent()
-        if w:
-            return w.sub_editor.all_segments
-        return []
+        # The panel lives inside MainWindow's overlay drawer; window() reaches it.
+        sub_editor = getattr(self.window(), "sub_editor", None)
+        return sub_editor.all_segments if sub_editor is not None else []
         
     def refresh_history(self):
         from PySide6.QtWidgets import QListWidgetItem
@@ -997,16 +1370,32 @@ class SubtitleGenerationPanel(QWidget):
         from ui.dialogs.rollback_preview_dialog import RollbackPreviewDialog
         dialog = RollbackPreviewDialog(cp, has_manual, self)
         if dialog.exec():
-            # Trigger rollback
-            w = self
-            from ui.Gui import Gui
-            while w is not None and not isinstance(w, Gui):
-                w = w.parent()
-            if w:
-                self.generation_service.execute_rollback(None, current_segments, w.undo_manager)
-                w.sub_editor.refresh_editor()
-                w.sub_editor.timeline_provider.sync_back_to_editor()
+            # Rollback goes through the undo manager, whose state_changed already
+            # re-renders the editor and the timeline.
+            undo_manager = getattr(self.window(), "undo_manager", None)
+            if undo_manager is not None:
+                self.generation_service.execute_rollback(
+                    None, current_segments, undo_manager, checkpoint_id=cp_id
+                )
                 self.refresh_history()
+
+    def _replace_editor_segments(self, segments):
+        """Load segments into MainWindow's editor, timeline and draft."""
+        win = self.window()
+        sub_editor = getattr(win, "sub_editor", None)
+        if sub_editor is None:
+            return False
+        sub_editor.all_segments.clear()
+        sub_editor.all_segments.extend(segments)
+        sub_editor.render_page()
+        provider = getattr(win, "timeline_data_provider", None)
+        if provider is not None:
+            duration_ms = self.video_duration_ms or 3600000
+            provider.load_runtime_data(sub_editor.all_segments, duration_ms)
+            win.timeline_widget.load_project_data(duration_ms, provider.get_all_segments())
+        sub_editor.save_draft(silent=True)
+        self.refresh_history()
+        return True
     # ----------------------------------------
 
     def sync_subtitle_sources_from_project(self):
@@ -1064,17 +1453,7 @@ class SubtitleGenerationPanel(QWidget):
             self.generation_service.create_history_checkpoint(segments, is_initial=True)
             
             # Refresh UI
-            w = self
-            from ui.Gui import Gui
-            while w is not None and not isinstance(w, Gui):
-                w = w.parent()
-            if w:
-                w.sub_editor.all_segments.clear()
-                w.sub_editor.all_segments.extend(segments)
-                w.sub_editor.refresh_editor()
-                w.sub_editor.timeline_provider.sync_back_to_editor()
-                w.sub_editor.save_draft()
-                self.refresh_history()
+            self._replace_editor_segments(segments)
                 
         except Exception as e:
             QMessageBox.critical(self, "L?i import", f"Khng th? d?c file SRT:\n{e}")
@@ -1092,25 +1471,9 @@ class SubtitleGenerationPanel(QWidget):
         if hasattr(project_service, "mark_dirty"):
             project_service.mark_dirty()
             
-        # Clear editor and reload from this source's state
-        w = self
-        from ui.Gui import Gui
-        while w is not None and not isinstance(w, Gui):
-            w = w.parent()
-        if w:
-                    cp = None
+        # Clear editor and reload from this source's latest checkpoint.
         history = self.generation_service.checkpoint_history
-        if history:
-            cp = history[-1]
-        elif self.generation_service.initial_state:
-            cp = self.generation_service.initial_state
-            segments = []
-            if cp and hasattr(cp, "segments_snapshot"):
-                import copy
-                segments = copy.deepcopy(cp.segments_snapshot)
-            w.sub_editor.all_segments.clear()
-            w.sub_editor.all_segments.extend(segments)
-            w.sub_editor.refresh_editor()
-            w.sub_editor.timeline_provider.sync_back_to_editor()
-            w.sub_editor.save_draft()
-            self.refresh_history()
+        cp = history[-1] if history else self.generation_service.initial_state
+        import copy
+        segments = copy.deepcopy(getattr(cp, "segments_snapshot", None) or [])
+        self._replace_editor_segments(segments)

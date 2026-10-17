@@ -52,6 +52,8 @@ class TestCanonicalSubtitleHydration(unittest.TestCase):
         self.service.close_project()
         self.window.undo_manager.clear()
         self.window.revision_tracker.reset_for_new_document()
+        if getattr(self.window, "tm_manager", None):
+            self.window.tm_manager.close()
         self.window.close()
         self.window.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.DeferredDelete)

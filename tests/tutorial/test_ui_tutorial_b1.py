@@ -321,6 +321,7 @@ class TestMilestoneB1AnchorAndNavigation(unittest.TestCase):
         )
         self.widgets.append(window)
         window.show()
+        window.generation_dock.show()
         window.dock_tabs.setCurrentIndex(1)
         router = MainWindowRouter(window)
         nav = NavigationAdapter(router)

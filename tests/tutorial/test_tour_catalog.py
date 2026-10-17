@@ -164,7 +164,7 @@ class TestTourCatalog(unittest.TestCase):
                 TourParser.parse_guide(payload, root)
 
     def test_production_catalog_loads(self):
-        root = Path(__file__).parents[1] / "resources" / "tutorials"
+        root = Path(__file__).resolve().parents[2] / "resources" / "tutorials"
         guides = TourCatalog(root).load_all()
         self.assertEqual([guide.guide_id for guide in guides], ["getting_started"])
 
