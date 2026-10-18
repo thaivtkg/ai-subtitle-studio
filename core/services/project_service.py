@@ -42,12 +42,15 @@ class ProjectService:
         for segment in segments:
             segment_id = segment.get("id") or uuid.uuid4().hex
             segment["id"] = segment_id
-            data["segments"].append({
+            seg_dict = {
                 "id": segment_id, "stt": str(segment.get("stt", "")),
                 "start": segment.get("start", 0), "end": segment.get("end", 0),
                 "text": segment.get("text", ""), "status": segment.get("status", "draft"),
                 "metadata": segment.get("metadata", {"type": "normal"}),
-            })
+            }
+            if "style_preset" in segment:
+                seg_dict["style_preset"] = segment["style_preset"]
+            data["segments"].append(seg_dict)
         with open(filepath, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False, indent=2)
 
@@ -58,14 +61,17 @@ class ProjectService:
         for index, segment in enumerate(data.get("segments", [])):
             raw_stt, raw_id = segment.get("stt"), segment.get("id")
             legacy = raw_stt in (None, "")
-            result.append({
+            seg_dict = {
                 "id": uuid.uuid4().hex if legacy else (raw_id or uuid.uuid4().hex),
                 "stt": str(raw_id or index + 1) if legacy else str(raw_stt),
                 "start": segment.get("start", segment.get("start_ms", 0)),
                 "end": segment.get("end", segment.get("end_ms", 0)),
                 "text": segment.get("text", ""), "status": segment.get("status", "draft"),
                 "metadata": segment.get("metadata", {"type": "normal"}),
-            })
+            }
+            if "style_preset" in segment:
+                seg_dict["style_preset"] = segment["style_preset"]
+            result.append(seg_dict)
         return {"version": data.get("version", 1.0), "segments": result, "video_path": data.get("video_path", "")}
 
     def _generate_fingerprint(self, video_path: str) -> SourceInfo:
