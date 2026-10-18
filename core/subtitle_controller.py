@@ -145,11 +145,19 @@ class SubtitleController(QObject):
 
     def update_live_data(self, parsed_data):
         """ Nhận dữ liệu đã sửa từ Editor và ép Overlay render lại ngay lập tức """
-        self.subtitles = sorted(parsed_data, key=lambda x: x[0])
+        def _get_start(x):
+            if isinstance(x, (tuple, list)):
+                return x[0]
+            if isinstance(x, dict):
+                s = x.get('start_ms')
+                return s if s is not None else self._time_to_ms(x.get('start', 0))
+            return getattr(getattr(x, 'start', None), 'ordinal', 0)
+
+        self.subtitles = sorted(parsed_data, key=_get_start)
         
         # [Safety] Kiểm tra danh sách rỗng trước khi nội suy start_times
         if self.subtitles:
-            self.start_times = [s[0] for s in self.subtitles]
+            self.start_times = [_get_start(s) for s in self.subtitles]
         else:
             self.start_times = []
             
