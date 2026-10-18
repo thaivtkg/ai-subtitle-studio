@@ -48,6 +48,9 @@ _CAP_WORD = (
 _PROPER_NOUN_RE = re.compile(
     rf"(?<![{_LATIN_CHAR}]){_CAP_WORD}(?:\s+{_CAP_WORD}){{0,3}}(?![{_LATIN_CHAR}])"
 )
+_NEXT_LOWER_WORD_RE = re.compile(
+    r"^\s+([a-zàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ0-9_]+)"
+)
 
 _CJK_STOPWORDS = {
     "動画", "解説", "紹介", "説明", "今回", "内容", "違い", "方法", "場合", "使用", "利用", "基本", "概要",
@@ -63,19 +66,28 @@ _BOUNDARY_STOPWORDS = {
     "he", "she", "we", "you", "they", "let", "there", "here", "and", "or", "but",
 }
 _MULTIWORD_STOP_PHRASES = {
-    "anh hùng", "dũng sĩ", "quái vật", "yêu quái", "ma vương", "nội dung",
-    "hướng dẫn", "giới thiệu", "tóm tắt", "bảo vệ", "người dân", "dân làng",
-    "chương trình", "chiến đấu", "lập trình", "quản lý", "giải thích",
-    "khám phá", "vùng đất", "trận chiến", "bộ nhớ",
+    "anh hùng", "anh em", "anh trai", "anh chàng", "dũng sĩ", "quái vật",
+    "quái nhân", "yêu quái", "yêu ma", "ác ma", "ác quỷ", "ma vương",
+    "ma vật", "nội dung", "hướng dẫn", "giới thiệu", "tóm tắt", "bảo vệ",
+    "tiêu diệt", "giải cứu", "người dân", "dân làng", "bá tánh", "thảo dân",
+    "chương trình", "chiến đấu", "chiến binh", "hiệp sĩ", "lập trình",
+    "quản lý", "giải thích", "khám phá", "vùng đất", "trận chiến", "bộ nhớ",
+    "nữ sinh", "nam sinh", "học sinh", "sinh viên", "thiếu nữ", "cô gái",
+    "cô bé", "cậu bé", "chàng trai", "thành phố", "đô thị", "hiện đại",
+    "thời đại", "siêu nhân", "siêu anh", "siêu anh hùng", "phép thuật",
+    "thẻ bài", "thu phục", "biến hình", "phong ấn", "thế giới", "dị giới",
+    "cổ trang", "tiên hiệp", "kiếm hiệp", "nhân vật", "câu chuyện", "bộ phim",
+    "tập phim", "trò chơi",
 }
 _LATIN_STOPWORDS = _BOUNDARY_STOPWORDS | {
-    "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "nội", "dung", "phần", "bài",
-    "chương", "cách", "trận", "chiến", "khám", "phá", "vùng", "đất", "lập", "trình",
-    "quản", "lý", "bộ", "nhớ", "giải", "thích", "anh", "hùng", "dũng", "sĩ", "quái",
-    "vật", "yêu", "ma", "vương", "người", "dân", "làng", "tiêu", "diệt", "bảo", "vệ",
-    "cứu", "bạn", "tôi", "ta", "ngươi", "viên", "overview", "summary", "introduction",
-    "tutorial", "guide", "episode", "part", "chapter", "don", "doesn", "didn", "won",
-    "can", "isn", "aren", "wasn", "weren",
+    "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "phần", "bài", "chương",
+    "cách", "trận", "khám", "phá", "vùng", "đất", "lập", "trình", "quản",
+    "bộ", "nhớ", "giải", "quái", "vật", "yêu", "ma", "người", "dân", "làng",
+    "tiêu", "diệt", "vệ", "cứu", "bạn", "tôi", "ta", "ngươi", "viên", "nữ",
+    "học", "sinh", "thiếu", "cô", "siêu", "phố", "hiện", "thẻ", "phép",
+    "thuật", "overview", "summary", "introduction", "tutorial", "guide",
+    "episode", "part", "chapter", "don", "doesn", "didn", "won", "can",
+    "isn", "aren", "wasn", "weren",
 }
 
 _TECH_DOMAINS = {
@@ -92,6 +104,53 @@ _FANTASY_STRICT_TRIGGERS = (
 
 _FANTASY_BROAD_TRIGGERS = _FANTASY_STRICT_TRIGGERS + (
     "anh hùng", "chiến binh", "hiệp sĩ", "hero", "heroes", "warrior", "knight", "fantasy",
+)
+
+_MAGICAL_GIRL_STRICT_TRIGGERS = (
+    "sailor moon", "thủy thủ mặt trăng", "cardcaptor", "thủ lĩnh thẻ bài",
+    "thẻ bài phép thuật", "thẻ bài clow", "clow card", "sakura card",
+    "magical girl", "mahou shoujo", "precure", "pretty cure", "madoka",
+    "thiếu nữ phép thuật", "nữ sinh phép thuật", "cô gái phép thuật",
+    "セーラームーン", "カードキャプター", "魔法少女", "プリキュア",
+    "마법소녀", "세일러문", "카드캡터",
+)
+
+_MAGICAL_GIRL_SUBJECT_HINTS = (
+    "sakura", "usagi", "thủy thủ", "nữ sinh", "thiếu nữ", "cô bé",
+    "さくら", "うさぎ", "女子高生",
+)
+
+_MAGICAL_GIRL_ACTION_HINTS = (
+    "quái vật", "yêu ma", "yêu quái", "ác ma", "ác quỷ", "ma vương",
+    "phép thuật", "biến hình", "phong ấn", "thu phục", "thẻ bài", "chiến đấu",
+    "monster", "monsters", "magic", "transform", "seal",
+    "妖魔", "魔物", "怪物", "変身", "封印", "魔法",
+    "요마", "괴물", "마물", "변신", "봉인", "마법",
+)
+
+_MODERN_HERO_STRICT_TRIGGERS = (
+    "siêu nhân", "siêu anh hùng", "kamen rider", "super sentai", "power rangers",
+    "ultraman", "tokusatsu", "quái nhân", "superhero", "superheroes", "avengers",
+    "spider-man", "iron man", "one punch man", "my hero academia",
+    "仮面ライダー", "ウルトラマン", "スーパー戦隊", "戦隊", "怪人",
+    "특촬", "가면라이더", "울트라맨", "슈퍼전대", "히어로", "괴인",
+)
+
+_MODERN_SETTING_HINTS = (
+    "hiện đại", "thời hiện đại", "live action", "live-action", "người đóng",
+    "đô thị", "thành phố", "học đường", "trường học", "học sinh", "sinh viên",
+    "nữ sinh", "nam sinh", "cảnh sát", "quân đội", "khoa học", "công nghệ",
+    "trái đất", "thế giới thực", "biến hình",
+    "modern", "urban", "city", "high school", "school", "student", "police",
+    "military", "sci-fi", "scifi", "earth", "transform",
+    "現代", "都市", "学園", "高校", "警察", "実写", "地球", "変身",
+    "现代", "都市", "学园", "真人",
+    "현대", "도시", "학원", "실사",
+)
+
+_ARCHAIC_WORLD_OVERRIDES = (
+    "cổ trang", "tiên hiệp", "kiếm hiệp", "dị giới", "isekai", "trung cổ",
+    "medieval", "異世界", "이세계", "중세",
 )
 
 _FANTASY_ROLE_GLOSSARY: dict[str, list[str]] = {
@@ -119,6 +178,57 @@ _FANTASY_ROLE_GLOSSARY: dict[str, list[str]] = {
         "Thou", "Thee", "Thy", "Mortal", "Mortals",
         "Foul Beast", "Demon Lord", "Brave Hero", "My Lord", "Villagers",
     ],
+}
+
+_MAGICAL_GIRL_ROLE_GLOSSARY: dict[str, list[str]] = {
+    "vi": [
+        "Ta", "Ngươi", "Các ngươi", "Tớ", "Cậu", "Em", "Chị", "Mọi người",
+        "Biến hình", "Phong ấn", "Thẻ bài", "Phép thuật", "Yêu ma", "Quái vật", "Thủy thủ",
+    ],
+    "ja": [
+        "私", "あたし", "あなた", "あんた", "みんな", "お前",
+        "妖魔", "怪物", "魔物", "魔法少女", "変身", "封印", "カード",
+    ],
+    "zh": [
+        "我", "你", "你们", "大家",
+        "魔法少女", "变身", "封印", "卡牌", "妖魔", "魔物", "怪物",
+    ],
+    "ko": [
+        "나", "너", "너희", "여러분",
+        "마법소녀", "변신", "봉인", "카드", "요마", "괴물", "마물",
+    ],
+    "en": [
+        "You", "Everyone", "Magical Girl", "Transform", "Seal", "Card", "Monster", "Darkness",
+    ],
+}
+
+_MODERN_HERO_ROLE_GLOSSARY: dict[str, list[str]] = {
+    "vi": [
+        "Ta", "Ngươi", "Các ngươi", "Lũ con người",
+        "Tôi", "Chúng tôi", "Mọi người", "Người dân",
+        "Siêu anh hùng", "Chiến binh", "Quái vật", "Quái nhân", "Biến hình",
+    ],
+    "ja": [
+        "お前", "貴様", "俺", "僕", "私", "私たち", "みんな",
+        "市民", "一般人", "ヒーロー", "怪人", "怪物", "変身", "人間ども",
+    ],
+    "zh": [
+        "你", "你们", "我", "我们", "大家", "市民",
+        "英雄", "超级英雄", "怪人", "怪物", "变身", "人类",
+    ],
+    "ko": [
+        "네놈", "너희", "나", "우리", "시민",
+        "히어로", "괴인", "괴물", "변신", "인간들",
+    ],
+    "en": [
+        "You", "We", "Everyone", "Citizens", "Hero", "Superhero", "Monster", "Villain", "Transform",
+    ],
+}
+
+_ROLE_GLOSSARY_BY_ARCHETYPE: dict[str, dict[str, list[str]]] = {
+    "magical_girl": _MAGICAL_GIRL_ROLE_GLOSSARY,
+    "modern_hero": _MODERN_HERO_ROLE_GLOSSARY,
+    "archaic_fantasy": _FANTASY_ROLE_GLOSSARY,
 }
 
 _VI_DIACRITIC_RE = re.compile(
@@ -155,14 +265,42 @@ def _resolve_target_language(video_language: str, summary: str) -> str:
     return "en"
 
 
-def _should_inject_fantasy_role_pronouns(summary_folded: str, domain: str) -> bool:
+def _resolve_combat_archetype(summary_folded: str, domain: str) -> Optional[str]:
     dom_folded = (domain or "").strip().casefold()
-    triggers = (
-        _FANTASY_STRICT_TRIGGERS
-        if dom_folded in _TECH_DOMAINS
-        else _FANTASY_BROAD_TRIGGERS
-    )
-    return any(_term_in_summary(trigger, summary_folded) for trigger in triggers)
+    is_tech_domain = dom_folded in _TECH_DOMAINS
+    combined_folded = f"{summary_folded} {dom_folded}".strip()
+
+    # 1. Magical Girl (Sailor Moon, Cardcaptor Sakura, Precure, Mahou Shoujo)
+    if any(_term_in_summary(t, combined_folded) for t in _MAGICAL_GIRL_STRICT_TRIGGERS):
+        return "magical_girl"
+    if (
+        not is_tech_domain
+        and any(_term_in_summary(s, summary_folded) for s in _MAGICAL_GIRL_SUBJECT_HINTS)
+        and any(_term_in_summary(a, summary_folded) for a in _MAGICAL_GIRL_ACTION_HINTS)
+    ):
+        return "magical_girl"
+
+    # 2. Modern Hero / Live Action / Tokusatsu (Kamen Rider, Super Sentai, Ultraman, Urban Hero)
+    if any(_term_in_summary(t, combined_folded) for t in _MODERN_HERO_STRICT_TRIGGERS):
+        return "modern_hero"
+
+    triggers = _FANTASY_STRICT_TRIGGERS if is_tech_domain else _FANTASY_BROAD_TRIGGERS
+    has_combat_trigger = any(_term_in_summary(t, summary_folded) for t in triggers)
+    if not has_combat_trigger:
+        return None
+
+    has_archaic_override = any(_term_in_summary(a, combined_folded) for a in _ARCHAIC_WORLD_OVERRIDES)
+    has_live_action = _term_in_summary("live action", combined_folded) or _term_in_summary("live-action", combined_folded) or _term_in_summary("実写", combined_folded)
+    if not is_tech_domain and (
+        has_live_action
+        or (
+            not has_archaic_override
+            and any(_term_in_summary(m, combined_folded) for m in _MODERN_SETTING_HINTS)
+        )
+    ):
+        return "modern_hero"
+
+    return "archaic_fantasy"
 
 
 def build_glossary_extraction_prompt(
@@ -317,6 +455,11 @@ def extract_glossary_offline(
     # 5. Capitalized proper nouns & multi-word names (Latin / Vietnamese / English)
     for match in _PROPER_NOUN_RE.finditer(cleaned_summary):
         words = match.group(0).split()
+        next_word_match = _NEXT_LOWER_WORD_RE.match(cleaned_summary[match.end():])
+        if next_word_match and words:
+            next_word = next_word_match.group(1).casefold()
+            if f"{words[-1].casefold()} {next_word}" in _MULTIWORD_STOP_PHRASES:
+                words.pop()
         while words and words[0].casefold() in _BOUNDARY_STOPWORDS:
             words.pop(0)
         while words and words[-1].casefold() in _BOUNDARY_STOPWORDS:
@@ -334,10 +477,12 @@ def extract_glossary_offline(
         if words:
             _add(" ".join(words))
 
-    # 6. Genre / Archetype Role-Hierarchy Pronouns & Honorifics (Hero <-> Monster <-> Villager)
-    if _should_inject_fantasy_role_pronouns(summary_folded, domain):
+    # 6. Genre / Archetype Role-Hierarchy Pronouns & Honorifics (Magical Girl vs Modern/Live-Action vs Archaic Fantasy)
+    archetype = _resolve_combat_archetype(summary_folded, domain)
+    if archetype is not None:
         target_lang = _resolve_target_language(video_language, cleaned_summary)
-        for role_term in _FANTASY_ROLE_GLOSSARY.get(target_lang, []):
+        role_glossary = _ROLE_GLOSSARY_BY_ARCHETYPE.get(archetype, {})
+        for role_term in role_glossary.get(target_lang, []):
             _add_forced(role_term)
 
     return terms[:max_terms]

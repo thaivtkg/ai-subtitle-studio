@@ -307,7 +307,79 @@ fastapi
         self.assertIn("貴様", ja_locale_terms)
         self.assertNotIn("Ngươi", ja_locale_terms)
 
+    def test_extract_glossary_offline_magical_girl_sailor_moon_and_sakura(self):
+        db = GlossaryManager(":memory:")
+        summary = "Nữ sinh Sailor Moon và Sakura chiến đấu với quái vật và thu phục thẻ bài phép thuật"
+
+        vi_terms = extract_glossary_offline(
+            summary,
+            video_language="vi",
+            glossary_manager=db,
+        )
+        for expected in ["Sailor Moon", "Sakura", "Ta", "Ngươi", "Tớ", "Cậu", "Em", "Chị", "Mọi người", "Biến hình", "Phong ấn", "Thẻ bài"]:
+            self.assertIn(expected, vi_terms)
+        for archaic in ["Bổn tọa", "Thảo dân", "Bá tánh", "Dân làng"]:
+            self.assertNotIn(archaic, vi_terms)
+
+        ja_terms = extract_glossary_offline(
+            summary,
+            video_language="ja",
+            glossary_manager=db,
+        )
+        for expected in ["私", "あたし", "あなた", "みんな", "お前", "妖魔", "魔法少女", "変身", "封印"]:
+            self.assertIn(expected, ja_terms)
+        for archaic_or_rough in ["俺様", "我", "勇者様", "村人"]:
+            self.assertNotIn(archaic_or_rough, ja_terms)
+
+    def test_extract_glossary_offline_modern_hero_and_live_action_tokusatsu(self):
+        db = GlossaryManager(":memory:")
+        summary = "Anh hùng chiến đấu với quái vật ở thời hiện đại live action để bảo vệ người dân thành phố cùng Kamen Rider"
+
+        vi_terms = extract_glossary_offline(
+            summary,
+            video_language="vi",
+            glossary_manager=db,
+        )
+        for expected in ["Kamen Rider", "Ta", "Ngươi", "Các ngươi", "Tôi", "Chúng tôi", "Mọi người", "Người dân", "Siêu anh hùng", "Quái nhân", "Biến hình"]:
+            self.assertIn(expected, vi_terms)
+        for archaic in ["Bổn tọa", "Thảo dân", "Bá tánh", "Dân làng"]:
+            self.assertNotIn(archaic, vi_terms)
+
+        ja_terms = extract_glossary_offline(
+            summary,
+            video_language="ja",
+            glossary_manager=db,
+        )
+        for expected in ["お前", "貴様", "俺", "僕", "私", "私たち", "みんな", "市民", "一般人", "ヒーロー", "怪人", "変身"]:
+            self.assertIn(expected, ja_terms)
+        for archaic in ["勇者様", "村人", "私ども"]:
+            self.assertNotIn(archaic, ja_terms)
+
+        en_terms = extract_glossary_offline(
+            summary,
+            video_language="en",
+            glossary_manager=db,
+        )
+        for expected in ["Hero", "Superhero", "Monster", "Villain", "Citizens", "Transform"]:
+            self.assertIn(expected, en_terms)
+        for archaic in ["Thou", "Thee", "Thy", "Villagers"]:
+            self.assertNotIn(archaic, en_terms)
+
+    def test_sakura_without_combat_or_magic_context_does_not_false_trigger_role_glossary(self):
+        db = GlossaryManager(":memory:")
+        summary = "Chuyến đi ngắm hoa Sakura tại Tokyo vào mùa xuân"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="vi",
+            glossary_manager=db,
+        )
+        self.assertIn("Sakura", terms)
+        self.assertIn("Tokyo", terms)
+        for unwanted in ["Ngươi", "Yêu ma", "Phong ấn", "Biến hình", "Bổn tọa"]:
+            self.assertNotIn(unwanted, terms)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
