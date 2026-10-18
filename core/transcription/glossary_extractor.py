@@ -13,7 +13,16 @@ _ISO_LANGUAGE_NAMES = {
     "zh": "Chinese",
 }
 
-_QUOTED_TERM_RE = re.compile(r'[「『【《"\'“‘]([^」』】》"\'”’\r\n]{2,40})[」』】》"\'”’]')
+_QUOTED_TERM_RE = re.compile(
+    r"「([^」\r\n]{2,40})」"
+    r"|『([^』\r\n]{2,40})』"
+    r"|【([^】\r\n]{2,40})】"
+    r"|《([^》\r\n]{2,40})》"
+    r'|"([^"\r\n]{2,40})"'
+    r"|“([^”\r\n]{2,40})”"
+    r"|(?<![A-Za-z0-9])'([^'\r\n]{2,40})'(?![A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9])‘([^’\r\n]{2,40})’(?![A-Za-z0-9])"
+)
 _TECH_TERM_RE = re.compile(
     r"(?<![A-Za-z0-9_/])(?:"
     r"[A-Za-z]+::[A-Za-z_][A-Za-z0-9_]*"
@@ -34,6 +43,7 @@ _LATIN_CHAR = r"A-Za-zÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺ�
 _CAP_WORD = (
     r"[A-ZÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]"
     r"[a-zàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ0-9]*"
+    r"(?![’'][tmdrvll]\b)"
 )
 _PROPER_NOUN_RE = re.compile(
     rf"(?<![{_LATIN_CHAR}]){_CAP_WORD}(?:\s+{_CAP_WORD}){{0,3}}(?![{_LATIN_CHAR}])"
@@ -43,16 +53,116 @@ _CJK_STOPWORDS = {
     "動画", "解説", "紹介", "説明", "今回", "内容", "違い", "方法", "場合", "使用", "利用", "基本", "概要",
     "동영상", "설명", "소개", "영상", "내용", "이번", "방법", "사용",
 }
-_LATIN_STOPWORDS = {
-    "video", "trong", "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "nội", "dung",
-    "phần", "bài", "chương", "cách", "khi", "nếu", "với", "của", "cho", "tại", "về",
-    "các", "những", "một", "này", "đó", "trận", "chiến", "khám", "phá", "vùng", "đất",
-    "cùng", "giữa", "lập", "trình", "quản", "lý", "bộ", "nhớ", "giải", "thích",
-    "the", "this", "that", "these", "those", "in", "on", "at", "for", "with", "from",
-    "by", "about", "into", "through", "after", "before", "between", "under", "over",
-    "how", "what", "why", "when", "where", "who", "overview", "summary", "introduction",
-    "tutorial", "guide", "episode", "part", "chapter", "and", "or",
+_BOUNDARY_STOPWORDS = {
+    "video", "trong", "ngoài", "trên", "dưới", "giữa", "cùng", "với", "của", "cho",
+    "tại", "từ", "đến", "tới", "về", "khi", "nếu", "vì", "do", "bởi", "để", "nhưng",
+    "hoặc", "và", "hay", "các", "những", "một", "này", "đó", "chuyến", "cuộc", "buổi",
+    "gặp", "đi", "the", "an", "this", "that", "these", "those", "in", "on", "at",
+    "to", "for", "with", "from", "by", "about", "into", "through", "after", "before",
+    "between", "under", "over", "how", "what", "why", "when", "where", "who", "it",
+    "he", "she", "we", "you", "they", "let", "there", "here", "and", "or", "but",
 }
+_MULTIWORD_STOP_PHRASES = {
+    "anh hùng", "dũng sĩ", "quái vật", "yêu quái", "ma vương", "nội dung",
+    "hướng dẫn", "giới thiệu", "tóm tắt", "bảo vệ", "người dân", "dân làng",
+    "chương trình", "chiến đấu", "lập trình", "quản lý", "giải thích",
+    "khám phá", "vùng đất", "trận chiến", "bộ nhớ",
+}
+_LATIN_STOPWORDS = _BOUNDARY_STOPWORDS | {
+    "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "nội", "dung", "phần", "bài",
+    "chương", "cách", "trận", "chiến", "khám", "phá", "vùng", "đất", "lập", "trình",
+    "quản", "lý", "bộ", "nhớ", "giải", "thích", "anh", "hùng", "dũng", "sĩ", "quái",
+    "vật", "yêu", "ma", "vương", "người", "dân", "làng", "tiêu", "diệt", "bảo", "vệ",
+    "cứu", "bạn", "tôi", "ta", "ngươi", "viên", "overview", "summary", "introduction",
+    "tutorial", "guide", "episode", "part", "chapter", "don", "doesn", "didn", "won",
+    "can", "isn", "aren", "wasn", "weren",
+}
+
+_TECH_DOMAINS = {
+    "it", "programming", "software", "tech", "medical", "finance", "science", "coding",
+}
+
+_FANTASY_STRICT_TRIGGERS = (
+    "quái vật", "yêu quái", "ma vương", "ma vật", "ác ma", "ác quỷ",
+    "dũng sĩ", "cổ trang", "tiên hiệp", "kiếm hiệp", "dị giới", "isekai",
+    "demon king", "demon lord", "monsters", "monster", "goblin",
+    "勇者", "魔王", "魔物", "怪物", "化け物", "異世界",
+    "용사", "마왕", "괴물", "마물", "이세계",
+)
+
+_FANTASY_BROAD_TRIGGERS = _FANTASY_STRICT_TRIGGERS + (
+    "anh hùng", "chiến binh", "hiệp sĩ", "hero", "heroes", "warrior", "knight", "fantasy",
+)
+
+_FANTASY_ROLE_GLOSSARY: dict[str, list[str]] = {
+    "vi": [
+        "Ta", "Ngươi", "Nhà ngươi", "Các ngươi", "Hắn", "Bổn tọa", "Ngài",
+        "Dũng sĩ", "Anh hùng", "Quái vật", "Yêu quái", "Ma vương",
+        "Dân làng", "Bá tánh", "Thảo dân", "Lũ con người",
+    ],
+    "ja": [
+        "貴様", "お前", "我", "俺様", "俺",
+        "勇者", "魔王", "魔物", "怪物", "化け物",
+        "勇者様", "あなた様", "私ども", "人間ども", "村人",
+    ],
+    "zh": [
+        "本座", "吾", "汝", "尔等",
+        "勇者", "魔王", "魔物", "怪物",
+        "勇者大人", "恩公", "草民", "村民", "人类",
+    ],
+    "ko": [
+        "네놈", "네녀석", "본좌", "짐",
+        "용사", "마왕", "괴물", "마물",
+        "용사님", "은인님", "저희", "마을 사람들", "인간들",
+    ],
+    "en": [
+        "Thou", "Thee", "Thy", "Mortal", "Mortals",
+        "Foul Beast", "Demon Lord", "Brave Hero", "My Lord", "Villagers",
+    ],
+}
+
+_VI_DIACRITIC_RE = re.compile(
+    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+    re.IGNORECASE,
+)
+_JA_HINT_RE = re.compile(
+    r"[\u3040-\u30ff・]|異世界|化け物|貴様|お前|俺様|私ども|人間ども|村人|「[^」]*勇者"
+)
+
+
+def _resolve_target_language(video_language: str, summary: str) -> str:
+    lang = (video_language or "").strip().casefold()
+    lang_base = re.split(r"[-_\s(]", lang)[0] if lang else ""
+    if lang_base in ("vi", "vietnamese"):
+        return "vi"
+    if lang_base in ("ja", "jp", "japanese"):
+        return "ja"
+    if lang_base in ("zh", "cn", "chinese"):
+        return "zh"
+    if lang_base in ("ko", "kr", "korean"):
+        return "ko"
+    if lang_base in ("en", "english"):
+        return "en"
+
+    if _JA_HINT_RE.search(summary):
+        return "ja"
+    if _HANGUL_RE.search(summary):
+        return "ko"
+    if _KANJI_RE.search(summary):
+        return "zh"
+    if _VI_DIACRITIC_RE.search(summary):
+        return "vi"
+    return "en"
+
+
+def _should_inject_fantasy_role_pronouns(summary_folded: str, domain: str) -> bool:
+    dom_folded = (domain or "").strip().casefold()
+    triggers = (
+        _FANTASY_STRICT_TRIGGERS
+        if dom_folded in _TECH_DOMAINS
+        else _FANTASY_BROAD_TRIGGERS
+    )
+    return any(_term_in_summary(trigger, summary_folded) for trigger in triggers)
 
 
 def build_glossary_extraction_prompt(
@@ -70,7 +180,8 @@ def build_glossary_extraction_prompt(
             "Infer the primary spoken language of the video from the summary/context."
         )
     else:
-        lang_name = _ISO_LANGUAGE_NAMES.get(lang.casefold(), lang)
+        lang_base = re.split(r"[-_\s(]", lang.casefold())[0]
+        lang_name = _ISO_LANGUAGE_NAMES.get(lang_base, lang)
         lang_instruction = f"The spoken language of the video is {lang_name}."
 
     dom = (domain or "").strip() or "general"
@@ -141,6 +252,7 @@ def extract_glossary_offline(
 
     seen: set[str] = set()
     terms: list[str] = []
+    summary_folded = cleaned_summary.casefold()
 
     def _add(candidate: str) -> None:
         if len(terms) >= max_terms:
@@ -149,8 +261,19 @@ def extract_glossary_offline(
         if len(val) < 2:
             return
         key = val.casefold()
-        if key in _LATIN_STOPWORDS or val in _CJK_STOPWORDS:
+        if key in _LATIN_STOPWORDS or key in _MULTIWORD_STOP_PHRASES or val in _CJK_STOPWORDS:
             return
+        if key not in seen:
+            seen.add(key)
+            terms.append(val)
+
+    def _add_forced(candidate: str) -> None:
+        if len(terms) >= max_terms:
+            return
+        val = candidate.strip()
+        if len(val) < 1:
+            return
+        key = val.casefold()
         if key not in seen:
             seen.add(key)
             terms.append(val)
@@ -162,7 +285,6 @@ def extract_glossary_offline(
         entries = mgr.list_entries(domain=dom)
         if dom != "general":
             entries.extend(mgr.list_entries(domain="general"))
-        summary_folded = cleaned_summary.casefold()
         for entry in entries:
             src_folded = entry.source_text.casefold()
             tgt_folded = entry.target_text.casefold()
@@ -175,7 +297,9 @@ def extract_glossary_offline(
 
     # 2. Quoted / bracketed entities (「...」, 『...』, 【...】, "...")
     for match in _QUOTED_TERM_RE.finditer(cleaned_summary):
-        _add(match.group(1))
+        quoted = next((g for g in match.groups() if g), "")
+        if quoted:
+            _add(quoted)
 
     # 3. Technical identifiers, CamelCase, acronyms, C++, std::vector, etc.
     for match in _TECH_TERM_RE.finditer(cleaned_summary):
@@ -193,12 +317,28 @@ def extract_glossary_offline(
     # 5. Capitalized proper nouns & multi-word names (Latin / Vietnamese / English)
     for match in _PROPER_NOUN_RE.finditer(cleaned_summary):
         words = match.group(0).split()
-        while words and words[0].casefold() in _LATIN_STOPWORDS:
+        while words and words[0].casefold() in _BOUNDARY_STOPWORDS:
             words.pop(0)
-        while words and words[-1].casefold() in _LATIN_STOPWORDS:
+        while words and words[-1].casefold() in _BOUNDARY_STOPWORDS:
             words.pop()
+        while len(words) >= 2 and " ".join(words[:2]).casefold() in _MULTIWORD_STOP_PHRASES:
+            words = words[2:]
+        while len(words) >= 2 and " ".join(words[-2:]).casefold() in _MULTIWORD_STOP_PHRASES:
+            words = words[:-2]
+        while words and words[0].casefold() in _BOUNDARY_STOPWORDS:
+            words.pop(0)
+        while words and words[-1].casefold() in _BOUNDARY_STOPWORDS:
+            words.pop()
+        if len(words) == 1 and words[0].casefold() in _LATIN_STOPWORDS:
+            continue
         if words:
             _add(" ".join(words))
+
+    # 6. Genre / Archetype Role-Hierarchy Pronouns & Honorifics (Hero <-> Monster <-> Villager)
+    if _should_inject_fantasy_role_pronouns(summary_folded, domain):
+        target_lang = _resolve_target_language(video_language, cleaned_summary)
+        for role_term in _FANTASY_ROLE_GLOSSARY.get(target_lang, []):
+            _add_forced(role_term)
 
     return terms[:max_terms]
 

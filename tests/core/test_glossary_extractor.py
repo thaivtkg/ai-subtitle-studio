@@ -189,6 +189,125 @@ fastapi
         for expected in ["Demacia", "Garen", "Lux", "FastAPI"]:
             self.assertIn(expected, terms)
 
+    def test_extract_glossary_offline_hero_monster_pronouns_vietnamese_and_civilian_roles(self):
+        summary = "Anh hùng chiến đấu với quái vật và ma vương để bảo vệ người dân trong làng"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="vi",
+            domain="general",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        # Combat archaic/hostile pronouns (Ta - Ngươi) instead of modern (Bạn - Tôi)
+        for expected in ["Ta", "Ngươi", "Các ngươi", "Ngài", "Dũng sĩ", "Quái vật", "Ma vương", "Dân làng", "Thảo dân"]:
+            self.assertIn(expected, terms)
+        for modern in ["Bạn", "Tôi", "Anh"]:
+            self.assertNotIn(modern, terms)
+
+    def test_extract_glossary_offline_hero_monster_pronouns_japanese_from_vietnamese_summary(self):
+        summary = "Anh hùng chiến đấu với quái vật giải cứu người dân"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="ja",
+            domain="Fantasy",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        # Japanese role pronouns: Hero/Monster (貴様, お前, 我, 俺様) vs Villager/Hero (勇者様, 私ども, 魔物, 人間ども)
+        for expected in ["貴様", "お前", "我", "俺様", "勇者様", "私ども", "魔物", "怪物", "人間ども", "村人"]:
+            self.assertIn(expected, terms)
+        self.assertNotIn("Ta", terms)
+        self.assertNotIn("Ngươi", terms)
+
+    def test_extract_glossary_offline_hero_monster_pronouns_chinese_and_korean(self):
+        summary = "Dũng sĩ tiêu diệt quái vật cứu dân làng"
+        zh_terms = extract_glossary_offline(
+            summary,
+            video_language="zh",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        for expected in ["本座", "吾", "汝", "尔等", "勇者大人", "草民", "魔物"]:
+            self.assertIn(expected, zh_terms)
+
+        ko_terms = extract_glossary_offline(
+            summary,
+            video_language="ko",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        for expected in ["네놈", "본좌", "용사님", "저희", "괴물", "마물", "인간들"]:
+            self.assertIn(expected, ko_terms)
+
+    def test_extract_glossary_offline_does_not_false_trigger_fantasy_pronouns_on_tech_summary(self):
+        # "chiến đấu" with bugs or "hero4" in an IT tutorial must NOT inject Ta/Ngươi/Ma vương
+        summary = "Lập trình viên chiến đấu với bug trên GoPro Hero4 bằng FastAPI và Docker"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="vi",
+            domain="IT",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        self.assertIn("FastAPI", terms)
+        self.assertIn("Docker", terms)
+        self.assertNotIn("Ngươi", terms)
+        self.assertNotIn("Ma vương", terms)
+        self.assertNotIn("Thảo dân", terms)
+
+    def test_vietnamese_multiword_proper_names_and_places_preserved(self):
+        db = GlossaryManager(":memory:")
+        names = [
+            "Hà Nội",
+            "Nguyễn Văn Dũng",
+            "Lê Văn Anh",
+            "Phạm Minh Vương",
+            "Hùng Vương",
+            "Lý Thường Kiệt",
+            "Nguyễn Thị Dung",
+            "Nguyễn Thị Bảo",
+            "Trần Quốc Chiến",
+            "Thích Nhất Hạnh",
+        ]
+        for name in names:
+            terms = extract_glossary_offline(
+                f"Chuyến đi tới gặp {name} trong video này.",
+                video_language="vi",
+                glossary_manager=db,
+            )
+            self.assertIn(name, terms, f"Expected full proper name '{name}' in {terms}")
+            self.assertNotIn("Chuyến", terms)
+
+    def test_english_contractions_and_possessives_do_not_corrupt_quotes_or_proper_nouns(self):
+        db = GlossaryManager(":memory:")
+        summary = "Don't worry, it's a FastAPI tutorial about Garen's sword and 'Shadowblade'."
+        terms = extract_glossary_offline(
+            summary,
+            video_language="en",
+            glossary_manager=db,
+        )
+        self.assertIn("FastAPI", terms)
+        self.assertIn("Garen", terms)
+        self.assertIn("Shadowblade", terms)
+        self.assertNotIn("t worry, it", terms)
+        self.assertNotIn("Don", terms)
+
+    def test_resolve_target_language_handles_kanji_only_japanese_and_locale_codes(self):
+        db = GlossaryManager(":memory:")
+        # Kanji-only Japanese with Japanese punctuation/triggers under Auto Detect
+        ja_auto_terms = extract_glossary_offline(
+            "「勇者」・魔王・異世界",
+            video_language="Auto Detect",
+            glossary_manager=db,
+        )
+        self.assertIn("貴様", ja_auto_terms)
+        self.assertIn("勇者様", ja_auto_terms)
+
+        # Locale code like "ja-JP" with Vietnamese summary
+        ja_locale_terms = extract_glossary_offline(
+            "Anh hùng diệt quái vật",
+            video_language="ja-JP",
+            glossary_manager=db,
+        )
+        self.assertIn("貴様", ja_locale_terms)
+        self.assertNotIn("Ngươi", ja_locale_terms)
+
 
 if __name__ == "__main__":
     unittest.main()
+

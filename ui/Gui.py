@@ -723,6 +723,9 @@ class MainWindow(QMainWindow):
         self.context_panel.set_language_getter(
             lambda: self.generation_panel.cmb_language.currentText()
         )
+        self.generation_panel.cmb_language.currentTextChanged.connect(
+            self.context_panel.on_video_language_changed
+        )
         self.context_panel.context_committed.connect(
             self.on_transcription_context_committed
         )

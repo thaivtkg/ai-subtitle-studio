@@ -50,6 +50,7 @@ class TranscriptionContextPanel(QWidget):
         self._active_workers: set[_GlossaryExtractionWorker] = set()
         self._last_extracted_key: tuple[str, str, str] | None = None
         self._last_diagnostics_text: str | None = None
+        self._auto_managed_terms: set[str] = set()
 
         self.setStyleSheet(
             f"""
@@ -161,6 +162,12 @@ class TranscriptionContextPanel(QWidget):
     def set_language_getter(self, getter) -> None:
         self._language_getter = getter
 
+    @Slot(str)
+    def on_video_language_changed(self, _language: str = "") -> None:
+        self.auto_glossary_timer.stop()
+        self._reset_extraction_worker()
+        self._extract_glossary_from_summary()
+
     def _update_auto_glossary_button_text(self, *, extracting: bool = False) -> None:
         if extracting and self.btn_auto_glossary.isChecked():
             self.btn_auto_glossary.setText("⏳ Auto Glossary...")
@@ -197,6 +204,9 @@ class TranscriptionContextPanel(QWidget):
             self.auto_glossary_timer.start()
         else:
             self.auto_glossary_timer.stop()
+            self._last_extracted_key = None
+            if self._auto_managed_terms:
+                self._apply_extracted_glossary([])
 
     def _on_summary_or_domain_edited(self) -> None:
         self._schedule_commit()
@@ -253,27 +263,52 @@ class TranscriptionContextPanel(QWidget):
             return
         self._last_extracted_key = getattr(self._extraction_worker, "_request_key", None)
         self._reset_extraction_worker()
-        if not extracted_terms:
+        self._apply_extracted_glossary(extracted_terms)
+
+    def _apply_extracted_glossary(self, extracted_terms: list[str]) -> None:
+        if not extracted_terms and not self._auto_managed_terms:
             self.diagnostics_label.setText(
                 self._last_diagnostics_text or "No glossary terms found in summary"
             )
             return
 
-        existing = [
+        raw_existing = [
             line.strip()
             for line in self.glossary_edit.toPlainText().splitlines()
             if line.strip()
         ]
-        existing_norm = TranscriptionContext(glossary=existing).normalized().glossary
+        existing_all = TranscriptionContext(glossary=raw_existing).normalized().glossary
+        # Keep all manually entered terms, dropping only stale auto-managed terms
+        manual_existing = [
+            term
+            for term in existing_all
+            if term.casefold() not in self._auto_managed_terms
+        ]
+        manual_keys = {term.casefold() for term in manual_existing}
+
         merged = TranscriptionContext(
             context=self.context_edit.toPlainText(),
-            glossary=existing_norm + list(extracted_terms),
+            glossary=manual_existing + list(extracted_terms),
             domain=self.domain_edit.text().strip() or "general",
         ).normalized()
-        added_count = len(merged.glossary) - len(existing_norm)
-        self.diagnostics_label.setText(
-            f"✓ Extracted {len(extracted_terms)} glossary term(s) ({added_count} new)"
-        )
+
+        self._auto_managed_terms = {
+            term.casefold()
+            for term in merged.glossary
+            if term.casefold() not in manual_keys
+        }
+        if extracted_terms:
+            existing_all_keys = {term.casefold() for term in existing_all}
+            added_count = sum(
+                1 for term in merged.glossary if term.casefold() not in existing_all_keys
+            )
+            self.diagnostics_label.setText(
+                f"✓ Extracted {len(extracted_terms)} glossary term(s) ({added_count} new)"
+            )
+        else:
+            self.diagnostics_label.setText(
+                self._last_diagnostics_text or "No glossary terms found in summary"
+            )
 
         self.debounce_timer.stop()
         blocker = QSignalBlocker(self.glossary_edit)
@@ -318,6 +353,7 @@ class TranscriptionContextPanel(QWidget):
         self.auto_glossary_timer.stop()
         self._last_extracted_key = None
         self._last_diagnostics_text = None
+        self._auto_managed_terms.clear()
         self._reset_extraction_worker()
         blockers = (
             QSignalBlocker(self.context_edit),

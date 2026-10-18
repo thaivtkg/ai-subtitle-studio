@@ -309,6 +309,93 @@ class TestTranscriptionContextUI(unittest.TestCase):
         self.assertNotIn("⚠", panel.diagnostics_label.text())
         self.assertIn("0/0 glossary · ~6/180 tokens", panel.diagnostics_label.text())
 
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_switching_video_language_replaces_stale_auto_terms_and_keeps_manual_terms(self):
+        current_lang = "vi"
+        panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(25)
+        panel.debounce_timer.setInterval(20)
+        panel.set_language_getter(lambda: current_lang)
+
+        # User manually adds a custom character name first
+        panel.glossary_edit.setPlainText("Artorias")
+        panel.context_edit.setPlainText(
+            "Anh hùng chiến đấu với quái vật giải cứu người dân"
+        )
+
+        for _ in range(40):
+            if "Ngươi" in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(25)
+
+        vi_lines = panel.glossary_edit.toPlainText().splitlines()
+        self.assertIn("Artorias", vi_lines)
+        self.assertIn("Ta", vi_lines)
+        self.assertIn("Ngươi", vi_lines)
+
+        # Now user changes video language from "vi" to "ja"
+        current_lang = "ja"
+        panel.on_video_language_changed("ja")
+
+        for _ in range(40):
+            if "貴様" in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(25)
+
+        ja_lines = panel.glossary_edit.toPlainText().splitlines()
+        self.assertIn("Artorias", ja_lines)
+        self.assertIn("貴様", ja_lines)
+        self.assertIn("勇者様", ja_lines)
+        self.assertNotIn("Ngươi", ja_lines)
+        self.assertNotIn("Thảo dân", ja_lines)
+
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_changing_summary_to_zero_term_or_empty_clears_stale_auto_managed_terms(self):
+        panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(20)
+        panel.debounce_timer.setInterval(20)
+        panel.set_language_getter(lambda: "vi")
+        panel.glossary_edit.setPlainText("ManualTerm")
+        panel.context_edit.setPlainText("Anh hùng chiến đấu với quái vật")
+
+        for _ in range(40):
+            if "Ngươi" in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(25)
+
+        self.assertIn("Ngươi", panel.glossary_edit.toPlainText().splitlines())
+        self.assertIn("ManualTerm", panel.glossary_edit.toPlainText().splitlines())
+
+        # Replace summary with a plain casual sentence yielding 0 glossary terms
+        panel.context_edit.setPlainText("hôm nay trời đẹp quá")
+        for _ in range(40):
+            if "Ngươi" not in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(25)
+
+        self.assertEqual(panel.glossary_edit.toPlainText().splitlines(), ["ManualTerm"])
+
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_on_video_language_changed_triggers_immediately_without_waiting_for_2s_timer(self):
+        current_lang = "vi"
+        panel = TranscriptionContextPanel()
+        # Keep the 2000ms timer long so we prove language change does not wait for it
+        panel.auto_glossary_timer.setInterval(2000)
+        panel.set_language_getter(lambda: current_lang)
+        panel.context_edit.setPlainText("Anh hùng chiến đấu với quái vật")
+
+        current_lang = "ja"
+        panel.on_video_language_changed("ja")
+        self.assertFalse(panel.auto_glossary_timer.isActive())
+
+        for _ in range(25):
+            if "貴様" in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(20)
+
+        self.assertIn("貴様", panel.glossary_edit.toPlainText().splitlines())
+
 
 if __name__ == "__main__":
     unittest.main()
+
