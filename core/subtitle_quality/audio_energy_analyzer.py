@@ -15,6 +15,7 @@ class AudioEnergyAnalyzer:
         if val is None:
             return 0
         if isinstance(val, float):
+            # shortcut: assumes float < 100000 is seconds (Whisper ASR), upgrade if float milliseconds appear
             return int(round(val * 1000)) if val < 100000 else int(round(val))
         if isinstance(val, int):
             return val

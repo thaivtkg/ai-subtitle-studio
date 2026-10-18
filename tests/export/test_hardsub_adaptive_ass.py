@@ -33,3 +33,27 @@ def test_build_multistyle_ass_with_int_ms():
 
     ass_text = _build_multistyle_ass(segments, 1280, 720, placement, global_style)
     assert "Dialogue: 0,0:00:01.50,0:00:03.20,Style_Loud" in ass_text
+
+
+def test_format_ass_timestamp_supports_float_seconds():
+    from core.Backend import _format_ass_timestamp
+    assert _format_ass_timestamp(1.5) == "0:00:01.50"
+    assert _format_ass_timestamp(72.35) == "0:01:12.35"
+    assert _format_ass_timestamp("00:01:12,350") == "0:01:12.35"
+
+
+def test_build_multistyle_ass_custom_font_color_and_fallback_for_named_color():
+    segments = [
+        {"start": 1.5, "end": 3.25, "text": "Testing float", "style_preset": "normal"}
+    ]
+    # Custom valid hex color #00FF88 -> ASS BGR &H0088FF00
+    global_style = {"font_name": "Arial", "font_size": 20, "font_color": "#00FF88"}
+    ass_text = _build_multistyle_ass(segments, 1280, 720, None, global_style)
+    assert "Style: Style_Normal,Arial,20,&H0088FF00" in ass_text
+    assert "Dialogue: 0,0:00:01.50,0:00:03.25,Style_Normal" in ass_text
+
+    # Named color string like "yellow" (6 chars) should safely fall back to &H00FFFFFF
+    global_style_named = {"font_name": "Arial", "font_size": 20, "font_color": "yellow"}
+    ass_named = _build_multistyle_ass(segments, 1280, 720, None, global_style_named)
+    assert "Style: Style_Normal,Arial,20,&H00FFFFFF" in ass_named
+

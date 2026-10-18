@@ -1388,9 +1388,10 @@ class SubtitleGenerationPanel(QWidget):
         sub_editor.all_segments.clear()
         sub_editor.all_segments.extend(segments)
 
+        auto_saved = False
         apply_auto = getattr(win, "_apply_auto_audio_style_if_enabled", None)
         if callable(apply_auto):
-            apply_auto()
+            auto_saved = bool(apply_auto())
 
         sub_editor.render_page()
         provider = getattr(win, "timeline_data_provider", None)
@@ -1398,7 +1399,8 @@ class SubtitleGenerationPanel(QWidget):
             duration_ms = self.video_duration_ms or 3600000
             provider.load_runtime_data(sub_editor.all_segments, duration_ms)
             win.timeline_widget.load_project_data(duration_ms, provider.get_all_segments())
-        sub_editor.save_draft(silent=True)
+        if not auto_saved:
+            sub_editor.save_draft(silent=True)
         self.refresh_history()
         return True
     # ----------------------------------------

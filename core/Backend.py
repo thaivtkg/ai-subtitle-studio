@@ -93,11 +93,8 @@ def _probe_video_resolution(video_path):
 
 
 def _format_ass_timestamp(val) -> str:
-    if isinstance(val, (int, float)):
-        ms = int(val)
-    else:
-        from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
-        ms = AudioEnergyAnalyzer.parse_time_to_ms(val)
+    from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
+    ms = AudioEnergyAnalyzer.parse_time_to_ms(val)
     total_cs = max(0, ms) // 10
     hours, remainder = divmod(total_cs, 360000)
     minutes, centiseconds = divmod(remainder, 6000)
@@ -119,7 +116,7 @@ def _build_multistyle_ass(segments, width, height, placement_state, global_style
 
     def hex_to_ass_color(hex_str: str) -> str:
         hex_clean = str(hex_str).lstrip("#")
-        if len(hex_clean) == 6:
+        if len(hex_clean) == 6 and all(c in "0123456789abcdefABCDEF" for c in hex_clean):
             r, g, b = hex_clean[0:2], hex_clean[2:4], hex_clean[4:6]
             return f"&H00{b}{g}{r}".upper()
         return "&H00FFFFFF"
