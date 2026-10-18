@@ -219,7 +219,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(dialogues) + "\n"
 
 
-def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="white", font_name="Arial", progress_callback=None, log_callback=None, process_callback=None, placement_state=None, video_resolution=None, segments=None):
+def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="white", font_name="Arial", progress_callback=None, log_callback=None, process_callback=None, placement_state=None, video_resolution=None, segments=None, outline_width=2.0):
     base_name, _ = os.path.splitext(output_path)
     final_output_path = f"{base_name}.mp4"
 
@@ -244,7 +244,7 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
             "font_name": font_name,
             "font_size": font_size,
             "font_color": font_color,
-            "outline_width": 2.0,
+            "outline_width": outline_width,
         }
         ass_content = _build_multistyle_ass(
             segments, width, height, placement_state, global_style

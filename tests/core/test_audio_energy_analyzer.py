@@ -135,3 +135,18 @@ def test_string_timestamps_support():
     ]
     analyzed = AudioEnergyAnalyzer.analyze_segments(peaks, segments)
     assert analyzed[0]["style_preset"] == "normal"
+
+
+def test_parse_time_to_ms_supports_float_and_decimal_seconds():
+    # Float seconds
+    assert AudioEnergyAnalyzer.parse_time_to_ms(1.5) == 1500
+    # String float seconds
+    assert AudioEnergyAnalyzer.parse_time_to_ms("1.5") == 1500
+    # Int milliseconds
+    assert AudioEnergyAnalyzer.parse_time_to_ms(1500) == 1500
+    # String int milliseconds
+    assert AudioEnergyAnalyzer.parse_time_to_ms("1500") == 1500
+    # Standard SRT timestamp
+    assert AudioEnergyAnalyzer.parse_time_to_ms("00:00:01,500") == 1500
+    assert AudioEnergyAnalyzer.parse_time_to_ms("00:00:01.500") == 1500
+    assert AudioEnergyAnalyzer.parse_time_to_ms("00:01.500") == 1500

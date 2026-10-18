@@ -2561,6 +2561,7 @@ class MainWindow(QMainWindow):
         self.page_dashboard.quick_progress.setValue(0)
         self.page_dashboard.card_status_val.setText("Processing")
         
+        outline_w = float(getattr(getattr(getattr(self, "video_player", None), "subtitle_overlay", None), "outline_width", 2.0))
         self.worker = HardsubWorker(
             video_path=self.queue_mgr.active_vid,
             srt_path=srt_path,
@@ -2570,6 +2571,7 @@ class MainWindow(QMainWindow):
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2809,6 +2811,7 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
             return
 
+        outline_w = float(getattr(getattr(getattr(self, "video_player", None), "subtitle_overlay", None), "outline_width", 2.0))
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=current_srt,
@@ -2818,6 +2821,7 @@ class MainWindow(QMainWindow):
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2857,6 +2861,7 @@ class MainWindow(QMainWindow):
             return
 
         out_dir = self.page_export.out_edit.text().strip() or self.output_dir
+        outline_w = float(getattr(getattr(getattr(self, "video_player", None), "subtitle_overlay", None), "outline_width", 2.0))
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=shadow_srt,
@@ -2866,6 +2871,7 @@ class MainWindow(QMainWindow):
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -3146,6 +3152,9 @@ class MainWindow(QMainWindow):
         if not chk or not chk.isChecked():
             return
         video_path = getattr(self, "current_vid", None)
+        if not video_path and hasattr(self, "generation_panel"):
+            req = getattr(self.generation_panel.generation_service, "current_request", None)
+            video_path = getattr(req, "video_path", None)
         if not video_path or not os.path.exists(video_path):
             return
         if not getattr(self, "sub_editor", None) or not self.sub_editor.all_segments:
@@ -3155,6 +3164,7 @@ class MainWindow(QMainWindow):
             peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
             AudioEnergyAnalyzer.analyze_segments(peaks, self.sub_editor.all_segments)
             self.sub_editor.render_page()
+            self.sub_editor.save_draft(silent=True)
             Toast.show_toast(self, "⚡ Đã tự động tối ưu Style phụ đề theo năng lượng âm thanh.", duration_ms=3000)
         except Exception as e:
             print(f"[AutoAudioStyle] Lỗi phân tích âm thanh: {e}")

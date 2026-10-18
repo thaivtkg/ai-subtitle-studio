@@ -61,6 +61,6 @@ def test_overlay_renders_normal_preset_by_default(qapp):
 
     resolved = overlay.get_active_resolved_style()
     assert resolved["font_size"] == 20
-    assert resolved["font_color"] == "#FFFFFF"
+    assert resolved["font_color"].upper() == "#FFFFFF"
     assert not resolved.get("bold")
     assert not resolved.get("italic")

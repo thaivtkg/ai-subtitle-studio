@@ -14,18 +14,24 @@ class AudioEnergyAnalyzer:
         """Chuyển đổi mili-giây dạng số hoặc chuỗi thời gian SRT/VTT (HH:MM:SS,mmm) thành ms."""
         if val is None:
             return 0
-        if isinstance(val, (int, float)):
-            return int(val)
+        if isinstance(val, float):
+            return int(round(val * 1000)) if val < 100000 else int(round(val))
+        if isinstance(val, int):
+            return val
         if isinstance(val, str):
             val = val.strip()
-            # Match 00:00:01,000 or 00:00:01.000
-            m = re.match(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$", val)
+            # Match 00:00:01,000 or 00:00:01.000 or 00:01.000
+            m = re.match(r"^(?:(\d+):)?(\d{2}):(\d{2})[,.](\d{3})$", val)
             if m:
-                h, mi, s, ms = map(int, m.groups())
-                return h * 3600000 + mi * 60000 + s * 1000 + ms
-            # Fallback numeric string
+                h, mi, s, ms = m.groups()
+                h_val = int(h) if h is not None else 0
+                return h_val * 3600000 + int(mi) * 60000 + int(s) * 1000 + int(ms)
+            # Fallback numeric string (seconds or ms)
             try:
-                return int(float(val))
+                f = float(val)
+                if "." in val and f < 100000:
+                    return int(round(f * 1000))
+                return int(round(f))
             except ValueError:
                 return 0
         return 0

@@ -13,6 +13,12 @@ def test_resolve_normal():
     assert not s.get("italic")
 
 
+def test_resolve_normal_preserves_custom_font_color():
+    global_s = {"font_name": "Arial", "font_size": 20, "font_color": "#00FF88"}
+    s = StylePresetResolver.resolve_style("normal", global_s)
+    assert s["font_color"] == "#00FF88"
+
+
 def test_resolve_loud():
     global_s = {"font_name": "Segoe UI", "font_size": 20, "outline_width": 2.0}
     s = StylePresetResolver.resolve_style("loud", global_s)

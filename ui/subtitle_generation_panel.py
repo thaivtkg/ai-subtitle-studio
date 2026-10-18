@@ -1388,20 +1388,9 @@ class SubtitleGenerationPanel(QWidget):
         sub_editor.all_segments.clear()
         sub_editor.all_segments.extend(segments)
 
-        page_settings = getattr(win, "page_settings", None)
-        chk = getattr(page_settings, "chk_auto_audio_style", None)
-        if chk and chk.isChecked():
-            req = getattr(self.generation_service, "current_request", None)
-            vid = getattr(req, "video_path", None) or getattr(win, "current_vid", None)
-            if vid and os.path.exists(vid):
-                try:
-                    from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
-                    from ui.toast import Toast
-                    peaks = AudioEnergyAnalyzer.get_peaks_data(vid)
-                    AudioEnergyAnalyzer.analyze_segments(peaks, sub_editor.all_segments)
-                    Toast.show_toast(win, "⚡ Đã tự động tối ưu Style phụ đề theo năng lượng âm thanh.", duration_ms=3000)
-                except Exception as e:
-                    print(f"[AutoAudioStyle] Lỗi phân tích âm thanh: {e}")
+        apply_auto = getattr(win, "_apply_auto_audio_style_if_enabled", None)
+        if callable(apply_auto):
+            apply_auto()
 
         sub_editor.render_page()
         provider = getattr(win, "timeline_data_provider", None)

@@ -46,7 +46,7 @@ class StylePresetResolver:
                 **base,
                 "font_name": font_name,
                 "font_size": base_size,
-                "font_color": "#FFFFFF",
+                "font_color": base.get("font_color", "#FFFFFF"),
                 "outline_width": float(base.get("outline_width", 2.0) or 2.0),
                 "bold": False,
                 "italic": False,
