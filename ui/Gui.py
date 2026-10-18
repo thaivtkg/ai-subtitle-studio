@@ -720,6 +720,9 @@ class MainWindow(QMainWindow):
         add_nav_tab(self.generation_panel, "✨\nGenerate")
         
         self.context_panel = TranscriptionContextPanel(self)
+        self.context_panel.set_language_getter(
+            lambda: self.generation_panel.cmb_language.currentText()
+        )
         self.context_panel.context_committed.connect(
             self.on_transcription_context_committed
         )
