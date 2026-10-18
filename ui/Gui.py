@@ -925,6 +925,7 @@ class MainWindow(QMainWindow):
         tl_tb_layout.addStretch()
 
         for action_btn in (
+            self.sub_editor.reanalyze_audio_style_btn,
             self.sub_editor.fix_overlap_btn,
             self.sub_editor.approve_btn,
             self.sub_editor.save_draft_btn,
