@@ -1,5 +1,3 @@
-import os
-
 from PySide6.QtCore import QSignalBlocker, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -13,7 +11,6 @@ from PySide6.QtWidgets import (
 
 from core.project.transcription_context import TranscriptionContext
 from core.transcription.glossary_extractor import extract_glossary_from_summary
-from core.translation.llm_translation_service import GeminiRESTProvider
 from ui.theme import Theme
 
 
@@ -30,7 +27,7 @@ class _GlossaryExtractionWorker(QThread):
 
     def run(self):
         try:
-            provider = self._provider_factory()
+            provider = self._provider_factory() if self._provider_factory else None
             terms = extract_glossary_from_summary(
                 provider=provider,
                 summary=self._summary,
@@ -47,13 +44,12 @@ class TranscriptionContextPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._llm_provider_factory = lambda: GeminiRESTProvider(
-            api_key=os.environ.get("GEMINI_API_KEY", "")
-        )
+        self._llm_provider_factory = lambda: None
         self._language_getter = lambda: "Auto Detect"
         self._extraction_worker: _GlossaryExtractionWorker | None = None
         self._active_workers: set[_GlossaryExtractionWorker] = set()
         self._last_extracted_key: tuple[str, str, str] | None = None
+        self._last_diagnostics_text: str | None = None
 
         self.setStyleSheet(
             f"""
@@ -122,7 +118,7 @@ class TranscriptionContextPanel(QWidget):
         self.btn_auto_glossary.setChecked(True)
         self.btn_auto_glossary.setCursor(Qt.PointingHandCursor)
         self.btn_auto_glossary.setToolTip(
-            "When ON, automatically extracts terminology 2s after typing video summary"
+            "When ON, automatically extracts terminology offline 2s after typing video summary"
         )
         self.btn_auto_glossary.toggled.connect(self._on_auto_glossary_toggled)
         context_header_row.addWidget(self.btn_auto_glossary)
@@ -189,7 +185,7 @@ class TranscriptionContextPanel(QWidget):
                 self.diagnostics_label.setText(
                     "Auto Glossary: OFF"
                     if not self.btn_auto_glossary.isChecked()
-                    else "Ready"
+                    else (self._last_diagnostics_text or "Ready")
                 )
         self._update_auto_glossary_button_text(extracting=False)
 
@@ -258,7 +254,9 @@ class TranscriptionContextPanel(QWidget):
         self._last_extracted_key = getattr(self._extraction_worker, "_request_key", None)
         self._reset_extraction_worker()
         if not extracted_terms:
-            self.diagnostics_label.setText("⚠ No glossary terms extracted from summary.")
+            self.diagnostics_label.setText(
+                self._last_diagnostics_text or "No glossary terms found in summary"
+            )
             return
 
         existing = [
@@ -319,6 +317,7 @@ class TranscriptionContextPanel(QWidget):
         self.debounce_timer.stop()
         self.auto_glossary_timer.stop()
         self._last_extracted_key = None
+        self._last_diagnostics_text = None
         self._reset_extraction_worker()
         blockers = (
             QSignalBlocker(self.context_edit),
@@ -346,4 +345,5 @@ class TranscriptionContextPanel(QWidget):
             if compiled.context_truncated:
                 warnings.append("Context truncated")
             text += f"\n⚠ {' · '.join(warnings)}"
+        self._last_diagnostics_text = text
         self.diagnostics_label.setText(text)

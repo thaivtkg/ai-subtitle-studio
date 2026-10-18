@@ -270,6 +270,45 @@ class TestTranscriptionContextUI(unittest.TestCase):
         self.assertEqual(panel.btn_auto_glossary.text(), "✨ Auto Glossary: ON")
         self.assertIn("API Key", panel.diagnostics_label.text())
 
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_auto_glossary_works_offline_by_default_without_api_key(self):
+        panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(30)
+        panel.debounce_timer.setInterval(20)
+        panel.context_edit.setPlainText(
+            "Trận chiến tại Demacia giữa Garen, Lux và FastAPI trong「呪術廻戦」"
+        )
+
+        for _ in range(40):
+            if "✓ Extracted" in panel.diagnostics_label.text():
+                break
+            QTest.qWait(25)
+
+        extracted_lines = panel.glossary_edit.toPlainText().splitlines()
+        for expected in ["呪術廻戦", "Demacia", "Garen", "Lux", "FastAPI"]:
+            self.assertIn(expected, extracted_lines)
+        self.assertIn("✓ Extracted", panel.diagnostics_label.text())
+
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_auto_glossary_zero_terms_preserves_compiled_diagnostics_without_warning_icon(self):
+        panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(20)
+        panel.set_llm_provider_factory(lambda: type("EmptyProvider", (), {"translate": lambda self, p: ""})())
+        panel.set_prompt_diagnostics(
+            CompiledPromptContext("Context: hôm nay", 6, 180, 0, 0, False, False)
+        )
+        panel.context_edit.setPlainText("hôm nay trời đẹp")
+        panel.debounce_timer.stop()
+
+        for _ in range(30):
+            if panel._last_extracted_key is not None:
+                break
+            QTest.qWait(25)
+
+        self.assertIsNotNone(panel._last_extracted_key)
+        self.assertNotIn("⚠", panel.diagnostics_label.text())
+        self.assertIn("0/0 glossary · ~6/180 tokens", panel.diagnostics_label.text())
+
 
 if __name__ == "__main__":
     unittest.main()

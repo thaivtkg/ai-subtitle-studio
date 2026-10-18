@@ -1,8 +1,10 @@
 import unittest
 
+from core.database.glossary_manager import GlossaryManager
 from core.transcription.glossary_extractor import (
     build_glossary_extraction_prompt,
     extract_glossary_from_summary,
+    extract_glossary_offline,
     parse_extracted_glossary,
 )
 
@@ -21,6 +23,8 @@ class TestGlossaryExtractor(unittest.TestCase):
     def test_rejects_empty_summary(self):
         with self.assertRaises(ValueError):
             build_glossary_extraction_prompt("   ", video_language="Japanese", domain="IT")
+        with self.assertRaises(ValueError):
+            extract_glossary_offline("   ")
 
     def test_prompt_includes_summary_language_and_domain(self):
         prompt = build_glossary_extraction_prompt(
@@ -102,6 +106,88 @@ fastapi
             domain="IT",
         )
         self.assertIn("The spoken language of the video is Korean", prompt_ko)
+
+    def test_extract_glossary_offline_japanese_kanji_katakana_and_quotes(self):
+        summary = "第1話「呪術廻戦」では、五条悟と宿儺が領域展開「無量空処」やイベントループ、FastAPIについて解説する動画です。"
+        terms = extract_glossary_offline(summary, video_language="ja")
+        for expected in ["呪術廻戦", "無量空処", "五条悟", "宿儺", "領域展開", "イベントループ", "FastAPI"]:
+            self.assertIn(expected, terms)
+        self.assertNotIn("動画", terms)
+        self.assertNotIn("解説", terms)
+
+    def test_extract_glossary_offline_latin_proper_nouns_and_tech_terms(self):
+        summary = (
+            "Trong video này, Nguyễn Văn A hướng dẫn lập trình FastAPI, "
+            "PySide6, C++, std::vector và GraphQL tại Demacia."
+        )
+        terms = extract_glossary_offline(summary, video_language="vi")
+        for expected in ["Nguyễn Văn A", "FastAPI", "PySide6", "C++", "std::vector", "GraphQL", "Demacia"]:
+            self.assertIn(expected, terms)
+        self.assertNotIn("Trong", terms)
+
+    def test_extract_glossary_offline_matches_local_glossary_db(self):
+        db = GlossaryManager(":memory:")
+        db.add_entry("bất đồng bộ", "非同期処理", domain="IT")
+        db.add_entry("vòng lặp sự kiện", "イベントループ", domain="IT")
+
+        summary = "Video hướng dẫn lập trình bất đồng bộ và vòng lặp sự kiện trong Python"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="ja",
+            domain="IT",
+            glossary_manager=db,
+        )
+        self.assertIn("非同期処理", terms)
+        self.assertIn("イベントループ", terms)
+        self.assertIn("Python", terms)
+
+    def test_extract_glossary_offline_db_word_boundary_prevents_substring_false_positives(self):
+        db = GlossaryManager(":memory:")
+        db.add_entry("AI", "人工知能", domain="IT")
+        db.add_entry("IT", "情報技術", domain="IT")
+
+        # "khai" contains "ai", "with" contains "it" -> neither should match!
+        summary = "Video triển khai hệ thống with Docker"
+        terms = extract_glossary_offline(
+            summary,
+            video_language="ja",
+            domain="IT",
+            glossary_manager=db,
+        )
+        self.assertNotIn("人工知能", terms)
+        self.assertNotIn("情報技術", terms)
+        self.assertIn("Docker", terms)
+
+    def test_extract_glossary_offline_korean_hangul_and_max_terms_cap(self):
+        summary = "이 동영상은 인공지능과 딥러닝 모델「트랜스포머」를 설명합니다."
+        terms = extract_glossary_offline(
+            summary,
+            video_language="ko",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        self.assertIn("트랜스포머", terms)
+        self.assertIn("인공지능", terms)
+        self.assertIn("딥러닝", terms)
+        self.assertNotIn("동영상", terms)
+
+        long_summary = " ".join(f"Term{i}Alpha" for i in range(50))
+        capped = extract_glossary_offline(
+            long_summary,
+            glossary_manager=GlossaryManager(":memory:"),
+            max_terms=30,
+        )
+        self.assertEqual(len(capped), 30)
+
+    def test_extract_glossary_from_summary_defaults_to_offline_when_provider_is_none(self):
+        terms = extract_glossary_from_summary(
+            provider=None,
+            summary="Khám phá vùng đất Demacia cùng Garen và Lux với FastAPI",
+            video_language="en",
+            domain="general",
+            glossary_manager=GlossaryManager(":memory:"),
+        )
+        for expected in ["Demacia", "Garen", "Lux", "FastAPI"]:
+            self.assertIn(expected, terms)
 
 
 if __name__ == "__main__":
