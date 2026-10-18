@@ -335,7 +335,7 @@ class SettingsTextClippingContracts(unittest.TestCase):
             for section in page.sections
             for checkbox in section.findChildren(QCheckBox)
         ]
-        self.assertEqual(len(checkboxes), 9)
+        self.assertEqual(len(checkboxes), 10)
         for checkbox in checkboxes:
             with self.subTest(title=checkbox.accessibleName()):
                 self.assertEqual(checkbox.text(), "")

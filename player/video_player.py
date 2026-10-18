@@ -377,8 +377,11 @@ class VideoPlayerWidget(QWidget):
         # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
         for item in subs:
             try:
+                style_preset = None
                 if isinstance(item, tuple) and len(item) >= 4:
                     start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
+                    if len(item) >= 5:
+                        style_preset = item[4]
                 elif isinstance(item, dict):
                     start_ms = parse_ms(item.get('start_ms', 0))
                     end_ms = parse_ms(item.get('end_ms', 0))
@@ -387,17 +390,19 @@ class VideoPlayerWidget(QWidget):
                         end_ms = parse_ms(item.get('end', 0))
                     text = item.get('text', '')
                     stt = item.get('stt', 0)
+                    style_preset = item.get('style_preset')
                 else: 
                     start_ms = item.start.ordinal
                     end_ms = item.end.ordinal
                     text = item.text
                     stt = item.index
+                    style_preset = getattr(item, 'style_preset', None)
 
                 # [FIX BOUNDARY] Đồng nhất ranh giới [start_ms, end_ms)
                 if start_ms <= position < end_ms:
                     # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
                     if text and text != "[ Chưa có nội dung ]":
-                        current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text}
+                        current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text, 'style_preset': style_preset}
                     break
             except Exception:
                 continue
@@ -409,7 +414,8 @@ class VideoPlayerWidget(QWidget):
                 segment_id=stt_val,
                 start_ms=int(current_seg.get('start_ms', 0)),
                 end_ms=int(current_seg.get('end_ms', 0)),
-                text=str(current_seg.get('text', ''))
+                text=str(current_seg.get('text', '')),
+                style_preset=current_seg.get('style_preset'),
             )
             
             visual_time = position

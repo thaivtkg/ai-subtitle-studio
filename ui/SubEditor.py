@@ -352,6 +352,8 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
         self.table.currentCellChanged.connect(self._on_table_current_cell_changed)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
         left_layout.addWidget(self.table, stretch=1)
 
         self.current_editor = CurrentSubtitleEditor(self)
@@ -425,6 +427,12 @@ class SubtitleEditorWidget(QWidget):
         self.save_draft_btn.clicked.connect(lambda: self.save_requested.emit("draft"))
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
+
+        self.reanalyze_audio_style_btn = QPushButton("🔄 Quét lại âm lượng")
+        self.reanalyze_audio_style_btn.setObjectName("btn_secondary")
+        self.reanalyze_audio_style_btn.setProperty("variant", "secondary")
+        self.reanalyze_audio_style_btn.setToolTip("Quét lại Style phụ đề theo năng lượng âm thanh")
+        self.reanalyze_audio_style_btn.clicked.connect(self._on_reanalyze_audio_style_clicked)
         
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(left_panel, stretch=1)
@@ -761,6 +769,18 @@ class SubtitleEditorWidget(QWidget):
                 has_error = any(issue.severity is Severity.ERROR for issue in issues)
                 item_id.setText(f"{'❌' if has_error else '⚠'} {item_id.text()}")
                 item_id.setToolTip("\n".join(f"- {issue.message}" for issue in issues))
+
+            preset = seg.get("style_preset", "normal")
+            if preset == "loud":
+                item_id.setText(f"⚡ {item_id.text()}")
+                item_id.setBackground(QColor(255, 230, 0, 18))
+                tip = (item_id.toolTip() + "\n" if item_id.toolTip() else "") + "Style: Nhấn mạnh (Loud)"
+                item_id.setToolTip(tip.strip())
+            elif preset == "whisper":
+                item_id.setText(f"🤫 {item_id.text()}")
+                tip = (item_id.toolTip() + "\n" if item_id.toolTip() else "") + "Style: Thì thầm (Whisper)"
+                item_id.setToolTip(tip.strip())
+
             self.table.setItem(row, self.COL_STT, item_id)
             self._set_table_item(row, self.COL_START, start_text)
             self._set_table_item(row, self.COL_END, end_text)
@@ -909,6 +929,103 @@ class SubtitleEditorWidget(QWidget):
                 qc_flags = segment.get("metadata", {}).get("qc_flags", [])
                 self.commit_segment.emit(orig, raw_text, prev_orig, next_orig, qc_flags)
 
+    def _get_selected_source_indices(self) -> list[int]:
+        """Lấy danh sách index nguồn (toàn cục) của các hàng đang được chọn trên bảng."""
+        selected_ranges = self.table.selectedRanges()
+        indices = set()
+        for r in selected_ranges:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                idx = self._source_index_for_row(row)
+                if 0 <= idx < len(self.all_segments):
+                    indices.add(idx)
+        return sorted(list(indices))
+
+    def _show_table_context_menu(self, pos):
+        """Menu chuột phải để đổi Style hoặc Quét lại âm lượng cho các dòng đang chọn."""
+        selected_indices = self._get_selected_source_indices()
+        if not selected_indices:
+            row = self.table.rowAt(pos.y())
+            if row >= 0:
+                idx = self._source_index_for_row(row)
+                if 0 <= idx < len(self.all_segments):
+                    selected_indices = [idx]
+        if not selected_indices:
+            return
+
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        style_menu = menu.addMenu("🏷️ Đặt Style")
+        act_normal = style_menu.addAction("Normal (Mặc định)")
+        act_loud = style_menu.addAction("⚡ Loud (Nhấn mạnh)")
+        act_whisper = style_menu.addAction("🤫 Whisper (Thì thầm)")
+
+        menu.addSeparator()
+        act_reanalyze = menu.addAction("🔄 Quét lại âm lượng")
+
+        action = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if action == act_normal:
+            self._set_style_preset_for_indices(selected_indices, "normal")
+        elif action == act_loud:
+            self._set_style_preset_for_indices(selected_indices, "loud")
+        elif action == act_whisper:
+            self._set_style_preset_for_indices(selected_indices, "whisper")
+        elif action == act_reanalyze:
+            self._on_reanalyze_audio_style_clicked(selected_indices)
+
+    def _set_style_preset_for_indices(self, indices: list[int], new_preset: str):
+        """Thay đổi style preset có hỗ trợ hoàn tác Undo/Redo."""
+        from core.subtitle_editing.commands.edit_style_command import EditStyleCommand
+        changes = []
+        for idx in indices:
+            old_p = self.all_segments[idx].get("style_preset", "normal")
+            if old_p != new_preset:
+                changes.append({"index": idx, "old_preset": old_p, "new_preset": new_preset})
+        if not changes:
+            return
+        cmd = EditStyleCommand(changes, self.all_segments)
+        if self.undo_manager:
+            self.undo_manager.push(cmd)
+        else:
+            cmd.redo()
+        self.render_page()
+        self.live_edit_applied.emit(self.all_segments)
+
+    def _on_reanalyze_audio_style_clicked(self, target_indices=None):
+        """Quét lại Style theo năng lượng âm thanh cho nhóm dòng mục tiêu hoặc toàn bộ."""
+        if not target_indices or not isinstance(target_indices, (list, set)):
+            target_indices = self._get_selected_source_indices()
+            if not target_indices:
+                target_indices = list(range(len(self.all_segments)))
+        if not target_indices or not self.all_segments:
+            return
+
+        win = self.window()
+        video_path = getattr(win, "current_vid", None)
+        if not video_path or not os.path.exists(video_path):
+            Toast.show_warning(win, "Chưa có video nguồn để phân tích âm thanh.")
+            return
+
+        try:
+            from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
+            from core.subtitle_editing.commands.edit_style_command import EditStyleCommand
+            peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
+            old_presets = {i: self.all_segments[i].get("style_preset", "normal") for i in target_indices}
+            AudioEnergyAnalyzer.analyze_segments(peaks, self.all_segments, target_indices=target_indices)
+
+            changes = [
+                {"index": i, "old_preset": old_presets[i], "new_preset": self.all_segments[i].get("style_preset", "normal")}
+                for i in target_indices
+                if old_presets[i] != self.all_segments[i].get("style_preset", "normal")
+            ]
+            if changes and self.undo_manager:
+                cmd = EditStyleCommand(changes, self.all_segments)
+                self.undo_manager.push(cmd)
+
+            self.render_page()
+            self.live_edit_applied.emit(self.all_segments)
+            Toast.show_toast(win, f"⚡ Đã cập nhật Style cho {len(target_indices)} dòng phụ đề.", duration_ms=3000)
+        except Exception as e:
+            Toast.show_error(win, f"Lỗi phân tích âm thanh: {e}")
 
     def _on_row_selected(self, row, _column):
         abs_idx = self._source_index_for_row(row)

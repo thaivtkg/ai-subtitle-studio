@@ -30,3 +30,4 @@ class SubtitleRenderInput:
     start_ms: int
     end_ms: int
     text: str
+    style_preset: str | None = None

@@ -931,6 +931,7 @@ class MainWindow(QMainWindow):
         tl_tb_layout.addStretch()
 
         for action_btn in (
+            self.sub_editor.reanalyze_audio_style_btn,
             self.sub_editor.fix_overlap_btn,
             self.sub_editor.approve_btn,
             self.sub_editor.save_draft_btn,
@@ -2566,14 +2567,20 @@ class MainWindow(QMainWindow):
         self.page_dashboard.quick_progress.setValue(0)
         self.page_dashboard.card_status_val.setText("Processing")
         
+        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+        outline_w = float(getattr(overlay, "outline_width", 2.0))
+        font_c = getattr(overlay, "text_color", None)
+        font_color = font_c.name() if font_c else "white"
         self.worker = HardsubWorker(
             video_path=self.queue_mgr.active_vid,
             srt_path=srt_path,
             output_dir=out_dir,
             font_size=self.page_settings.size_spin.value(),
-            font_color="white",
+            font_color=font_color,
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2813,14 +2820,20 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
             return
 
+        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+        outline_w = float(getattr(overlay, "outline_width", 2.0))
+        font_c = getattr(overlay, "text_color", None)
+        font_color = font_c.name() if font_c else "white"
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=current_srt,
             output_dir=self.output_dir,
             font_size=self.page_settings.size_spin.value(),
-            font_color="white",
+            font_color=font_color,
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2860,14 +2873,20 @@ class MainWindow(QMainWindow):
             return
 
         out_dir = self.page_export.out_edit.text().strip() or self.output_dir
+        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+        outline_w = float(getattr(overlay, "outline_width", 2.0))
+        font_c = getattr(overlay, "text_color", None)
+        font_color = font_c.name() if font_c else "white"
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=shadow_srt,
             output_dir=out_dir,
             font_size=self.page_settings.size_spin.value(),
-            font_color="white",
+            font_color=font_color,
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
+            outline_width=outline_w,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -3120,6 +3139,7 @@ class MainWindow(QMainWindow):
     def _load_generated_subtitles_into_ui(self, shadow_srt_path):
         """Reload editor, player and timeline only after a full ASR run completes."""
         self._load_context_subtitles(shadow_srt_path)
+        self._apply_auto_audio_style_if_enabled()
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
@@ -3141,6 +3161,30 @@ class MainWindow(QMainWindow):
             item = self.sub_editor.table.item(last_index, 0)
             if item:
                 self.sub_editor.table.scrollToItem(item)
+
+    def _apply_auto_audio_style_if_enabled(self) -> bool:
+        chk = getattr(getattr(self, "page_settings", None), "chk_auto_audio_style", None)
+        if not chk or not chk.isChecked():
+            return False
+        video_path = getattr(self, "current_vid", None)
+        if not video_path and hasattr(self, "generation_panel"):
+            req = getattr(self.generation_panel.generation_service, "current_request", None)
+            video_path = getattr(req, "video_path", None)
+        if not video_path or not os.path.exists(video_path):
+            return False
+        if not getattr(self, "sub_editor", None) or not self.sub_editor.all_segments:
+            return False
+        try:
+            from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
+            peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
+            AudioEnergyAnalyzer.analyze_segments(peaks, self.sub_editor.all_segments)
+            self.sub_editor.render_page()
+            self.sub_editor.save_draft(silent=True)
+            Toast.show_toast(self, "⚡ Đã tự động tối ưu Style phụ đề theo năng lượng âm thanh.", duration_ms=3000)
+            return True
+        except Exception as e:
+            print(f"[AutoAudioStyle] Lỗi phân tích âm thanh: {e}")
+            return False
 
     def on_hardsub_finished(self, msg, out_video_path):
         from core.artifacts.artifact_types import ArtifactType

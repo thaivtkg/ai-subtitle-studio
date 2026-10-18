@@ -318,6 +318,8 @@ class SettingsCenterPage(QWidget):
         self.text_effect_combo.addItem("Normal (Bình thường)", "normal")
         self.text_effect_combo.addItem("Reveal (Hiện từng chữ)", "reveal")
         self.text_effect_combo.addItem("Highlight (Karaoke)", "highlight")
+        self.chk_auto_audio_style = QCheckBox("Tự động gán Style theo âm lượng sau khi gen sub")
+        self.chk_auto_audio_style.setChecked(False)
         self._add_page((
             self._section(
                 "Kiểu phụ đề",
@@ -329,6 +331,7 @@ class SettingsCenterPage(QWidget):
                     self._row("Hiệu ứng xuất hiện", "Cách phụ đề xuất hiện.", self.appear_combo),
                     self._row("Hiệu ứng biến mất", "Cách phụ đề biến mất.", self.disappear_combo),
                     self._row("Hiệu ứng chữ", "Hiệu ứng áp dụng lên nội dung phụ đề.", self.text_effect_combo),
+                    self._checkbox_row(self.chk_auto_audio_style, "Tự động phân loại Normal, Loud, Whisper dựa trên năng lượng âm thanh."),
                 ),
             ),
         ))
