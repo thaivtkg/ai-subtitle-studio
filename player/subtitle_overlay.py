@@ -93,6 +93,28 @@ class SubtitleOverlay(QLabel):
             self.anim_controller.current_state.reset()
         self.update()
 
+    def get_active_resolved_style(self) -> dict:
+        preset = getattr(self.render_input, "style_preset", None) if self.render_input else None
+        global_s = {
+            "font_name": self.font_family,
+            "font_size": self.font_size,
+            "font_color": self.text_color.name(),
+            "outline_color": self.outline_color.name(),
+            "outline_width": self.outline_width,
+        }
+        from core.subtitle_quality.style_preset_resolver import StylePresetResolver
+        return StylePresetResolver.resolve_style(preset, global_s)
+
+    def get_active_font(self) -> tuple[QFont, QColor, float]:
+        resolved = self.get_active_resolved_style()
+        font = QFont(resolved.get("font_name", self.font_family))
+        font.setPixelSize(int(resolved.get("font_size", self.font_size)))
+        font.setBold(bool(resolved.get("bold", False)))
+        font.setItalic(bool(resolved.get("italic", False)))
+        text_color = QColor(resolved.get("font_color", self.text_color.name()))
+        outline_width = float(resolved.get("outline_width", self.outline_width))
+        return font, text_color, outline_width
+
     def _wrap_text_with_mapping(self, text: str, fm: QFontMetricsF, max_width: float) -> list[VisualLine]:
         """Chia dòng thông minh và bảo toàn 100% chỉ số ký tự gốc (Bao gồm Multi-spaces/Tabs)"""
         visual_lines: list[VisualLine] = []
@@ -157,12 +179,13 @@ class SubtitleOverlay(QLabel):
         if visual_state and (visual_state.animation_state == SubtitleAnimationState.HIDDEN or visual_state.opacity <= 0):
             return None
 
-        fm = QFontMetricsF(self.custom_font)
+        active_font, _, active_outline_width = self.get_active_font()
+        fm = QFontMetricsF(active_font)
         lines = self._wrap_text_with_mapping(self.render_input.text, fm, self.width() * 0.90)
         if not lines:
             return None
 
-        outline = float(self.outline_width)
+        outline = float(active_outline_width)
         line_height = fm.height()
         total_height = line_height * len(lines)
         max_line_width = max(fm.horizontalAdvance(line.text) for line in lines)
@@ -220,25 +243,29 @@ class SubtitleOverlay(QLabel):
         if not layout:
             return
 
+        active_font, active_text_color, active_outline_width = self.get_active_font()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
-        painter.setFont(self.custom_font)
+        painter.setFont(active_font)
 
-        fm = QFontMetricsF(self.custom_font)
+        fm = QFontMetricsF(active_font)
         visual_state = self.anim_controller.calculate_state(self.current_time_ms, self.render_input) if self.anim_controller else None
         if visual_state:
             painter.setOpacity(visual_state.opacity)
-            self._draw_animated(painter, fm, layout, visual_state)
+            self._draw_animated(painter, fm, layout, visual_state, active_text_color, active_outline_width)
         else:
             painter.setOpacity(1.0)
-            self._draw_static(painter, fm, layout)
+            self._draw_static(painter, fm, layout, active_text_color, active_outline_width)
 
-    def _draw_static(self, painter, fm, layout: SubtitleLayout):
+    def _draw_static(self, painter, fm, layout: SubtitleLayout, text_color: QColor | None = None, outline_width: float | None = None):
+        color = text_color if text_color is not None else self.text_color
         for v_line, origin in zip(layout.visual_lines, layout.line_origins):
-            self._draw_text_path(painter, origin.x(), origin.y(), v_line.text, self.text_color)
+            self._draw_text_path(painter, origin.x(), origin.y(), v_line.text, color, outline_width)
 
-    def _draw_animated(self, painter, fm, layout: SubtitleLayout, state):
+    def _draw_animated(self, painter, fm, layout: SubtitleLayout, state, text_color: QColor | None = None, outline_width: float | None = None):
+        color = text_color if text_color is not None else self.text_color
         is_reveal = state.visible_chars != -1
         is_highlight = state.highlight_chars > 0
 
@@ -251,37 +278,38 @@ class SubtitleOverlay(QLabel):
                 if state.visible_chars <= v_line.start_char_idx:
                     pass
                 elif state.visible_chars >= v_line.end_char_idx:
-                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width)
                 else:
                     raw_cut = state.visible_chars - v_line.start_char_idx
                     cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
-                    self._draw_text_path(painter, start_x, current_y, v_line.text[:cut_idx], self.text_color)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text[:cut_idx], color, outline_width)
 
             elif is_highlight:
                 if state.highlight_chars <= v_line.start_char_idx:
-                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width)
                 elif state.highlight_chars >= v_line.end_char_idx:
-                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.highlight_color)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.highlight_color, outline_width)
                 else:
                     raw_cut = state.highlight_chars - v_line.start_char_idx
                     cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
                     hl_part = v_line.text[:cut_idx]
                     norm_part = v_line.text[cut_idx:]
 
-                    self._draw_text_path(painter, start_x, current_y, hl_part, self.highlight_color)
+                    self._draw_text_path(painter, start_x, current_y, hl_part, self.highlight_color, outline_width)
                     offset_x = fm.horizontalAdvance(hl_part)
-                    self._draw_text_path(painter, start_x + offset_x, current_y, norm_part, self.text_color)
+                    self._draw_text_path(painter, start_x + offset_x, current_y, norm_part, color, outline_width)
             else:
-                self._draw_text_path(painter, start_x, current_y, v_line.text, self.text_color)
+                self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width)
 
             current_y += fm.height()
 
-    def _draw_text_path(self, painter, x: float, y: float, text: str, fill_color: QColor):
+    def _draw_text_path(self, painter, x: float, y: float, text: str, fill_color: QColor, outline_width: float | None = None):
         if not text: return
         path = QPainterPath()
         path.addText(x, y, painter.font(), text)
-        if self.outline_width > 0:
-            pen = QPen(self.outline_color, self.outline_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        ow = self.outline_width if outline_width is None else outline_width
+        if ow > 0:
+            pen = QPen(self.outline_color, ow, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
             painter.setPen(pen)
             painter.drawPath(path)
         painter.setPen(Qt.NoPen)
