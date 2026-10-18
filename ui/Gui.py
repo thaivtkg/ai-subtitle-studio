@@ -3114,6 +3114,7 @@ class MainWindow(QMainWindow):
     def _load_generated_subtitles_into_ui(self, shadow_srt_path):
         """Reload editor, player and timeline only after a full ASR run completes."""
         self._load_context_subtitles(shadow_srt_path)
+        self._apply_auto_audio_style_if_enabled()
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
 
@@ -3135,6 +3136,24 @@ class MainWindow(QMainWindow):
             item = self.sub_editor.table.item(last_index, 0)
             if item:
                 self.sub_editor.table.scrollToItem(item)
+
+    def _apply_auto_audio_style_if_enabled(self):
+        chk = getattr(getattr(self, "page_settings", None), "chk_auto_audio_style", None)
+        if not chk or not chk.isChecked():
+            return
+        video_path = getattr(self, "current_vid", None)
+        if not video_path or not os.path.exists(video_path):
+            return
+        if not getattr(self, "sub_editor", None) or not self.sub_editor.all_segments:
+            return
+        try:
+            from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
+            peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
+            AudioEnergyAnalyzer.analyze_segments(peaks, self.sub_editor.all_segments)
+            self.sub_editor.render_page()
+            Toast.show_toast(self, "⚡ Đã tự động tối ưu Style phụ đề theo năng lượng âm thanh.", duration_ms=3000)
+        except Exception as e:
+            print(f"[AutoAudioStyle] Lỗi phân tích âm thanh: {e}")
 
     def on_hardsub_finished(self, msg, out_video_path):
         from core.artifacts.artifact_types import ArtifactType
