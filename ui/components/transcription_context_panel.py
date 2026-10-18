@@ -53,6 +53,7 @@ class TranscriptionContextPanel(QWidget):
         self._language_getter = lambda: "Auto Detect"
         self._extraction_worker: _GlossaryExtractionWorker | None = None
         self._active_workers: set[_GlossaryExtractionWorker] = set()
+        self._last_extracted_key: tuple[str, str, str] | None = None
 
         self.setStyleSheet(
             f"""
@@ -74,7 +75,17 @@ class TranscriptionContextPanel(QWidget):
                 font-size: 11px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{
+            QPushButton#AutoGlossaryToggle:checked {{
+                background-color: {Theme.SURFACE_SOFT};
+                color: {Theme.CYAN};
+                border: 1px solid {Theme.CYAN};
+            }}
+            QPushButton#AutoGlossaryToggle:!checked {{
+                background-color: {Theme.BG_APP};
+                color: {Theme.TEXT_MUTED};
+                border: 1px solid {Theme.BORDER};
+            }}
+            QPushButton:hover, QPushButton#AutoGlossaryToggle:hover {{
                 background-color: {Theme.SURFACE_ELEVATED};
                 border-color: {Theme.CYAN};
             }}
@@ -97,16 +108,23 @@ class TranscriptionContextPanel(QWidget):
         self.debounce_timer.setSingleShot(True)
         self.debounce_timer.setInterval(400)
 
+        self.auto_glossary_timer = QTimer(self)
+        self.auto_glossary_timer.setSingleShot(True)
+        self.auto_glossary_timer.setInterval(2000)
+
         layout = QVBoxLayout(self)
         context_header_row = QHBoxLayout()
         context_header_row.addWidget(QLabel("Transcription Context"))
         context_header_row.addStretch()
-        self.btn_auto_glossary = QPushButton("✨ Auto Glossary")
+        self.btn_auto_glossary = QPushButton("✨ Auto Glossary: ON")
+        self.btn_auto_glossary.setObjectName("AutoGlossaryToggle")
+        self.btn_auto_glossary.setCheckable(True)
+        self.btn_auto_glossary.setChecked(True)
         self.btn_auto_glossary.setCursor(Qt.PointingHandCursor)
         self.btn_auto_glossary.setToolTip(
-            "Extract terminology from summary in the video's spoken language"
+            "When ON, automatically extracts terminology 2s after typing video summary"
         )
-        self.btn_auto_glossary.clicked.connect(self._extract_glossary_from_summary)
+        self.btn_auto_glossary.toggled.connect(self._on_auto_glossary_toggled)
         context_header_row.addWidget(self.btn_auto_glossary)
         layout.addLayout(context_header_row)
         layout.addWidget(self.context_edit)
@@ -135,16 +153,24 @@ class TranscriptionContextPanel(QWidget):
         row.addWidget(QLabel("Prompt diagnostics:"))
         row.addWidget(self.diagnostics_label, stretch=1)
         layout.addLayout(row)
-        self.context_edit.textChanged.connect(self._schedule_commit)
+        self.context_edit.textChanged.connect(self._on_summary_or_domain_edited)
         self.glossary_edit.textChanged.connect(self._schedule_commit)
-        self.domain_edit.textChanged.connect(self._schedule_commit)
+        self.domain_edit.textChanged.connect(self._on_summary_or_domain_edited)
         self.debounce_timer.timeout.connect(self._commit)
+        self.auto_glossary_timer.timeout.connect(self._extract_glossary_from_summary)
 
     def set_llm_provider_factory(self, factory) -> None:
         self._llm_provider_factory = factory
 
     def set_language_getter(self, getter) -> None:
         self._language_getter = getter
+
+    def _update_auto_glossary_button_text(self, *, extracting: bool = False) -> None:
+        if extracting and self.btn_auto_glossary.isChecked():
+            self.btn_auto_glossary.setText("⏳ Auto Glossary...")
+            return
+        state = "ON" if self.btn_auto_glossary.isChecked() else "OFF"
+        self.btn_auto_glossary.setText(f"✨ Auto Glossary: {state}")
 
     def _cleanup_worker(self, worker: _GlossaryExtractionWorker) -> None:
         self._active_workers.discard(worker)
@@ -159,26 +185,53 @@ class TranscriptionContextPanel(QWidget):
                 worker.failed.disconnect(self._on_glossary_extraction_failed)
             except (RuntimeError, TypeError):
                 pass
-        self.btn_auto_glossary.setEnabled(True)
-        self.btn_auto_glossary.setText("✨ Auto Glossary")
+            if self.diagnostics_label.text().startswith("Extracting glossary"):
+                self.diagnostics_label.setText(
+                    "Auto Glossary: OFF"
+                    if not self.btn_auto_glossary.isChecked()
+                    else "Ready"
+                )
+        self._update_auto_glossary_button_text(extracting=False)
+
+    def _schedule_auto_glossary(self) -> None:
+        if not self.btn_auto_glossary.isChecked():
+            self.auto_glossary_timer.stop()
+            return
+        if self.context_edit.toPlainText().strip():
+            self.auto_glossary_timer.start()
+        else:
+            self.auto_glossary_timer.stop()
+
+    def _on_summary_or_domain_edited(self) -> None:
+        self._schedule_commit()
+        self._reset_extraction_worker()
+        self._schedule_auto_glossary()
+
+    def _on_auto_glossary_toggled(self, checked: bool) -> None:
+        self._update_auto_glossary_button_text(extracting=False)
+        if not checked:
+            self.auto_glossary_timer.stop()
+            self._reset_extraction_worker()
+            return
+        self._schedule_auto_glossary()
 
     def _extract_glossary_from_summary(self) -> None:
+        if not self.btn_auto_glossary.isChecked():
+            return
         summary = self.context_edit.toPlainText().strip()
         if not summary:
-            self.diagnostics_label.setText(
-                "⚠ Enter a video summary/context above before generating a glossary."
-            )
-            return
-        if self._extraction_worker is not None and self._extraction_worker.isRunning():
             return
 
         video_language = (
             self._language_getter() if self._language_getter else "Auto Detect"
         ) or "Auto Detect"
         domain = self.domain_edit.text().strip() or "general"
+        request_key = (summary, video_language, domain)
+        if request_key == self._last_extracted_key:
+            return
 
-        self.btn_auto_glossary.setEnabled(False)
-        self.btn_auto_glossary.setText("⏳ Extracting...")
+        self._reset_extraction_worker()
+        self._update_auto_glossary_button_text(extracting=True)
         self.diagnostics_label.setText(f"Extracting glossary ({video_language})...")
 
         worker = _GlossaryExtractionWorker(
@@ -188,6 +241,7 @@ class TranscriptionContextPanel(QWidget):
             domain=domain,
             parent=None,
         )
+        worker._request_key = request_key
         self._active_workers.add(worker)
         self._extraction_worker = worker
         worker.extracted.connect(self._on_glossary_extracted, Qt.QueuedConnection)
@@ -199,8 +253,9 @@ class TranscriptionContextPanel(QWidget):
 
     @Slot(object)
     def _on_glossary_extracted(self, extracted_terms: list[str]) -> None:
-        if self._extraction_worker is None:
+        if self._extraction_worker is None or not self.btn_auto_glossary.isChecked():
             return
+        self._last_extracted_key = getattr(self._extraction_worker, "_request_key", None)
         self._reset_extraction_worker()
         if not extracted_terms:
             self.diagnostics_label.setText("⚠ No glossary terms extracted from summary.")
@@ -262,6 +317,8 @@ class TranscriptionContextPanel(QWidget):
 
     def set_context(self, context: TranscriptionContext) -> None:
         self.debounce_timer.stop()
+        self.auto_glossary_timer.stop()
+        self._last_extracted_key = None
         self._reset_extraction_worker()
         blockers = (
             QSignalBlocker(self.context_edit),

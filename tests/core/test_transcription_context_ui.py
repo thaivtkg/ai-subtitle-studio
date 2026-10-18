@@ -128,39 +128,85 @@ class TestTranscriptionContextUI(unittest.TestCase):
         self.assertIn("Context: configured", panel.context_status_label.text())
 
     @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
-    def test_auto_glossary_button_extracts_terms_and_merges_with_existing_glossary(self):
+    def test_auto_glossary_toggle_defaults_on_and_extracts_after_typing_delay(self):
         class StubProvider:
             def __init__(self):
                 self.last_prompt = None
+                self.call_count = 0
 
             def translate(self, prompt: str) -> str:
                 self.last_prompt = prompt
+                self.call_count += 1
                 return "1. 非同期処理\n2. イベントループ\n3. FastAPI\n4. python"
 
         stub = StubProvider()
         panel = TranscriptionContextPanel()
+        self.assertTrue(panel.btn_auto_glossary.isCheckable())
+        self.assertTrue(panel.btn_auto_glossary.isChecked())
+        self.assertEqual(panel.auto_glossary_timer.interval(), 2000)
+
+        panel.auto_glossary_timer.setInterval(40)
+        panel.debounce_timer.setInterval(20)
         panel.set_llm_provider_factory(lambda: stub)
         panel.set_language_getter(lambda: "ja")
-        panel.context_edit.setPlainText("Video hướng dẫn lập trình bất đồng bộ Python")
         panel.glossary_edit.setPlainText("Python")
         panel.domain_edit.setText("Programming")
-        panel.debounce_timer.stop()
+        panel.context_edit.setPlainText("Video hướng dẫn lập trình bất đồng bộ Python")
 
-        spy = QSignalSpy(panel.context_committed)
-        panel.btn_auto_glossary.click()
+        # Immediately after typing, debounce delay has not elapsed yet
+        self.assertEqual(stub.call_count, 0)
 
         for _ in range(40):
-            if spy.count() > 0:
+            if "✓ Extracted" in panel.diagnostics_label.text():
                 break
             QTest.qWait(25)
-        self.assertEqual(spy.count(), 1)
-        self.assertTrue(panel.btn_auto_glossary.isEnabled())
+
+        self.assertEqual(stub.call_count, 1)
         self.assertIn("Japanese", stub.last_prompt)
         self.assertIn("Programming", stub.last_prompt)
         self.assertIn("✓ Extracted 4 glossary term(s) (3 new)", panel.diagnostics_label.text())
         self.assertEqual(
             panel.glossary_edit.toPlainText().splitlines(),
             ["Python", "非同期処理", "イベントループ", "FastAPI"],
+        )
+
+    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
+    def test_auto_glossary_when_toggled_off_does_not_extract_until_toggled_on(self):
+        calls = 0
+
+        class CountingProvider:
+            def translate(self, prompt: str) -> str:
+                nonlocal calls
+                calls += 1
+                return "Rust\nBorrow Checker"
+
+        panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(40)
+        panel.set_llm_provider_factory(lambda: CountingProvider())
+
+        # Click toggle to turn OFF
+        panel.btn_auto_glossary.click()
+        self.assertFalse(panel.btn_auto_glossary.isChecked())
+        self.assertIn("OFF", panel.btn_auto_glossary.text())
+
+        panel.context_edit.setPlainText("Video giải thích cơ chế quản lý bộ nhớ trong Rust")
+        QTest.qWait(100)
+        self.assertEqual(calls, 0)
+
+        # Click toggle back to ON -> should schedule auto extraction after delay
+        panel.btn_auto_glossary.click()
+        self.assertTrue(panel.btn_auto_glossary.isChecked())
+        self.assertIn("ON", panel.btn_auto_glossary.text())
+
+        for _ in range(40):
+            if calls > 0 and "Rust" in panel.glossary_edit.toPlainText():
+                break
+            QTest.qWait(25)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            panel.glossary_edit.toPlainText().splitlines(),
+            ["Rust", "Borrow Checker"],
         )
 
     @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
@@ -177,18 +223,22 @@ class TestTranscriptionContextUI(unittest.TestCase):
                 return "StaleTermFromProjectA"
 
         panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(20)
         panel.set_llm_provider_factory(lambda: SlowProvider())
         panel.context_edit.setPlainText("Summary of Project A")
         panel.debounce_timer.stop()
 
-        spy = QSignalSpy(panel.context_committed)
-        panel.btn_auto_glossary.click()
-        self.assertTrue(started.wait(timeout=1.0))
-        self.assertFalse(panel.btn_auto_glossary.isEnabled())
+        for _ in range(30):
+            if started.is_set():
+                break
+            QTest.qWait(20)
+        self.assertTrue(started.is_set())
 
+        spy = QSignalSpy(panel.context_committed)
         panel.set_context(TranscriptionContext("Project B", ["ProjectBTerm"]))
-        self.assertTrue(panel.btn_auto_glossary.isEnabled())
-        self.assertEqual(panel.btn_auto_glossary.text(), "✨ Auto Glossary")
+        self.assertFalse(panel.auto_glossary_timer.isActive())
+        self.assertEqual(panel.btn_auto_glossary.text(), "✨ Auto Glossary: ON")
+        self.assertFalse(panel.diagnostics_label.text().startswith("Extracting glossary"))
 
         release.set()
         QTest.qWait(100)
@@ -200,41 +250,24 @@ class TestTranscriptionContextUI(unittest.TestCase):
         )
 
     @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
-    def test_auto_glossary_with_empty_summary_shows_warning_without_calling_provider(self):
-        called = False
-
-        class FailingIfCalledProvider:
-            def translate(self, prompt: str) -> str:
-                nonlocal called
-                called = True
-                return "Term"
-
-        panel = TranscriptionContextPanel()
-        panel.set_llm_provider_factory(lambda: FailingIfCalledProvider())
-        panel.context_edit.setPlainText("   ")
-        panel.btn_auto_glossary.click()
-
-        self.assertFalse(called)
-        self.assertIn("⚠", panel.diagnostics_label.text())
-
-    @unittest.skipIf(TranscriptionContextPanel is None, "UI dependencies unavailable")
     def test_auto_glossary_handles_provider_failure_gracefully(self):
         class ErrorProvider:
             def translate(self, prompt: str) -> str:
                 raise ValueError("API Key is required for Gemini Provider")
 
         panel = TranscriptionContextPanel()
+        panel.auto_glossary_timer.setInterval(30)
         panel.set_llm_provider_factory(lambda: ErrorProvider())
         panel.context_edit.setPlainText("Tóm tắt nội dung video tiếng Nhật")
         panel.debounce_timer.stop()
 
-        panel.btn_auto_glossary.click()
-        for _ in range(20):
-            if panel.btn_auto_glossary.isEnabled() and "API Key" in panel.diagnostics_label.text():
+        for _ in range(30):
+            if "API Key" in panel.diagnostics_label.text():
                 break
-            QTest.qWait(50)
+            QTest.qWait(30)
 
-        self.assertTrue(panel.btn_auto_glossary.isEnabled())
+        self.assertTrue(panel.btn_auto_glossary.isChecked())
+        self.assertEqual(panel.btn_auto_glossary.text(), "✨ Auto Glossary: ON")
         self.assertIn("API Key", panel.diagnostics_label.text())
 
 
