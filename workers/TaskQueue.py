@@ -66,7 +66,7 @@ class HardsubWorker(QThread):
     finished_signal = Signal(str, str)
     error_signal = Signal(str)
 
-    def __init__(self, video_path, srt_path, output_dir, font_size, font_color, font_name, project_state=None):
+    def __init__(self, video_path, srt_path, output_dir, font_size, font_color, font_name, project_state=None, segments=None):
         super().__init__()
         self.video_path = video_path
         self.srt_path = srt_path
@@ -75,6 +75,7 @@ class HardsubWorker(QThread):
         self.font_color = font_color
         self.font_name = font_name
         self.project_state = project_state
+        self.segments = segments
         self._is_cancelled = False
         self.current_process = None
 
@@ -139,7 +140,8 @@ class HardsubWorker(QThread):
                 placement_state=getattr(self.project_state, "subtitle_placement", None),
                 progress_callback=None,
                 log_callback=hardsub_log_handler,
-                process_callback=lambda proc: setattr(self, 'current_process', proc)
+                process_callback=lambda proc: setattr(self, 'current_process', proc),
+                segments=self.segments,
             )
 
             if not self._is_cancelled:

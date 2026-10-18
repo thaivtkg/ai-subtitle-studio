@@ -2569,6 +2569,7 @@ class MainWindow(QMainWindow):
             font_color="white",
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2816,6 +2817,7 @@ class MainWindow(QMainWindow):
             font_color="white",
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
@@ -2863,6 +2865,7 @@ class MainWindow(QMainWindow):
             font_color="white",
             font_name=self.page_settings.font_combo.currentText(),
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
+            segments=getattr(self.sub_editor, "all_segments", None),
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.log_signal.connect(self.append_log)
