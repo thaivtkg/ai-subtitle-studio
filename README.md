@@ -1,4 +1,4 @@
-﻿# 🎬 AI Subtitle Studio
+# 🎬 AI Subtitle Studio
 
 > **Hệ thống Tạo Phụ đề Tự động, Biên tập Dạng sóng âm (Waveform/Timeline) & Render Hardsub Video chuẩn NLE Chuyên nghiệp.**
 
@@ -86,6 +86,17 @@ Phần mềm được thiết kế theo tư duy **Timestamp-First (Timing Draft)
 * 🎬 **Xuất xưởng Đa Định dạng & Render Hardsub GPU/CPU**
   * Xuất file phụ đề mềm: `.srt`, `.vtt`, `.txt`.
   * Kết xuất Hardsub trực tiếp vào video thông qua FFmpeg chạy nền, hiển thị đầy đủ tiến độ, tốc độ render (Speed x) và thời gian dự tính (ETA).
+
+* 🔊 **Phụ đề Thích ứng theo Năng lượng Âm thanh (Audio-Adaptive Subtitle Styles)**
+  * **Phân tích âm thanh không cần chạy lại FFmpeg:** Tận dụng trực tiếp mảng đỉnh sóng (peaks 10ms) của `WaveformService`, tự động nhận diện 3 mức phong cách: **Loud** (nói lớn/hét - font 120%, viền 3.5, vàng rực), **Whisper** (thì thầm - font 85%, viền 1.5, bạc xám, faux-italic) và **Normal** (chuẩn cấu hình gốc).
+  * **Chống nhiễu & Bẫy âm thanh giọng đều:** Ứng dụng thuật toán *Trimmed Mean* loại bỏ 10% đỉnh cao nhất để triệt tiêu tiếng mic pop/click; tích hợp *Flat Audio Trap* tự động gán 100% `Normal` cho các video podcast/bài giảng monotone có độ lệch chuẩn thấp.
+  * **Đồng bộ thời gian thực từ Editor tới Hardsub:** Hiển thị trực quan với huy hiệu `⚡` và `🤫` trên bảng SubEditor, hỗ trợ đổi style nhanh hoặc quét lại âm lượng qua chuột phải (tích hợp đầy đủ `Undo/Redo`). Khi xuất Hardsub, hệ thống tự động sinh kịch bản `.ass` đa kiểu dáng (V4+ Styles) kết xuất đồng bộ chuẩn xác qua libass.
+
+* 🧠 **Tự động Trích xuất Thuật ngữ & Định hướng Đại từ xưng hô Offline (Auto Glossary & Pronoun Biasing)**
+  * **Hoàn toàn Offline (100% Offline by default):** Tự động bóc tách tên riêng và bảng thuật ngữ trực tiếp từ phần tóm tắt video (Summary) vào Whisper context trong bộ nhớ mà không phụ thuộc vào API LLM trả phí.
+  * **Hỗ trợ đa ngôn ngữ chuyên sâu:** Nhận diện ký tự ngoặc trích dẫn Á Đông (`「...」`, `『...』`, `【...】`), danh từ riêng tiếng Việt có dấu, thuật ngữ CamelCase/IT code, Katakana tiếng Nhật và tiếng Hàn Hangul kèm bóc tách trợ từ ngữ pháp.
+  * **Phân loại Archetype nhân vật & Biasing đại từ:** Nhận diện thể loại nhân vật (*Magical Girl, Tokusatsu/Modern Hero, Cổ trang/Tiên hiệp*) để tự động định hướng cách xưng hô chuẩn xác theo vai vế và phong cách tác phẩm.
+  * **Bảo toàn dữ liệu & Chống đơ UI:** Tích hợp bộ đệm thời gian gõ phím (Debounce 2s) chạy trên luồng ngầm `QThread`; tự động thu hồi các từ do máy sinh trước đó nhưng bảo vệ nguyên vẹn 100% thuật ngữ do người dùng tự gõ tay.
 ---
 
 ### Audio Range & Gap Editing
@@ -207,10 +218,17 @@ python -m pip install -r requirements-dev.txt
 
 ### Bước 5: Khởi chạy ứng dụng
 
+**Cách 1: Khởi chạy 1 chạm trên Windows (Khuyến nghị)**  
+Nhấp đúp chuột vào tệp `run.bat` hoặc thực thi trong dòng lệnh để tự động kích hoạt môi trường ảo `.venv`, nạp file `.env` và mở ứng dụng:
+
+```cmd
+run.bat
+```
+
+**Cách 2: Chạy trực tiếp qua Python script**
 
 ```bash
 python main.py
-
 ```
 
 <a id="dong-goi-installer"></a>
