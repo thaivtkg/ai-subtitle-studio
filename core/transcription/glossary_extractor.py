@@ -182,22 +182,29 @@ _FANTASY_ROLE_GLOSSARY: dict[str, list[str]] = {
 
 _MAGICAL_GIRL_ROLE_GLOSSARY: dict[str, list[str]] = {
     "vi": [
-        "Ta", "Ngươi", "Các ngươi", "Tớ", "Cậu", "Em", "Chị", "Mọi người",
-        "Biến hình", "Phong ấn", "Thẻ bài", "Phép thuật", "Yêu ma", "Quái vật", "Thủy thủ",
+        "Tiền bối", "Hậu bối", "Senpai", "Kouhai",
+        "Tớ", "Cậu",
+        "Biến hình", "Phép thuật", "Quái vật",
+        "Em", "Chị", "Mọi người", "Ta", "Ngươi", "Các ngươi",
+        "Phong ấn", "Thẻ bài", "Yêu ma", "Thủy thủ",
     ],
     "ja": [
+        "先輩", "後輩", "お姉さま", "先生",
         "私", "あたし", "あなた", "あんた", "みんな", "お前",
         "妖魔", "怪物", "魔物", "魔法少女", "変身", "封印", "カード",
     ],
     "zh": [
+        "学姐", "学妹", "前辈", "后辈", "老师",
         "我", "你", "你们", "大家",
         "魔法少女", "变身", "封印", "卡牌", "妖魔", "魔物", "怪物",
     ],
     "ko": [
+        "선배", "후배", "선생님", "언니",
         "나", "너", "너희", "여러분",
         "마법소녀", "변신", "봉인", "카드", "요마", "괴물", "마물",
     ],
     "en": [
+        "Senpai", "Kouhai", "Teacher",
         "You", "Everyone", "Magical Girl", "Transform", "Seal", "Card", "Monster", "Darkness",
     ],
 }
@@ -416,7 +423,15 @@ def extract_glossary_offline(
             seen.add(key)
             terms.append(val)
 
-    # 1. Local SQLite GlossaryManager cross-matching
+    # 1. Genre / Archetype Role-Hierarchy Pronouns & Honorifics (Top Priority Prompt Biasing)
+    archetype = _resolve_combat_archetype(summary_folded, domain)
+    if archetype is not None:
+        target_lang = _resolve_target_language(video_language, cleaned_summary)
+        role_glossary = _ROLE_GLOSSARY_BY_ARCHETYPE.get(archetype, {})
+        for role_term in role_glossary.get(target_lang, []):
+            _add_forced(role_term)
+
+    # 2. Local SQLite GlossaryManager cross-matching
     try:
         mgr = glossary_manager if glossary_manager is not None else GlossaryManager()
         dom = (domain or "").strip() or "general"
@@ -433,17 +448,17 @@ def extract_glossary_offline(
     except Exception:
         pass
 
-    # 2. Quoted / bracketed entities (「...」, 『...』, 【...】, "...")
+    # 3. Quoted / bracketed entities (「...」, 『...』, 【...】, "...")
     for match in _QUOTED_TERM_RE.finditer(cleaned_summary):
         quoted = next((g for g in match.groups() if g), "")
         if quoted:
             _add(quoted)
 
-    # 3. Technical identifiers, CamelCase, acronyms, C++, std::vector, etc.
+    # 4. Technical identifiers, CamelCase, acronyms, C++, std::vector, etc.
     for match in _TECH_TERM_RE.finditer(cleaned_summary):
         _add(match.group(0))
 
-    # 4. CJK Katakana loanwords, Kanji compounds & Korean Hangul terms
+    # 5. CJK Katakana loanwords, Kanji compounds & Korean Hangul terms
     for match in _KATAKANA_RE.finditer(cleaned_summary):
         _add(match.group(0))
     for match in _KANJI_RE.finditer(cleaned_summary):
@@ -452,7 +467,7 @@ def extract_glossary_offline(
         stem = _HANGUL_PARTICLE_SUFFIX_RE.sub("", match.group(0))
         _add(stem if len(stem) >= 2 else match.group(0))
 
-    # 5. Capitalized proper nouns & multi-word names (Latin / Vietnamese / English)
+    # 6. Capitalized proper nouns & multi-word names (Latin / Vietnamese / English)
     for match in _PROPER_NOUN_RE.finditer(cleaned_summary):
         words = match.group(0).split()
         next_word_match = _NEXT_LOWER_WORD_RE.match(cleaned_summary[match.end():])
@@ -476,14 +491,6 @@ def extract_glossary_offline(
             continue
         if words:
             _add(" ".join(words))
-
-    # 6. Genre / Archetype Role-Hierarchy Pronouns & Honorifics (Magical Girl vs Modern/Live-Action vs Archaic Fantasy)
-    archetype = _resolve_combat_archetype(summary_folded, domain)
-    if archetype is not None:
-        target_lang = _resolve_target_language(video_language, cleaned_summary)
-        role_glossary = _ROLE_GLOSSARY_BY_ARCHETYPE.get(archetype, {})
-        for role_term in role_glossary.get(target_lang, []):
-            _add_forced(role_term)
 
     return terms[:max_terms]
 
