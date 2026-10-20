@@ -3,10 +3,12 @@ import uuid
 
 
 def _to_ms(value):
-    match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", value.strip())
+    match = re.fullmatch(r"^(?:(\d+):)?(\d{1,2}):(\d{2})[,.](\d{1,3})$", value.strip())
     if not match:
         raise ValueError(f"Invalid SRT timestamp: {value}")
-    h, m, s, ms = map(int, match.groups())
+    h_str, m_str, s_str, ms_str = match.groups()
+    h = int(h_str) if h_str is not None else 0
+    m, s, ms = int(m_str), int(s_str), int(ms_str.ljust(3, '0'))
     return ((h * 60 + m) * 60 + s) * 1000 + ms
 
 

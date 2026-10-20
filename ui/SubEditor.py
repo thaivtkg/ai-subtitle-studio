@@ -57,14 +57,16 @@ def ms_to_time_str(ms: int) -> str:
 
 
 def time_str_to_ms(time_str: str) -> int:
-    """Parse a strict HH:MM:SS,mmm timestamp; return -1 when invalid."""
+    """Parse SRT/VTT timestamp with optional hours and dot/comma decimal; return -1 when invalid."""
     if isinstance(time_str, (int, float)) and not isinstance(time_str, bool):
         return int(time_str)
-    match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", str(time_str).strip())
+    match = re.fullmatch(r"^(?:(\d+):)?(\d{1,2}):(\d{2})[,.](\d{1,3})$", str(time_str).strip())
     if not match:
         return -1
-    h, m, s, ms = map(int, match.groups())
-    if m >= 60 or s >= 60 or ms >= 1000:
+    h_str, m_str, s_str, ms_str = match.groups()
+    h = int(h_str) if h_str is not None else 0
+    m, s, ms = int(m_str), int(s_str), int(ms_str.ljust(3, '0'))
+    if m >= 60 or s >= 60:
         return -1
     return (h * 3600 + m * 60 + s) * 1000 + ms
 

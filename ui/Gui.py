@@ -1983,6 +1983,8 @@ class MainWindow(QMainWindow):
             self.page_settings.font_combo.setCurrentText(s["font_name"])
         if "font_size" in s:
             self.page_settings.size_spin.setValue(s["font_size"])
+        if "auto_audio_style" in s and hasattr(self.page_settings, "chk_auto_audio_style"):
+            self.page_settings.chk_auto_audio_style.setChecked(bool(s["auto_audio_style"]))
 
     def _persist_canonical_setting(self, key, value):
         settings = load_settings()
@@ -3594,20 +3596,13 @@ class MainWindow(QMainWindow):
             "font_size": self.page_settings.size_spin.value(),
             "canonical_auto_save_enabled": self.canonical_save_coordinator.enabled,
             "canonical_auto_save_delay_ms": self.canonical_save_coordinator.delay_ms,
+            "auto_audio_style": getattr(self.page_settings, "chk_auto_audio_style", None).isChecked() if hasattr(self.page_settings, "chk_auto_audio_style") else False,
         })
         save_settings(settings)
         
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)
-            
-        try:
-            import os
-            import subprocess
-            if os.name == 'nt':
-                subprocess.Popen(["taskkill", "/f", "/im", "ffmpeg.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        except OSError:
-            pass
             
         event.accept()
         

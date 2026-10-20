@@ -233,9 +233,9 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
     temp_ass = None
     subtitle_path = srt_path
     is_custom = getattr(placement_state, "mode", "bottom") == "custom"
-    has_multistyle = bool(segments and any(s.get("style_preset") in ("loud", "whisper") for s in segments))
 
-    if segments and (is_custom or has_multistyle):
+
+    if segments:
         width, height = video_resolution or _probe_video_resolution(video_path)
         global_style = {
             "font_name": font_name,

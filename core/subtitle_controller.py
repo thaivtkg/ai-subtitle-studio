@@ -68,6 +68,10 @@ class SubtitleController(QObject):
 
     def sync_position(self, position_ms):
         """Đồng bộ vị trí kim thời gian và phát tín hiệu phụ đề"""
+        try:
+            self.last_ms = int(position_ms)
+        except (ValueError, TypeError):
+            pass
         subs_data = (
             getattr(self, 'subs', None)
             or getattr(self, 'live_data', None)

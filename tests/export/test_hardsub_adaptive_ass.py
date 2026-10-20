@@ -57,3 +57,53 @@ def test_build_multistyle_ass_custom_font_color_and_fallback_for_named_color():
     ass_named = _build_multistyle_ass(segments, 1280, 720, None, global_style_named)
     assert "Style: Style_Normal,Arial,20,&H00FFFFFF" in ass_named
 
+
+def test_burn_hardsub_with_normal_segments_generates_ass_file():
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from core.subtitle_placement import SubtitlePlacementState
+    from core.Backend import burn_hardsub
+
+    class _FakeStdout:
+        def __iter__(self):
+            return iter(())
+        def close(self):
+            return None
+
+    class _FakeProcess:
+        def __init__(self):
+            self.stdout = _FakeStdout()
+            self.returncode = 0
+        def poll(self):
+            return 0
+        def wait(self):
+            return 0
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        video = Path(temp_dir) / "video.mp4"
+        srt = Path(temp_dir) / "sub.srt"
+        output = Path(temp_dir) / "out.mp4"
+        video.write_bytes(b"vid")
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+
+        segments = [{"start": "00:00:00,000", "end": "00:00:01,000", "text": "hi", "style_preset": "normal"}]
+        with patch("core.runtime.runtime_paths.RuntimePaths.get_ffmpeg_exe", return_value="ffmpeg"), \
+                patch("subprocess.Popen", return_value=_FakeProcess()) as mock_popen:
+            burn_hardsub(
+                str(video),
+                str(srt),
+                str(output),
+                font_size=28,
+                font_color="#00FF00",
+                font_name="Arial",
+                placement_state=SubtitlePlacementState(mode="bottom"),
+                segments=segments,
+                video_resolution=(1280, 720)
+            )
+
+        cmd = mock_popen.call_args.args[0]
+        vf = cmd[cmd.index("-vf") + 1]
+        assert ".ass" in vf
+
+

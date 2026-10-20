@@ -27,3 +27,11 @@ def test_update_live_data_supports_tuple_segments():
     controller.sync_position(1500)
 
     assert changes == [(1, 1000, "first")]
+
+
+def test_sync_position_updates_last_ms():
+    controller = SubtitleController()
+    assert controller.last_ms == 0
+    controller.sync_position(3450)
+    assert controller.last_ms == 3450
+
