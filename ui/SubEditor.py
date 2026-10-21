@@ -176,7 +176,7 @@ class CurrentSubtitleEditor(QWidget):
     def setTitle(self, title: str):
         if ":" in title:
             val = title.split(":")[-1].strip()
-            self.lbl_title.setText(val if val != "None" else "#--")
+            self.lbl_title.setText(val if val != "None" else "Current Subtitle: None")
         else:
             self.lbl_title.setText(title)
 

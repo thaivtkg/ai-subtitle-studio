@@ -122,7 +122,7 @@ class SubtitleGenerationService(QObject):
     ) -> None:
         from core.subtitle_generation.range_validation import RangeValidator, ConflictStrategy
         self._ensure_idle()
-        self._range_conflict_strategy = conflict_strategy or ConflictStrategy.REPLACE_OVERLAP
+        self._range_conflict_strategy = conflict_strategy
 
         project = self._require_project()
         self._validate_request_source(request, project)
@@ -742,7 +742,7 @@ class SubtitleGenerationService(QObject):
             
             # PHASE 2: Apply Conflict Strategy before reconciliation
             from core.subtitle_generation.range_validation import ConflictStrategy
-            if getattr(self, "_range_conflict_strategy", ConflictStrategy.REPLACE_OVERLAP) == ConflictStrategy.REPLACE_OVERLAP:
+            if getattr(self, "_range_conflict_strategy", None) == ConflictStrategy.REPLACE_OVERLAP:
                 def is_overlapping(seg, r_start, r_end):
                     try:
                         s_start = int(seg.get("start_ms", 0)) if "start_ms" in seg else int(seg.start_ms)
@@ -782,6 +782,8 @@ class SubtitleGenerationService(QObject):
                 raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact identity changed during range generation.")
             if artifact and artifact.revision != self._range_artifact_revision:
                 raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact revision changed during range generation.")
+            if artifact:
+                self._assert_live_artifact_hash(artifact)
             if artifact and self._range_artifact_hash:
                 if self.artifact_service.content_hash(artifact.path) != self._range_artifact_hash:
                     raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact changed during range generation.")

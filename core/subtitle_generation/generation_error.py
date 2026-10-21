@@ -18,6 +18,6 @@ class GenerationErrorCode(Enum):
 
 class GenerationError(RuntimeError):
     def __init__(self, code: GenerationErrorCode, message: str):
-        super().__init__(f"[{code.name}] {message}")
+        super().__init__(f"{code.value}: {message}")
         self.code = code
         self.message = message

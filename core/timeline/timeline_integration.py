@@ -25,7 +25,9 @@ class TimelineVideoSync:
         self.player.cancel_segment_playback(pause=True)
 
     def play_selected_segment(self):
-        self.player.play_segment(self._selected_range)
+        rng = self._selected_range()
+        if rng:
+            self.player.play_segment(rng[0], rng[1])
 
     def _selected_range(self):
         segment = self.timeline.focused_segment

@@ -12,12 +12,15 @@ class MergeCommand(SubtitleCommand):
         self.original_seg1 = self.data_provider[self.segment_index].copy()
         self.original_seg2 = self.data_provider.pop(self.segment_index + 1)
         self.data_provider[self.segment_index]["end"] = self.original_seg2["end"]
+        if "end_ms" in self.original_seg2:
+            self.data_provider[self.segment_index]["end_ms"] = self.original_seg2["end_ms"]
         
         merged_text = f"{self.original_seg1['text'].strip()} {self.original_seg2['text'].strip()}".strip()
         self.data_provider[self.segment_index]["text"] = merged_text
         
-        merged_original = f"{self.original_seg1.get('original_text', '').strip()} {self.original_seg2.get('original_text', '').strip()}".strip()
-        self.data_provider[self.segment_index]["original_text"] = merged_original
+        if "original_text" in self.original_seg1 or "original_text" in self.original_seg2:
+            merged_original = f"{self.original_seg1.get('original_text', '').strip()} {self.original_seg2.get('original_text', '').strip()}".strip()
+            self.data_provider[self.segment_index]["original_text"] = merged_original
         
         self._renumber_stt()
 

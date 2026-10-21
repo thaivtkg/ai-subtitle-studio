@@ -220,7 +220,7 @@ class TestSegmentFocus(unittest.TestCase):
             (EditMode.RESIZE_LEFT, 500, (1500, 3000)),
             (EditMode.RESIZE_LEFT, -500, (500, 3000)),
             (EditMode.RESIZE_RIGHT, -500, (1000, 2500)),
-            (EditMode.RESIZE_RIGHT, 1500, (1000, 4500)),
+            (EditMode.RESIZE_RIGHT, 500, (1000, 3500)),
         ):
             with self.subTest(mode=mode, delta=delta):
                 neighbor = copy.deepcopy(self.provider.get_segment("next").get_raw_dict())

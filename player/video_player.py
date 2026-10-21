@@ -292,9 +292,11 @@ class VideoPlayerWidget(QWidget):
         else:
             self.player.play()
 
-    def play_segment(self, start_ms: int, end_ms: int):
+    def play_segment(self, start_ms, end_ms=None):
         """Play a specific segment from start_ms to end_ms and pause automatically."""
-        if not 0 <= start_ms < end_ms:
+        if end_ms is None and isinstance(start_ms, (tuple, list)):
+            start_ms, end_ms = start_ms[0], start_ms[1]
+        if start_ms is None or end_ms is None or not (0 <= start_ms < end_ms):
             return
         self.cancel_segment_playback(pause=True)
         self.set_position(start_ms)
@@ -444,17 +446,29 @@ class VideoPlayerWidget(QWidget):
         self.update_time_label()
 
     def set_position(self, position):
+        bounds = getattr(self, "_segment_bounds", None)
+        if bounds and not (bounds[0] <= position < bounds[1]):
+            self.clear_segment_focus()
+        if hasattr(self, 'sub_controller'):
+            if not hasattr(self, 'player') or not getattr(self.player, 'isPlaying', lambda: False)():
+                self._sync_subtitle_position(position)
         self.player.setPosition(position)
         self.position_changed(position)
         # ÉP CẬP NHẬT LABEL NGAY LẬP TỨC ĐỂ HIỂN THỊ REALTIME KHI SCRUBBING
-        self.update_time_label()
+        self.update_time_label(position)
 
     def set_volume(self, volume):
         self.audio_output.setVolume(volume / 100.0)
         self.slider_volume.setToolTip(f"Volume: {volume}%")
 
-    def update_time_label(self):
-        position = self.player.position()
+    def update_time_label(self, position=None):
+        if not hasattr(self, 'lbl_time'):
+            return
+        if position is None:
+            pos = self.player.position()
+            position = pos if isinstance(pos, (int, float)) else 0
+        else:
+            position = position if isinstance(position, (int, float)) else 0
         bounds = getattr(self, "_segment_bounds", None)
         playback_active = getattr(self, "_segment_playback_active", False)
         
@@ -481,6 +495,10 @@ class VideoPlayerWidget(QWidget):
             self.lbl_time.setText(f"{pos_str} / {dur_str}")
             self.lbl_time.setStyleSheet("")
     def format_time(self, ms):
+        try:
+            ms = int(ms)
+        except (TypeError, ValueError):
+            ms = 0
         s = ms // 1000
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
