@@ -10,12 +10,28 @@ class SplitCommand(SubtitleCommand):
         self.new_segment = None
 
     def _split_text_at_midpoint(self, text: str) -> tuple[str, str]:
-        if not text or " " not in text:
+        if not text:
+            return "", ""
+        text = text.strip()
+        if len(text) <= 1:
             return text, ""
         midpoint = len(text) // 2
-        spaces = [index for index, char in enumerate(text) if char == " "]
-        best_space = min(spaces, key=lambda index: abs(index - midpoint))
-        return text[:best_space].strip(), text[best_space:].strip()
+
+        # 1. Ưu tiên dấu cách (space/tab)
+        spaces = [index for index, char in enumerate(text) if char.isspace()]
+        if spaces:
+            best_space = min(spaces, key=lambda index: abs(index - midpoint))
+            return text[:best_space].strip(), text[best_space:].strip()
+
+        # 2. Ưu tiên dấu ngắt câu CJK & quốc tế (tách ngay sau dấu câu)
+        cjk_puncts = "、。，！？!?…;；,"
+        puncts = [index + 1 for index, char in enumerate(text[:-1]) if char in cjk_puncts]
+        if puncts:
+            best_punct = min(puncts, key=lambda index: abs(index - midpoint))
+            return text[:best_punct].strip(), text[best_punct:].strip()
+
+        # 3. Fallback cho chuỗi không dấu cách (tiếng Nhật/Trung): cắt đôi chuỗi
+        return text[:midpoint].strip(), text[midpoint:].strip()
 
     def redo(self):
         if self.original_seg is None:

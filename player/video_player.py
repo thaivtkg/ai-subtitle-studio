@@ -376,6 +376,7 @@ class VideoPlayerWidget(QWidget):
                 except Exception: pass
             return 0
 
+        # shortcut: linear scan over subtitles at 60fps, upgrade to bisect if subtitle count > 2000
         # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
         for item in subs:
             try:

@@ -53,5 +53,18 @@ class TestStructuralCommands(unittest.TestCase):
         self.assertEqual(len(self.segments), 2)
 
 
+    def test_split_cjk_with_punctuation_splits_after_punctuation(self):
+        self.segments = [{"start": 0, "end": 1000, "text": "先輩、助けてください"}]
+        self.manager.push(SplitCommand(0, 500, self.segments))
+        self.assertEqual(self.segments[0]["text"], "先輩、")
+        self.assertEqual(self.segments[1]["text"], "助けてください")
+
+    def test_split_cjk_without_spaces_or_punctuation_splits_at_midpoint(self):
+        self.segments = [{"start": 0, "end": 1000, "text": "美少女戦士セーラームーン"}]
+        self.manager.push(SplitCommand(0, 500, self.segments))
+        self.assertEqual(self.segments[0]["text"], "美少女戦士セ")
+        self.assertEqual(self.segments[1]["text"], "ーラームーン")
+
+
 if __name__ == "__main__":
     unittest.main()
