@@ -198,7 +198,7 @@ class SplitSegmentCommand(TimelineEditCommand):
     def can_execute(self, context=None):
         seg = self.data_provider.get_segment(self.segment_id)
         if not seg: return False
-        return (seg.start_ms + MIN_DURATION_MS) < self.split_ms < (seg.end_ms - MIN_DURATION_MS)
+        return (seg.start_ms + 200) <= self.split_ms <= (seg.end_ms - 200)
 
     def execute(self, context=None):
         if not self._check_artifact(): raise RuntimeError("Lỗi Integrity.")

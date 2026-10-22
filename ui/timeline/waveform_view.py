@@ -16,10 +16,23 @@ class WaveformView(QWidget):
         self.pixels_per_second = 100  # Hệ số Zoom mặc định (100px = 1 giây)
         self.chunk_ms = 10            # Độ phân giải (Đồng bộ với WaveformService)
         self._selected_range_ms = None
+        self.heatmap_enabled = True
 
         # Cờ tối ưu hóa: Báo cho Qt biết ta sẽ tự vẽ toàn bộ nền để tránh vẽ 2 lần (Overdraw)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WA_NoSystemBackground)
+
+    def get_heatmap_color(self, min_peak: float, max_peak: float) -> QColor:
+        if not getattr(self, "heatmap_enabled", True):
+            return QColor(Theme.PRIMARY_PURPLE)
+        amp = (max_peak - min_peak) / 2.0
+        # Peak amplitude: > 0.75 (> -14 dB) is loud (Cam Đỏ), < 0.15 (< -26 dB) is whisper (Xanh Ngọc)
+        if amp >= 0.75:
+            return QColor(239, 68, 68)  # Cam Đỏ
+        elif amp <= 0.15:
+            return QColor(6, 182, 212)  # Xanh Ngọc
+        else:
+            return QColor(16, 185, 129)  # Xanh Lục
 
     def set_data(self, peaks_normalized: np.ndarray, duration_ms: int):
         """Nhận dữ liệu từ WaveformService và render"""
@@ -139,6 +152,7 @@ class WaveformView(QWidget):
                 if max_peak > pixel_peaks[x][1]: pixel_peaks[x][1] = max_peak
 
         for x, (min_peak, max_peak) in pixel_peaks.items():
+            painter.setPen(QPen(self.get_heatmap_color(min_peak, max_peak), 1))
             y_min = int(center_y - (min_peak * half_height))
             y_max = int(center_y - (max_peak * half_height))
             painter.drawLine(x, y_min, x, y_max)

@@ -127,6 +127,8 @@ class VideoPlayerWidget(QWidget):
         # 2. Subtitle Overlay (Lớp trên)
         self.subtitle_overlay = SubtitleOverlay(controller=self.anim_controller)
         self.subtitle_overlay.setStyleSheet("background: transparent;")
+        self.lbl_sub = self.subtitle_overlay
+        self._last_style_preset = None
 
         self.overlay_proxy = self.scene.addWidget(self.subtitle_overlay)
         self.overlay_proxy.setZValue(1)  
@@ -320,6 +322,35 @@ class VideoPlayerWidget(QWidget):
         if not playing:
             self.cancel_segment_playback()
 
+    def _apply_style_preset(self, preset: str):
+        preset_clean = (preset or "normal").lower().strip()
+        if preset_clean == "loud":
+            self.lbl_sub.setStyleSheet("font-weight: bold; font-size: 24px; color: #FFE600;")
+        elif preset_clean == "whisper":
+            self.lbl_sub.setStyleSheet("font-style: italic; font-size: 18px; color: #D0D0D0;")
+        else:
+            self.lbl_sub.setStyleSheet("background: transparent;")
+
+    def set_subtitle_text(self, text: str, style_preset: str = "normal"):
+        preset = (style_preset or "normal").lower().strip()
+        if self._last_style_preset != preset:
+            self._last_style_preset = preset
+            self._apply_style_preset(preset)
+        if text:
+            render_input = SubtitleRenderInput(
+                segment_id=0,
+                start_ms=0,
+                end_ms=999999,
+                text=text,
+                style_preset=preset,
+            )
+            self.subtitle_overlay.update_subtitle(render_input, 0)
+        else:
+            if self._last_style_preset is not None:
+                self._last_style_preset = None
+                self._apply_style_preset("normal")
+            self.subtitle_overlay.clear_subtitle()
+
     def _sync_subtitle_position(self, position):
         # Explicit segment playback keeps user selection stable, including at
         # a touching next-subtitle boundary, before position_changed pauses.
@@ -413,12 +444,16 @@ class VideoPlayerWidget(QWidget):
         # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
         if current_seg:
             stt_val = int(current_seg.get('stt', 0))
+            preset = str(current_seg.get('style_preset') or 'normal').lower().strip()
+            if self._last_style_preset != preset:
+                self._last_style_preset = preset
+                self._apply_style_preset(preset)
             render_input = SubtitleRenderInput(
                 segment_id=stt_val,
                 start_ms=int(current_seg.get('start_ms', 0)),
                 end_ms=int(current_seg.get('end_ms', 0)),
                 text=str(current_seg.get('text', '')),
-                style_preset=current_seg.get('style_preset'),
+                style_preset=preset,
             )
             
             visual_time = position

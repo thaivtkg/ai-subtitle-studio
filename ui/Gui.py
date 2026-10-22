@@ -1559,6 +1559,8 @@ class MainWindow(QMainWindow):
         self.shortcut_split.activated.connect(
             lambda: self.sub_editor.trigger_split(self.video_player.get_current_time_ms())
         )
+        self.shortcut_split_k = QShortcut(QKeySequence("Ctrl+K"), self)
+        self.shortcut_split_k.activated.connect(self.trigger_split_at_playhead)
         self.shortcut_help = QShortcut(QKeySequence("F1"), self)
         self.shortcut_help.setContext(Qt.ApplicationShortcut)
         self.shortcut_help.activated.connect(lambda: self.switch_page(7))
@@ -1678,8 +1680,41 @@ class MainWindow(QMainWindow):
         self.btn_drawer_toggle.move(max(0, x), y)
         self.btn_drawer_toggle.raise_()
 
+    def trigger_split_at_playhead(self):
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, (QTextEdit, QLineEdit)):
+            return
+        if not hasattr(self, "video_player") or not hasattr(self, "sub_editor"):
+            return
+        playhead_ms = self.video_player.get_current_time_ms()
+        self.sub_editor.trigger_split(playhead_ms)
+        if hasattr(self, "timeline_widget") and hasattr(self, "timeline_data_provider"):
+            dur_ms = self.video_player.get_video_duration_ms()
+            self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
+            self.timeline_widget.load_project_data(
+                dur_ms,
+                self.timeline_data_provider.get_all_segments(),
+                getattr(self.timeline_widget.container.waveform, "waveform_data", None)
+            )
+
+    def replay_focused_segment(self):
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, (QTextEdit, QLineEdit)):
+            return
+        idx = getattr(self.sub_editor, "current_index", -1) if hasattr(self, "sub_editor") else -1
+        if 0 <= idx < len(getattr(self.sub_editor, "all_segments", [])):
+            seg = self.sub_editor.all_segments[idx]
+            from ui.SubEditor import time_str_to_ms
+            start_ms = time_str_to_ms(seg.get("start", 0)) if "start" in seg else seg.get("start_ms", 0)
+            end_ms = time_str_to_ms(seg.get("end", 0)) if "end" in seg else seg.get("end_ms", 0)
+            if hasattr(self, "video_player") and self.video_player and end_ms > start_ms:
+                self.video_player.play_segment(start_ms, end_ms)
+                return
+        if hasattr(self, "video_sync") and self.video_sync:
+            self.video_sync.play_selected_segment()
+
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and self.isActiveWindow():
+        if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
             focus_widget = QApplication.focusWidget()
             is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit))
             if event.key() == Qt.Key_Space and not is_typing:
@@ -1688,9 +1723,20 @@ class MainWindow(QMainWindow):
             if event.key() == Qt.Key_Delete and not is_typing:
                 self.sub_editor.trigger_delete()
                 return True
-        if obj == self.centralWidget() and event.type() == QEvent.Resize:
+            if not is_typing:
+                if (event.key() == Qt.Key_X and event.modifiers() == Qt.NoModifier) or \
+                   (event.key() == Qt.Key_K and event.modifiers() == Qt.ControlModifier):
+                    self.trigger_split_at_playhead()
+                    return True
+                if event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
+                    self.replay_focused_segment()
+                    return True
+        if hasattr(self, "centralWidget") and obj == self.centralWidget() and event.type() == QEvent.Resize:
             self._update_drawer_handle_position()
-        return super().eventFilter(obj, event)
+        try:
+            return super().eventFilter(obj, event)
+        except Exception:
+            return False
 
     def create_nav_button(self, text_or_icon, tooltip_or_index, page_index=None):
         if page_index is None:

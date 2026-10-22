@@ -1317,15 +1317,44 @@ class SubtitleEditorWidget(QWidget):
         self.undo_manager.push(MergeCommand(self.current_index, self.all_segments))
 
     def trigger_split(self, playhead_ms: int):
-        if self.current_index < 0 or self.undo_manager is None:
+        if not self.all_segments or self.undo_manager is None:
             return
-        segment = self.all_segments[self.current_index]
-        start_ms = self.time_str_to_ms(segment["start"])
-        end_ms = self.time_str_to_ms(segment["end"])
-        if start_ms < playhead_ms < end_ms:
+
+        def _get_range(seg):
+            s_val = seg.get("start_ms") if "start_ms" in seg else self.time_str_to_ms(seg["start"])
+            e_val = seg.get("end_ms") if "end_ms" in seg else self.time_str_to_ms(seg["end"])
+            return int(s_val), int(e_val)
+
+        target_idx = -1
+        if 0 <= self.current_index < len(self.all_segments):
+            s_ms, e_ms = _get_range(self.all_segments[self.current_index])
+            if s_ms <= playhead_ms < e_ms:
+                target_idx = self.current_index
+
+        if target_idx == -1:
+            for idx, seg in enumerate(self.all_segments):
+                s_ms, e_ms = _get_range(seg)
+                if s_ms <= playhead_ms < e_ms:
+                    target_idx = idx
+                    break
+
+        if target_idx == -1:
+            return
+
+        start_ms, end_ms = _get_range(self.all_segments[target_idx])
+        # shortcut: 200ms boundary guard prevents sub-frame slivers, upgrade to dynamic threshold if fps changes
+        if (playhead_ms - start_ms >= 200) and (end_ms - playhead_ms >= 200):
             self.undo_manager.push(
-                SplitCommand(self.current_index, playhead_ms, self.all_segments)
+                SplitCommand(target_idx, playhead_ms, self.all_segments)
             )
+            new_idx = target_idx + 1
+            if 0 <= new_idx < len(self.all_segments):
+                self.current_index = new_idx
+                new_seg = self.all_segments[new_idx]
+                if getattr(self, "selection_controller", None) and new_seg.get("id"):
+                    self.selection_controller.set_selected_id(new_seg.get("id"))
+                if hasattr(self, "render_page"):
+                    self.render_page()
 
     def nudge_selected_segment(self, delta_ms: int, target: str = "both"):
         if self.current_index < 0:

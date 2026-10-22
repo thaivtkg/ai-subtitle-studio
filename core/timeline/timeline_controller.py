@@ -228,7 +228,7 @@ class TimelineController(QObject):
         elif event.type() == QEvent.KeyPress:
             key = event.key()
             modifiers = event.modifiers()
-            if key == Qt.Key_T:
+            if key in (Qt.Key_T, Qt.Key_X) or (modifiers == Qt.ControlModifier and key == Qt.Key_K):
                 self._trigger_split()
                 return True
             elif key == Qt.Key_M:
@@ -236,6 +236,10 @@ class TimelineController(QObject):
                 return True
             elif key == Qt.Key_Delete:
                 self._trigger_delete()
+                return True
+            elif key == Qt.Key_R and modifiers == Qt.NoModifier:
+                if hasattr(self.ui, "play_segment_requested"):
+                    self.ui.play_segment_requested.emit()
                 return True
         return super().eventFilter(obj, event)
 
