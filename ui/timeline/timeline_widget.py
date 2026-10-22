@@ -372,6 +372,17 @@ class TimelineWidget(QScrollArea):
                 self.setMinimumHeight(self._minimum_height_before_gap)
                 self._minimum_height_before_gap = None
 
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            step = 20 if delta > 0 else -20
+            new_zoom = max(10, min(1000, self.pixels_per_second + step))
+            if new_zoom != self.pixels_per_second:
+                self.set_zoom(new_zoom)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
     def set_zoom(self, pixels_per_second: int):
         self.pixels_per_second = pixels_per_second
         self.container.ruler.set_zoom(pixels_per_second)

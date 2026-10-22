@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QRect,
     QSignalBlocker,
     QSize,
     Qt,
@@ -359,6 +360,11 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
         self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
         self.center_on_screen()
+        screen = QApplication.primaryScreen().availableGeometry() if QApplication.primaryScreen() else QRect(0, 0, 1920, 1080)
+        norm_w, norm_h = 1366, 768
+        norm_x = max(0, (screen.width() - norm_w) // 2)
+        norm_y = max(0, (screen.height() - norm_h) // 2)
+        self._normal_geometry = QRect(norm_x, norm_y, norm_w, norm_h)
         self.setStyleSheet(Theme.get_global_stylesheet())
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.old_pos = QPoint()
@@ -852,6 +858,29 @@ class MainWindow(QMainWindow):
         lbl_tl = QLabel("⏱️ TIMELINE")
         lbl_tl.setProperty("class", "SectionTitle")
         tl_tb_layout.addWidget(lbl_tl, alignment=Qt.AlignVCenter)
+
+        # Timeline Zoom Controls
+        zoom_group = QWidget()
+        zoom_group.setFixedHeight(28)
+        zoom_layout = QHBoxLayout(zoom_group)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setSpacing(2)
+
+        self.btn_zoom_out = QPushButton("🔍-")
+        self.btn_zoom_out.setToolTip("Thu nhỏ Timeline (Ctrl + Cuộn chuột xuống)")
+        self.btn_zoom_out.setFixedSize(28, 24)
+        self.btn_zoom_out.setProperty("class", "nudge_btn")
+        self.btn_zoom_out.clicked.connect(lambda: self.timeline_widget.set_zoom(max(10, self.timeline_widget.pixels_per_second - 20)))
+
+        self.btn_zoom_in = QPushButton("🔍+")
+        self.btn_zoom_in.setToolTip("Phóng to Timeline (Ctrl + Cuộn chuột lên)")
+        self.btn_zoom_in.setFixedSize(28, 24)
+        self.btn_zoom_in.setProperty("class", "nudge_btn")
+        self.btn_zoom_in.clicked.connect(lambda: self.timeline_widget.set_zoom(min(1000, self.timeline_widget.pixels_per_second + 20)))
+
+        zoom_layout.addWidget(self.btn_zoom_out)
+        zoom_layout.addWidget(self.btn_zoom_in)
+        tl_tb_layout.addWidget(zoom_group, alignment=Qt.AlignVCenter)
 
         # Timing Nudge Controls
         nudge_group = QWidget()
@@ -2023,6 +2052,14 @@ class MainWindow(QMainWindow):
     def mouseReleaseEvent(self, event: QMouseEvent):
         self._is_dragging = False
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        pos_y = event.position().toPoint().y() if hasattr(event, "position") else event.pos().y()
+        if event.button() == Qt.LeftButton and pos_y <= 42:
+            self._toggle_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def apply_saved_settings(self):
         s = load_settings()
