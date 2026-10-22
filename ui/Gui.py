@@ -866,15 +866,24 @@ class MainWindow(QMainWindow):
         zoom_layout.setContentsMargins(0, 0, 0, 0)
         zoom_layout.setSpacing(2)
 
-        self.btn_zoom_out = QPushButton("🔍-")
+        zoom_btn_style = """
+            QPushButton {
+                font-size: 14px;
+                font-weight: bold;
+                padding: 0px;
+            }
+        """
+        self.btn_zoom_out = QPushButton("−")
         self.btn_zoom_out.setToolTip("Thu nhỏ Timeline (Ctrl + Cuộn chuột xuống)")
-        self.btn_zoom_out.setFixedSize(28, 24)
+        self.btn_zoom_out.setFixedSize(30, 26)
+        self.btn_zoom_out.setStyleSheet(zoom_btn_style)
         self.btn_zoom_out.setProperty("class", "nudge_btn")
         self.btn_zoom_out.clicked.connect(lambda: self.timeline_widget.set_zoom(max(10, self.timeline_widget.pixels_per_second - 20)))
 
-        self.btn_zoom_in = QPushButton("🔍+")
+        self.btn_zoom_in = QPushButton("+")
         self.btn_zoom_in.setToolTip("Phóng to Timeline (Ctrl + Cuộn chuột lên)")
-        self.btn_zoom_in.setFixedSize(28, 24)
+        self.btn_zoom_in.setFixedSize(30, 26)
+        self.btn_zoom_in.setStyleSheet(zoom_btn_style)
         self.btn_zoom_in.setProperty("class", "nudge_btn")
         self.btn_zoom_in.clicked.connect(lambda: self.timeline_widget.set_zoom(min(1000, self.timeline_widget.pixels_per_second + 20)))
 
