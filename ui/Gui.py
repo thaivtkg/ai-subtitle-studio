@@ -1749,19 +1749,52 @@ class MainWindow(QMainWindow):
         self.btn_drawer_toggle.move(max(0, x), y)
         self.btn_drawer_toggle.raise_()
 
+    def _apply_window_corner_preference(self):
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import c_int, byref
+            # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2, DWMWCP_DONOTROUND = 1
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2
+            DWMWCP_DONOTROUND = 1
+            pref = DWMWCP_DONOTROUND if self.isMaximized() else DWMWCP_ROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                int(self.winId()),
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                byref(c_int(pref)),
+                ctypes.sizeof(c_int),
+            )
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_window_corner_preference()
+
     def _toggle_maximize(self):
         if self.isMaximized():
             self.showNormal()
+            if hasattr(self, "_normal_geometry") and self._normal_geometry.isValid():
+                self.setGeometry(self._normal_geometry)
+            else:
+                self.resize(1366, 768)
+                self.center_on_screen()
             if hasattr(self, "btn_maximize"):
                 self.btn_maximize.setText("🗖")
         else:
+            self._normal_geometry = self.geometry()
             self.showMaximized()
             if hasattr(self, "btn_maximize"):
                 self.btn_maximize.setText("🗗")
+        self._apply_window_corner_preference()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.WindowStateChange and hasattr(self, "btn_maximize"):
-            self.btn_maximize.setText("🗗" if self.isMaximized() else "🗖")
+        if event.type() == QEvent.WindowStateChange:
+            if hasattr(self, "btn_maximize"):
+                self.btn_maximize.setText("🗗" if self.isMaximized() else "🗖")
+            self._apply_window_corner_preference()
         super().changeEvent(event)
 
     def trigger_split_at_playhead(self):

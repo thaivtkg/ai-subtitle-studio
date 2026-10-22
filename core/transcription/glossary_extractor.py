@@ -64,6 +64,11 @@ _BOUNDARY_STOPWORDS = {
     "to", "for", "with", "from", "by", "about", "into", "through", "after", "before",
     "between", "under", "over", "how", "what", "why", "when", "where", "who", "it",
     "he", "she", "we", "you", "they", "let", "there", "here", "and", "or", "but",
+    # Số từ & lượng từ tiếng Việt (không bao gồm tên riêng phổ biến)
+    "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín", "mười",
+    "trăm", "nghìn", "vạn", "đôi", "vài", "mỗi", "từng", "mọi", "nhiều", "ít",
+    # Từ phương vị & vị trí
+    "bề", "mặt", "phía", "bên", "trước", "sau", "đầu", "cuối",
 }
 _MULTIWORD_STOP_PHRASES = {
     "anh hùng", "anh em", "anh trai", "anh chàng", "dũng sĩ", "quái vật",
@@ -77,7 +82,9 @@ _MULTIWORD_STOP_PHRASES = {
     "thời đại", "siêu nhân", "siêu anh", "siêu anh hùng", "phép thuật",
     "thẻ bài", "thu phục", "biến hình", "phong ấn", "thế giới", "dị giới",
     "cổ trang", "tiên hiệp", "kiếm hiệp", "nhân vật", "câu chuyện", "bộ phim",
-    "tập phim", "trò chơi",
+    "tập phim", "trò chơi", "bề ngoài", "bốn người", "bốn năm",
+    "đôi bạn", "đôi bên", "anh ta", "cô ta", "chúng ta", "chúng tôi",
+    "hôm nay", "ngày mai", "hôm qua",
 }
 _LATIN_STOPWORDS = _BOUNDARY_STOPWORDS | {
     "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "phần", "bài", "chương",
@@ -88,6 +95,8 @@ _LATIN_STOPWORDS = _BOUNDARY_STOPWORDS | {
     "thuật", "overview", "summary", "introduction", "tutorial", "guide",
     "episode", "part", "chapter", "don", "doesn", "didn", "won", "can",
     "isn", "aren", "wasn", "weren",
+    # Đại từ xưng hô đơn độc
+    "anh", "chị", "em", "chú", "bác", "họ", "chúng", "nó", "hắn",
 }
 
 _TECH_DOMAINS = {
@@ -487,8 +496,31 @@ def extract_glossary_offline(
             words.pop(0)
         while words and words[-1].casefold() in _BOUNDARY_STOPWORDS:
             words.pop()
-        if len(words) == 1 and words[0].casefold() in _LATIN_STOPWORDS:
-            continue
+        if len(words) == 1:
+            single_word = words[0]
+            if single_word.casefold() in _LATIN_STOPWORDS:
+                continue
+            # Sentence-initial guard: từ 1 chữ đứng đầu câu và theo sau là chữ thường chỉ nhận là tên riêng nếu đã đăng ký hoặc viết hoa giữa câu
+            prefix = cleaned_summary[:match.start()]
+            is_sentence_start = bool(re.search(r"(?:^|[.!?\n\r…])[\s\"'“”‘’«»()[\]]*$", prefix))
+            next_is_lower = bool(_NEXT_LOWER_WORD_RE.match(cleaned_summary[match.end():]))
+            if is_sentence_start and next_is_lower:
+                sw_lower = single_word.casefold()
+                is_known_trigger = (
+                    sw_lower in _MAGICAL_GIRL_STRICT_TRIGGERS
+                    or sw_lower in _FANTASY_BROAD_TRIGGERS
+                    or (glossary_manager is not None and glossary_manager.lookup_term(single_word) is not None)
+                )
+                if not is_known_trigger:
+                    pattern = rf"(?<![{_LATIN_CHAR}]){re.escape(single_word)}(?![{_LATIN_CHAR}])"
+                    has_mid_sentence_cap = False
+                    for occ in re.finditer(pattern, cleaned_summary):
+                        occ_prefix = cleaned_summary[:occ.start()]
+                        if not re.search(r"(?:^|[.!?\n\r…])[\s\"'“”‘’«»()[\]]*$", occ_prefix):
+                            has_mid_sentence_cap = True
+                            break
+                    if not has_mid_sentence_cap:
+                        continue
         if words:
             _add(" ".join(words))
 

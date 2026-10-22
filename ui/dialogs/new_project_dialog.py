@@ -44,7 +44,7 @@ class NewProjectDialog(QDialog):
         
         # [VỊ TRÍ 2] Ép độ rộng 110px cho nút Chọn Thư mục
         btn_browse_dir = QPushButton("Chọn Thư mục...")
-        btn_browse_dir.setFixedWidth(110)
+        btn_browse_dir.setMinimumWidth(130)
         btn_browse_dir.setObjectName("btn_secondary")
         btn_browse_dir.clicked.connect(self._browse_dir)
         
