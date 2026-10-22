@@ -10,7 +10,7 @@ class WaveformView(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(100)  # Chiều cao cố định cho track sóng âm
+        self.setFixedHeight(75)  # Chiều cao cố định cho track sóng âm
         self.waveform_data = None
         self.duration_ms = 0
         self.pixels_per_second = 100  # Hệ số Zoom mặc định (100px = 1 giây)

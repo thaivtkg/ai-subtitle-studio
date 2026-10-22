@@ -398,7 +398,7 @@ class SubtitleEditorWidget(QWidget):
         self.ai_translate_btn.hide()
         
         from PySide6.QtWidgets import QMenu
-        self.fix_overlap_btn = QPushButton("⚡ Sửa chồng lấn")
+        self.fix_overlap_btn = QPushButton("⚡ Chồng lấn ▾")
         self.fix_overlap_btn.setObjectName("btn_secondary")
         self.fix_overlap_btn.setProperty("variant", "secondary")
         self.fix_overlap_btn.setEnabled(False)
@@ -430,7 +430,7 @@ class SubtitleEditorWidget(QWidget):
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
 
-        self.reanalyze_audio_style_btn = QPushButton("🔄 Quét lại âm lượng")
+        self.reanalyze_audio_style_btn = QPushButton("🔄 Quét Audio")
         self.reanalyze_audio_style_btn.setObjectName("btn_secondary")
         self.reanalyze_audio_style_btn.setProperty("variant", "secondary")
         self.reanalyze_audio_style_btn.setToolTip("Quét lại Style phụ đề theo năng lượng âm thanh")
@@ -1684,10 +1684,10 @@ class SubtitleEditorWidget(QWidget):
                 self.overlap_pairs.append(i)
                 
         if overlaps > 0:
-            self.fix_overlap_btn.setText(f"⚡ Sửa chồng lấn ({overlaps})")
+            self.fix_overlap_btn.setText(f"⚡ Chồng lấn ({overlaps})")
             self.fix_overlap_btn.setEnabled(True)
         else:
-            self.fix_overlap_btn.setText("⚡ Sửa chồng lấn")
+            self.fix_overlap_btn.setText("⚡ Chồng lấn ▾")
             self.fix_overlap_btn.setEnabled(False)
 
     def fix_overlaps(self, mode="keep_prev", all_overlaps=False):

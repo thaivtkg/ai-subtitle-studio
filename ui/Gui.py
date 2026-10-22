@@ -482,6 +482,28 @@ class MainWindow(QMainWindow):
         self.btn_tools_menu.setMenu(tools_menu)
         topbar_layout.addWidget(self.btn_tools_menu)
 
+        self.btn_ai_drawer = QPushButton("✨ Bảng Điều Khiển AI", self)
+        self.btn_ai_drawer.setObjectName("btn_ai_drawer")
+        self.btn_ai_drawer.setFixedHeight(28)
+        self.btn_ai_drawer.setCursor(Qt.PointingHandCursor)
+        self.btn_ai_drawer.setToolTip("Mở/Đóng Bảng Điều Khiển AI & Thuật Ngữ (Summary / Glossary)")
+        self.btn_ai_drawer.setStyleSheet(f"""
+            QPushButton#btn_ai_drawer {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6366F1, stop:1 #A855F7);
+                color: white;
+                font-weight: 600;
+                font-size: 11px;
+                border-radius: 8px;
+                padding: 0 10px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }}
+            QPushButton#btn_ai_drawer:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4F46E5, stop:1 #9333EA);
+            }}
+        """)
+        self.btn_ai_drawer.clicked.connect(self._toggle_ai_drawer)
+        topbar_layout.addWidget(self.btn_ai_drawer)
+
         # Direct Recovery Center Button (Preserves test_UI10 contract)
         self.btn_recovery_center = QPushButton("🛟  Recovery Center", self)
         self.btn_recovery_center.setObjectName("btn_recovery_center")
@@ -527,6 +549,13 @@ class MainWindow(QMainWindow):
         self.btn_minimize.clicked.connect(self.showMinimized)
         window_controls_layout.addWidget(self.btn_minimize)
 
+        self.btn_maximize = QPushButton("🗖")
+        self.btn_maximize.setToolTip("Phóng to / Thu nhỏ cửa sổ")
+        self.btn_maximize.setFixedSize(32, 28)
+        self.btn_maximize.setProperty("variant", "window")
+        self.btn_maximize.clicked.connect(self._toggle_maximize)
+        window_controls_layout.addWidget(self.btn_maximize)
+
         self.btn_close = QPushButton("✕")
         self.btn_close.setToolTip("Đóng ứng dụng")
         self.btn_close.setFixedSize(32, 28)
@@ -534,7 +563,7 @@ class MainWindow(QMainWindow):
         self.btn_close.clicked.connect(self.close)
         window_controls_layout.addWidget(self.btn_close)
 
-        window_controls.setFixedWidth(108)
+        window_controls.setFixedWidth(144)
         topbar_layout.addWidget(window_controls)
         right_layout.addWidget(topbar)
 
@@ -804,7 +833,7 @@ class MainWindow(QMainWindow):
         self.timeline_widget.range_generation_requested.connect(
             self._start_range_generation
         )
-        self.timeline_widget.setMinimumHeight(140)
+        self.timeline_widget.setMinimumHeight(190)
 
         # Timeline Toolbar & Container
         self.timeline_container = QWidget()
@@ -816,9 +845,9 @@ class MainWindow(QMainWindow):
         timeline_toolbar.setObjectName("TimelineToolbar")
         timeline_toolbar.setFixedHeight(38)
         tl_tb_layout = QHBoxLayout(timeline_toolbar)
-        tl_tb_layout.setContentsMargins(12, 0, 12, 0)
+        tl_tb_layout.setContentsMargins(8, 0, 8, 0)
         tl_tb_layout.setAlignment(Qt.AlignVCenter)
-        tl_tb_layout.setSpacing(8)
+        tl_tb_layout.setSpacing(4)
 
         lbl_tl = QLabel("⏱️ TIMELINE")
         lbl_tl.setProperty("class", "SectionTitle")
@@ -830,7 +859,7 @@ class MainWindow(QMainWindow):
         nudge_layout = QHBoxLayout(nudge_group)
         nudge_layout.setContentsMargins(0, 0, 0, 0)
         nudge_layout.setAlignment(Qt.AlignVCenter)
-        nudge_layout.setSpacing(6)
+        nudge_layout.setSpacing(4)
 
         lbl_nudge = QLabel("Chỉnh timing:")
         lbl_nudge.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px;")
@@ -839,7 +868,7 @@ class MainWindow(QMainWindow):
         self.nudge_target_combo = QComboBox()
         self.nudge_target_combo.setObjectName("NudgeTargetCombo")
         self.nudge_target_combo.setFixedHeight(28)
-        self.nudge_target_combo.setFixedWidth(100)
+        self.nudge_target_combo.setFixedWidth(85)
         self.nudge_target_combo.setStyleSheet(f"""
             QComboBox#NudgeTargetCombo {{
                 height: 26px;
@@ -899,7 +928,7 @@ class MainWindow(QMainWindow):
             btn.setProperty("class", "nudge_btn")
             btn.setStyleSheet(nudge_btn_style)
             btn.setFixedHeight(28)
-            btn.setFixedWidth(56)
+            btn.setFixedWidth(46)
             btn.setToolTip(tip)
             btn.clicked.connect(
                 lambda checked=False, d=delta: self.sub_editor.nudge_selected_segment(
@@ -926,7 +955,7 @@ class MainWindow(QMainWindow):
         self.chk_ripple.toggled.connect(lambda checked: setattr(self.sub_editor, "ripple_shift_enabled", checked))
         nudge_layout.addWidget(self.chk_ripple, alignment=Qt.AlignVCenter)
 
-        tl_tb_layout.addSpacing(16)
+        tl_tb_layout.addSpacing(6)
         tl_tb_layout.addWidget(nudge_group, alignment=Qt.AlignVCenter)
         tl_tb_layout.addStretch()
 
@@ -938,6 +967,8 @@ class MainWindow(QMainWindow):
             self.sub_editor.save_btn,
         ):
             action_btn.setFixedHeight(28)
+            action_btn.setStyleSheet("padding: 0px 6px; font-size: 11px; font-weight: 500;")
+            action_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             tl_tb_layout.addWidget(action_btn, alignment=Qt.AlignVCenter)
 
         timeline_container_layout.addWidget(timeline_toolbar)
@@ -1679,6 +1710,21 @@ class MainWindow(QMainWindow):
             y = max(0, (self.height() - self.btn_drawer_toggle.height()) // 2)
         self.btn_drawer_toggle.move(max(0, x), y)
         self.btn_drawer_toggle.raise_()
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            if hasattr(self, "btn_maximize"):
+                self.btn_maximize.setText("🗖")
+        else:
+            self.showMaximized()
+            if hasattr(self, "btn_maximize"):
+                self.btn_maximize.setText("🗗")
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "btn_maximize"):
+            self.btn_maximize.setText("🗗" if self.isMaximized() else "🗖")
+        super().changeEvent(event)
 
     def trigger_split_at_playhead(self):
         focus_widget = QApplication.focusWidget()

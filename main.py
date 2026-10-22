@@ -199,7 +199,7 @@ def main():
     if recovered_state is not None:
         window.apply_recovery_working_state(recovered_state, linked=recovered_linked)
     guard.request_received.connect(window.handle_ipc_request)
-    window.show()
+    window.showMaximized()
 
     # Chạy vòng lặp sự kiện
     return app.exec()

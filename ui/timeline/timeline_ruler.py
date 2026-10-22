@@ -9,7 +9,7 @@ class TimeRuler(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(30)  # Chiều cao cố định của Ruler
+        self.setFixedHeight(24)  # Chiều cao cố định của Ruler
         self.duration_ms = 0
         self.pixels_per_second = 100
 

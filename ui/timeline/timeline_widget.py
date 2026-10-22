@@ -101,6 +101,7 @@ class TimelineWidget(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
+        self.setMinimumHeight(190)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet(f"""
@@ -205,9 +206,9 @@ class TimelineWidget(QScrollArea):
         if self._minimum_height_before_gap is None:
             self._minimum_height_before_gap = self.minimumHeight()
         required_height = (
-            self.container.ruler.minimumHeight()
-            + self.container.waveform.minimumHeight()
-            + self.container.track.minimumHeight()
+            self.container.ruler.height()
+            + self.container.waveform.height()
+            + self.container.track.height()
             + self.container.gap_row.sizeHint().height()
             + self.horizontalScrollBar().sizeHint().height()
             + 2 * self.frameWidth()

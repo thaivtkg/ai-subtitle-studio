@@ -26,7 +26,7 @@ class SubtitleTrack(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(60)
+        self.setFixedHeight(50)
         self.setFocusPolicy(Qt.StrongFocus)
         self.segments = []
         self.gaps = []
