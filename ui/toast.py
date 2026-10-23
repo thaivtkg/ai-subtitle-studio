@@ -28,6 +28,9 @@ class Toast(QWidget):
         elif type == "error":
             icon_char = "❌"
             accent_color = Theme.DANGER
+        elif type == "warning":
+            icon_char = "⚠️"
+            accent_color = Theme.WARNING
         else:
             icon_char = "ℹ️"
             accent_color = Theme.CYAN
@@ -79,7 +82,7 @@ class Toast(QWidget):
         self.anim_out.finished.connect(self.close)
         self.anim_out.finished.connect(self.deleteLater)
 
-    def show_toast(self):
+    def _display(self):
         if self.parent():
             parent_rect = self.parent().geometry()
             self.adjustSize() # Ép Qt tính toán kích thước thực trước khi lấy size
@@ -96,21 +99,52 @@ class Toast(QWidget):
         self.anim_in.start()
         self.timer.start(self.duration)
 
+    def show_toast(self_or_first, *args, **kwargs):
+        """Hỗ trợ gọi cả dạng instance (toast.show_toast()) lẫn class/helper (Toast.show_toast(parent, msg))."""
+        if isinstance(self_or_first, Toast):
+            self_or_first._display()
+            return self_or_first
+        if self_or_first is Toast:
+            parent = args[0] if len(args) > 0 else kwargs.get("parent")
+            message = args[1] if len(args) > 1 else kwargs.get("message", "")
+        else:
+            parent = self_or_first
+            message = args[0] if len(args) > 0 else kwargs.get("message", "")
+        duration = kwargs.get("duration", 3000)
+        duration_ms = kwargs.get("duration_ms")
+        dur = duration_ms if duration_ms is not None else duration
+        toast = Toast(parent, message, "info", dur)
+        toast._display()
+        return toast
+
     def fade_out(self):
         self.timer.stop()
         self.anim_out.start()
         
     @classmethod
-    def show_success(cls, parent, message, duration=3000):
-        toast = cls(parent, message, "success", duration)
-        toast.show_toast()
+    def show_success(cls, parent, message, duration=3000, duration_ms=None):
+        dur = duration_ms if duration_ms is not None else duration
+        toast = cls(parent, message, "success", dur)
+        toast._display()
+        return toast
 
     @classmethod
-    def show_error(cls, parent, message, duration=4000):
-        toast = cls(parent, message, "error", duration)
-        toast.show_toast()
-        
+    def show_error(cls, parent, message, duration=4000, duration_ms=None):
+        dur = duration_ms if duration_ms is not None else duration
+        toast = cls(parent, message, "error", dur)
+        toast._display()
+        return toast
+
     @classmethod
-    def show_info(cls, parent, message, duration=3000):
-        toast = cls(parent, message, "info", duration)
-        toast.show_toast()
+    def show_warning(cls, parent, message, duration=3000, duration_ms=None):
+        dur = duration_ms if duration_ms is not None else duration
+        toast = cls(parent, message, "warning", dur)
+        toast._display()
+        return toast
+
+    @classmethod
+    def show_info(cls, parent, message, duration=3000, duration_ms=None):
+        dur = duration_ms if duration_ms is not None else duration
+        toast = cls(parent, message, "info", dur)
+        toast._display()
+        return toast

@@ -7,6 +7,7 @@ import threading
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
+from typing import Optional
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -2448,6 +2449,7 @@ class MainWindow(QMainWindow):
             if isinstance(items, dict):
                 queue_data = items.get(item_ref, {})
         vid_path = queue_data.get("video_path", item_ref)
+        self.current_vid = vid_path
 
         bound_project_id = (
             project_id if project_id is not None else queue_data.get("project_id")
@@ -3335,11 +3337,47 @@ class MainWindow(QMainWindow):
             if item:
                 self.sub_editor.table.scrollToItem(item)
 
+    def get_current_video_path(self) -> Optional[str]:
+        """Lấy đường dẫn video nguồn hiện tại theo cơ chế fallback 4 tầng."""
+        # Tầng 1: self.current_vid
+        vid = getattr(self, "current_vid", None)
+        if vid and isinstance(vid, str) and vid.strip():
+            return vid
+
+        # Tầng 2: self.project_service.current_project.video_path
+        proj = getattr(getattr(self, "project_service", None), "current_project", None)
+        proj_vid = getattr(proj, "video_path", None)
+        if proj_vid and isinstance(proj_vid, str) and proj_vid.strip():
+            return proj_vid
+
+        # Tầng 3: self.queue_mgr.get_active_data()[0]
+        try:
+            if hasattr(self, "queue_mgr") and hasattr(self.queue_mgr, "get_active_data"):
+                active_vid, _ = self.queue_mgr.get_active_data()
+                if active_vid and isinstance(active_vid, str) and active_vid.strip():
+                    return active_vid
+        except Exception:
+            pass
+
+        # Tầng 4: self.video_player.player.source().toLocalFile()
+        try:
+            player = getattr(getattr(self, "video_player", None), "player", None)
+            if player and hasattr(player, "source"):
+                src = player.source()
+                if hasattr(src, "toLocalFile"):
+                    local_f = src.toLocalFile()
+                    if local_f and isinstance(local_f, str) and local_f.strip():
+                        return local_f
+        except Exception:
+            pass
+
+        return None
+
     def _apply_auto_audio_style_if_enabled(self) -> bool:
         chk = getattr(getattr(self, "page_settings", None), "chk_auto_audio_style", None)
         if not chk or not chk.isChecked():
             return False
-        video_path = getattr(self, "current_vid", None)
+        video_path = self.get_current_video_path()
         if not video_path and hasattr(self, "generation_panel"):
             req = getattr(self.generation_panel.generation_service, "current_request", None)
             video_path = getattr(req, "video_path", None)

@@ -1002,7 +1002,7 @@ class SubtitleEditorWidget(QWidget):
             return
 
         win = self.window()
-        video_path = getattr(win, "current_vid", None)
+        video_path = win.get_current_video_path() if hasattr(win, "get_current_video_path") else getattr(win, "current_vid", None)
         if not video_path or not os.path.exists(video_path):
             Toast.show_warning(win, "Chưa có video nguồn để phân tích âm thanh.")
             return
@@ -1025,7 +1025,7 @@ class SubtitleEditorWidget(QWidget):
 
             self.render_page()
             self.live_edit_applied.emit(self.all_segments)
-            Toast.show_toast(win, f"⚡ Đã cập nhật Style cho {len(target_indices)} dòng phụ đề.", duration_ms=3000)
+            Toast.show_success(win, f"⚡ Đã cập nhật Style cho {len(target_indices)} dòng phụ đề.", duration_ms=3000)
         except Exception as e:
             Toast.show_error(win, f"Lỗi phân tích âm thanh: {e}")
 
