@@ -3813,6 +3813,24 @@ class MainWindow(QMainWindow):
             self.worker.cancel()
             self.worker.wait(1000)
             
+        try:
+            app = QApplication.instance()
+            if app:
+                app.removeEventFilter(self)
+        except Exception:
+            pass
+
+        if hasattr(self, 'stdout_redirector') and self.stdout_redirector:
+            try:
+                sys.stdout = self.stdout_redirector.stream
+            except Exception:
+                pass
+        if hasattr(self, 'stderr_redirector') and self.stderr_redirector:
+            try:
+                sys.stderr = self.stderr_redirector.stream
+            except Exception:
+                pass
+
         event.accept()
         
     def _trigger_export_softsub(self):
