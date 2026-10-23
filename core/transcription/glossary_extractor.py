@@ -52,69 +52,14 @@ _NEXT_LOWER_WORD_RE = re.compile(
     r"^\s+([a-zàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ0-9_]+)"
 )
 
-_CJK_STOPWORDS = {
-    # Từ dừng hệ thống & phân loại
-    "動画", "解説", "紹介", "説明", "今回", "内容", "違い", "方法", "場合", "使用", "利用", "基本", "概要",
-    "동영상", "설명", "소개", "영상", "내용", "이번", "방법", "사용",
-    # 1. Số đếm & Lượng từ
-    "一人", "二人", "三人", "四人", "五人", "年後", "日前", "年前", "時間", "分間", "秒間",
-    # 2. Liên từ, phó từ, từ nối
-    "一方", "日々", "徐々", "如何", "単独", "結局", "突然", "最近", "現在", "過去", "未来",
-    # 3. Gốc động từ / tính từ bị cụt đuôi Hiragana
-    "経験浅", "調子者", "力尽", "出会", "裏切", "仕掛", "目立", "暗躍", "魅了",
-    # 4. Từ mượn Katakana thông thường
-    "カウンセリング", "コンプレックス", "ドレス", "ダメージ", "ガス", "ピンチ", "ギャング",
-    # 5. Danh từ trừu tượng, tâm lý, học đường, sinh hoạt
-    "頭脳", "友達", "少女", "生徒", "教官", "着任", "美貌", "心理", "担当", "歓迎",
-    "成績優秀", "人気者", "手先", "原因", "隙間", "配下", "邪魔", "世界", "宇宙", "人格",
-    "組織", "壊滅", "指令", "状況", "自由", "危険", "判断", "敗北", "精神", "復讐",
-    "忠告", "再戦", "劣勢", "機転", "悪事", "攻撃", "運命", "究極", "覚醒", "異変",
-    "決意", "乱入", "正義", "戦隊", "養成学校", "絶望的", "精神的", "暗黒", "転生",
-    "親友", "彼女", "自分", "相手", "影響", "変貌", "封印", "暴走", "復活", "日々力",
-    "時期", "違和感", "予想外", "事態", "強大", "支配",
-}
-_BOUNDARY_STOPWORDS = {
-    "video", "trong", "ngoài", "trên", "dưới", "giữa", "cùng", "với", "của", "cho",
-    "tại", "từ", "đến", "tới", "về", "khi", "nếu", "vì", "do", "bởi", "để", "nhưng",
-    "hoặc", "và", "hay", "các", "những", "một", "này", "đó", "chuyến", "cuộc", "buổi",
-    "gặp", "đi", "the", "an", "this", "that", "these", "those", "in", "on", "at",
-    "to", "for", "with", "from", "by", "about", "into", "through", "after", "before",
-    "between", "under", "over", "how", "what", "why", "when", "where", "who", "it",
-    "he", "she", "we", "you", "they", "let", "there", "here", "and", "or", "but",
-    # Số từ & lượng từ tiếng Việt (không bao gồm tên riêng phổ biến)
-    "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín", "mười",
-    "trăm", "nghìn", "vạn", "đôi", "vài", "mỗi", "từng", "mọi", "nhiều", "ít",
-    # Từ phương vị & vị trí
-    "bề", "mặt", "phía", "bên", "trước", "sau", "đầu", "cuối",
-}
-_MULTIWORD_STOP_PHRASES = {
-    "anh hùng", "anh em", "anh trai", "anh chàng", "dũng sĩ", "quái vật",
-    "quái nhân", "yêu quái", "yêu ma", "ác ma", "ác quỷ", "ma vương",
-    "ma vật", "nội dung", "hướng dẫn", "giới thiệu", "tóm tắt", "bảo vệ",
-    "tiêu diệt", "giải cứu", "người dân", "dân làng", "bá tánh", "thảo dân",
-    "chương trình", "chiến đấu", "chiến binh", "hiệp sĩ", "lập trình",
-    "quản lý", "giải thích", "khám phá", "vùng đất", "trận chiến", "bộ nhớ",
-    "nữ sinh", "nam sinh", "học sinh", "sinh viên", "thiếu nữ", "cô gái",
-    "cô bé", "cậu bé", "chàng trai", "thành phố", "đô thị", "hiện đại",
-    "thời đại", "siêu nhân", "siêu anh", "siêu anh hùng", "phép thuật",
-    "thẻ bài", "thu phục", "biến hình", "phong ấn", "thế giới", "dị giới",
-    "cổ trang", "tiên hiệp", "kiếm hiệp", "nhân vật", "câu chuyện", "bộ phim",
-    "tập phim", "trò chơi", "bề ngoài", "bốn người", "bốn năm",
-    "đôi bạn", "đôi bên", "anh ta", "cô ta", "chúng ta", "chúng tôi",
-    "hôm nay", "ngày mai", "hôm qua",
-}
-_LATIN_STOPWORDS = _BOUNDARY_STOPWORDS | {
-    "hướng", "dẫn", "giới", "thiệu", "tóm", "tắt", "phần", "bài", "chương",
-    "cách", "trận", "khám", "phá", "vùng", "đất", "lập", "trình", "quản",
-    "bộ", "nhớ", "giải", "quái", "vật", "yêu", "ma", "người", "dân", "làng",
-    "tiêu", "diệt", "vệ", "cứu", "bạn", "tôi", "ta", "ngươi", "viên", "nữ",
-    "học", "sinh", "thiếu", "cô", "siêu", "phố", "hiện", "thẻ", "phép",
-    "thuật", "overview", "summary", "introduction", "tutorial", "guide",
-    "episode", "part", "chapter", "don", "doesn", "didn", "won", "can",
-    "isn", "aren", "wasn", "weren",
-    # Đại từ xưng hô đơn độc
-    "anh", "chị", "em", "chú", "bác", "họ", "chúng", "nó", "hắn",
-}
+from core.transcription.glossary_stopwords import (
+    _BOUNDARY_STOPWORDS,
+    _CJK_STOPWORDS,
+    _KANJI_SUFFIX_BLACKLIST,
+    _KANJI_SUFFIX_WHITELIST,
+    _LATIN_STOPWORDS,
+    _MULTIWORD_STOP_PHRASES,
+)
 
 _TECH_DOMAINS = {
     "it", "programming", "software", "tech", "medical", "finance", "science", "coding",
@@ -139,6 +84,8 @@ _MAGICAL_GIRL_STRICT_TRIGGERS = (
     "thiếu nữ phép thuật", "nữ sinh phép thuật", "cô gái phép thuật",
     "セーラームーン", "カードキャプター", "魔法少女", "プリキュア",
     "마법소녀", "세일러문", "카드캡터",
+    # AC-GLOSS-04: Standalone Sailor, Heroine & Magical Girl Triggers
+    "セーラー", "sailor", "ヒロイン", "heroine", "nữ anh hùng",
 )
 
 _MAGICAL_GIRL_SUBJECT_HINTS = (
@@ -488,7 +435,11 @@ def extract_glossary_offline(
     for match in _KATAKANA_RE.finditer(cleaned_summary):
         _add(match.group(0))
     for match in _KANJI_RE.finditer(cleaned_summary):
-        _add(match.group(0))
+        cand = match.group(0)
+        # AC-GLOSS-02: Suffix blacklist guard for qualitative/grammatical kanji endings
+        if cand.endswith(_KANJI_SUFFIX_BLACKLIST) and cand not in _KANJI_SUFFIX_WHITELIST:
+            continue
+        _add(cand)
     for match in _HANGUL_RE.finditer(cleaned_summary):
         stem = _HANGUL_PARTICLE_SUFFIX_RE.sub("", match.group(0))
         _add(stem if len(stem) >= 2 else match.group(0))
