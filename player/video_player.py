@@ -280,15 +280,42 @@ class VideoPlayerWidget(QWidget):
 
         self.update_play_button()
 
+    def _is_legacy_wmv_format(self, file_path: str) -> bool:
+        if not file_path:
+            return False
+        lower = str(file_path).lower()
+        if lower.endswith((".wmv", ".asf")):
+            return True
+        if os.path.isfile(file_path):
+            try:
+                with open(file_path, "rb") as f:
+                    header = f.read(16)
+                    if header == b"\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c":
+                        return True
+            except Exception:
+                pass
+        return False
+
     def load_video(self, file_path):
         self.cancel_segment_playback(pause=True)
         if os.path.exists(file_path):
             self.empty_state_lbl.hide()
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.pause()
+            if self._is_legacy_wmv_format(file_path):
+                try:
+                    from ui.toast import Toast
+                    parent_widget = self.window() if hasattr(self, 'window') and self.window() else self
+                    Toast.show_warning(
+                        parent_widget,
+                        "Video thuộc định dạng cũ/lỗi (WMV2). Khuyến nghị chuyển đổi sang MP4 tiêu chuẩn để tránh giật lag khi phát.",
+                    )
+                except Exception:
+                    pass
 
     def toggle_playback(self):
         self.cancel_segment_playback()
+        self.clear_segment_focus()
         if self.player.isPlaying():
             self.player.pause()
         else:
@@ -377,6 +404,9 @@ class VideoPlayerWidget(QWidget):
                 self.cancel_segment_playback(pause=True)
             elif position < bounds[0]:
                 self.cancel_segment_playback()
+        elif bounds and not playback_active:
+            if position < bounds[0] or position >= bounds[1]:
+                self._segment_bounds = None
         self.slider_seek.setValue(position)
         self.update_time_label()
 

@@ -114,7 +114,11 @@ class TimelineController(QObject):
                 (candidate for candidate in track.segments if candidate.segment_id == segment_id),
                 None,
             )
-        if segment is None and (source == SelectionSource.EDITOR or not segment_id) and 0 <= index < len(track.segments):
+        if (
+            segment is None
+            and (source in (SelectionSource.EDITOR, SelectionSource.PLAYBACK, SelectionSource.PROGRAMMATIC) or not segment_id)
+            and 0 <= index < len(track.segments)
+        ):
             segment = track.segments[index]
 
         if segment is None:

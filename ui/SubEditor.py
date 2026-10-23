@@ -1464,6 +1464,16 @@ class SubtitleEditorWidget(QWidget):
         if target_idx == -1:
             return
 
+        # 1. Cập nhật current_index và làm mới thanh biên tập trên cùng (Current Subtitle)
+        self.current_index = target_idx
+        self._load_current_editor()
+
+        # 2. Phát tín hiệu đồng bộ để Timeline Track & Waveform sáng theo câu đang phát
+        if getattr(self, "selection_controller", None):
+            self.selection_controller.select(
+                target_idx, target_id, SelectionSource.PLAYBACK
+            )
+
         try:
             visible_pos = self._visible_source_indices.index(target_idx)
         except ValueError:
