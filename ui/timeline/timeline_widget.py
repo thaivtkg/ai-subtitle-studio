@@ -391,13 +391,20 @@ class TimelineWidget(QScrollArea):
         self.container.adjustSize()
 
     def update_playhead(self, playhead_ms: int):
-        """[S8-T33] Cập nhật vị trí kim và tự động cuộn màn hình"""
+        """[S8-T33] Cập nhật vị trí kim và tự động cuộn màn hình kèm Edge-Guard"""
         x = int((playhead_ms / 1000.0) * self.pixels_per_second)
         self.container.playhead.set_position(x)
         self.container.track.update_playhead(playhead_ms)
 
         if self.auto_scroll_enabled:
             self._center_on_x(x)
+        else:
+            # Cơ chế Edge-Guard: nếu kim đỏ tiến sát mép phải (> 75% viewport) hoặc ra khỏi mép trái (< 0), tự động bám lại
+            sb = self.horizontalScrollBar().value()
+            vw = self.viewport().width()
+            if x > sb + int(vw * 0.75) or x < sb:
+                self.auto_scroll_enabled = True
+                self._center_on_x(x)
 
     def _center_on_x(self, x: int):
         """Tính toán khoảng cách để đưa Playhead ra giữa màn hình hiển thị"""

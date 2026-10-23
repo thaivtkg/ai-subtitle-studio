@@ -12,8 +12,11 @@ class TimelineVideoSync:
         
         # 1. Chiều từ Video Player -> Timeline
         self.player.timeline_position_changed.connect(self.on_player_position_changed)
-        # Giả định player của bạn có tín hiệu stateChanged (Play/Pause)
-        # self.player.stateChanged.connect(self.on_player_state_changed)
+        media_player = getattr(self.player, "player", self.player)
+        if hasattr(media_player, "playingChanged"):
+            media_player.playingChanged.connect(self._on_player_playing_changed)
+        elif hasattr(self.player, "playbackStateChanged"):
+            self.player.playbackStateChanged.connect(self.on_player_state_changed)
         
         # 2. Chiều từ Timeline -> Video Player
         self.timeline.seek_requested.connect(self.on_timeline_seek_requested)
@@ -56,8 +59,32 @@ class TimelineVideoSync:
             finally:
                 self.state_manager.transition_to(TimelineState.IDLE)
 
+    def _on_player_playing_changed(self, playing: bool):
+        """Khi video chuyển sang trạng thái playing == True, bật lại Auto-scroll và kéo màn hình về vị trí kim đỏ nếu nằm ngoài viewport."""
+        if playing:
+            self.timeline.reset_auto_scroll()
+            # Lấy vị trí kim đỏ hiện tại
+            pos_ms = 0
+            media_player = getattr(self.player, "player", self.player)
+            if hasattr(media_player, "position"):
+                pos_ms = media_player.position()
+            elif hasattr(self.player, "get_position"):
+                pos_ms = self.player.get_position()
+            elif hasattr(self.timeline, "container") and hasattr(self.timeline.container, "track"):
+                pos_ms = getattr(self.timeline.container.track, "current_playhead_ms", 0)
+
+            # Nếu vị trí hiện tại của kim đỏ đang nằm ngoài khung nhìn, center lại
+            if hasattr(self.timeline, "pixels_per_second") and hasattr(self.timeline, "viewport"):
+                x = int((pos_ms / 1000.0) * self.timeline.pixels_per_second)
+                sb = self.timeline.horizontalScrollBar().value()
+                vw = self.timeline.viewport().width()
+                if x < sb or x > sb + vw:
+                    self.timeline.center_on_time(pos_ms)
+            elif hasattr(self.timeline, "center_on_time"):
+                self.timeline.center_on_time(pos_ms)
+
     def on_player_state_changed(self, state):
         """Khi người dùng bấm Play trở lại, tự động kích hoạt lại Auto-scroll"""
         from PySide6.QtMultimedia import QMediaPlayer
         if state == QMediaPlayer.PlayingState:
-            self.timeline.reset_auto_scroll()  
+            self._on_player_playing_changed(True)  

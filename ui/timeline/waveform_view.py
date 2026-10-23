@@ -17,10 +17,24 @@ class WaveformView(QWidget):
         self.chunk_ms = 10            # Độ phân giải (Đồng bộ với WaveformService)
         self._selected_range_ms = None
         self.heatmap_enabled = True
+        self.visual_gain = 1.0
 
         # Cờ tối ưu hóa: Báo cho Qt biết ta sẽ tự vẽ toàn bộ nền để tránh vẽ 2 lần (Overdraw)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WA_NoSystemBackground)
+
+    def _calculate_visual_gain(self, peaks: np.ndarray) -> float:
+        """Khuếch đại hiển thị tự động (Auto-gain) cho audio giọng nói âm lượng nhỏ."""
+        if peaks is None or len(peaks) == 0:
+            return 1.0
+        try:
+            abs_peaks = np.abs(peaks)
+            amp_95 = float(np.percentile(abs_peaks, 95))
+            if amp_95 < 0.4:
+                return float(min(4.0, 0.75 / max(amp_95, 0.03)))
+            return 1.0
+        except Exception:
+            return 1.0
 
     def get_heatmap_color(self, min_peak: float, max_peak: float) -> QColor:
         if not getattr(self, "heatmap_enabled", True):
@@ -38,6 +52,7 @@ class WaveformView(QWidget):
         """Nhận dữ liệu từ WaveformService và render"""
         self.waveform_data = peaks_normalized
         self.duration_ms = duration_ms
+        self.visual_gain = self._calculate_visual_gain(peaks_normalized)
         self.update_geometry_size()
         self.update()
 
@@ -90,8 +105,8 @@ class WaveformView(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         
-        # Tắt Antialiasing để nét vẽ sắc sảo hơn và render siêu tốc
-        painter.setRenderHint(QPainter.Antialiasing, False) 
+        # Bật Antialiasing để nét vẽ bo tròn mềm mại chuẩn Studio NLE
+        painter.setRenderHint(QPainter.Antialiasing, True) 
 
         # 1. Vẽ phông nền
         rect = event.rect()
@@ -108,11 +123,6 @@ class WaveformView(QWidget):
             painter.setPen(QColor(Theme.TEXT_MUTED))
             painter.drawText(rect, Qt.AlignCenter, "Đang khởi tạo sóng âm...")
             return
-
-        # Cấu hình màu cọ vẽ Sóng âm
-        pen = QPen(QColor(Theme.PRIMARY_PURPLE))
-        pen.setWidth(1)
-        painter.setPen(pen)
 
         height = self.height()
         center_y = height / 2.0
@@ -137,25 +147,34 @@ class WaveformView(QWidget):
         # Slicing mảng numpy để lấy đúng khúc cần vẽ
         visible_chunks = self.waveform_data[start_idx:end_idx + 1]
 
-        # --- DECIMATION LOD LOGIC ---
-        # Nhóm các mẫu âm thanh cùng rơi vào 1 pixel (x) để lấy min/max tuyệt đối
-        # Giúp waveform không bị mất các peak lớn khi zoom out xa.
-        pixel_peaks = {}
+        # --- BAR SPACING & AUTO-GAIN VISUAL SCALING ---
+        # Nhóm mẫu âm thanh theo cột rời rạc (bar_width=2px, gap=1px -> bước 3px)
+        bar_peaks = {}
         for i, (min_peak, max_peak) in enumerate(visible_chunks):
             chunk_idx = start_idx + i
-            x = self._ms_to_x(chunk_idx * self.chunk_ms)
+            raw_x = self._ms_to_x(chunk_idx * self.chunk_ms)
+            bar_x = (raw_x // 3) * 3
             
-            if x not in pixel_peaks:
-                pixel_peaks[x] = [min_peak, max_peak]
+            if bar_x not in bar_peaks:
+                bar_peaks[bar_x] = [min_peak, max_peak]
             else:
-                if min_peak < pixel_peaks[x][0]: pixel_peaks[x][0] = min_peak
-                if max_peak > pixel_peaks[x][1]: pixel_peaks[x][1] = max_peak
+                if min_peak < bar_peaks[bar_x][0]: bar_peaks[bar_x][0] = min_peak
+                if max_peak > bar_peaks[bar_x][1]: bar_peaks[bar_x][1] = max_peak
 
-        for x, (min_peak, max_peak) in pixel_peaks.items():
-            painter.setPen(QPen(self.get_heatmap_color(min_peak, max_peak), 1))
-            y_min = int(center_y - (min_peak * half_height))
-            y_max = int(center_y - (max_peak * half_height))
-            painter.drawLine(x, y_min, x, y_max)
+        gain = getattr(self, "visual_gain", 1.0)
+        for bar_x, (min_peak, max_peak) in bar_peaks.items():
+            pen = QPen(self.get_heatmap_color(min_peak, max_peak), 2)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+
+            scaled_min = max(-1.0, min(1.0, min_peak * gain))
+            scaled_max = max(-1.0, min(1.0, max_peak * gain))
+            y_min = int(center_y - (scaled_min * half_height))
+            y_max = int(center_y - (scaled_max * half_height))
+            if abs(y_max - y_min) < 2:
+                y_min = int(center_y - 1)
+                y_max = int(center_y + 1)
+            painter.drawLine(bar_x, y_min, bar_x, y_max)
 
         selected_rect = self._selected_range_rect()
         if selected_rect is not None:
