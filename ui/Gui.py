@@ -1441,7 +1441,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'timeline_widget') and self.timeline_widget:
                 self.timeline_widget.container.waveform.clear_selected_range()
             return
-            
+
+        from core.subtitle_editing.selection_controller import SelectionSource
+        if source == SelectionSource.PLAYBACK:
+            return
+
         if index >= 0 and index < len(self.sub_editor.all_segments):
             seg = self.sub_editor.all_segments[index]
             from ui.SubEditor import time_str_to_ms

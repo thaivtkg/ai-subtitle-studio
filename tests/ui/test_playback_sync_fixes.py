@@ -73,6 +73,27 @@ class TestPlaybackSyncFixes(unittest.TestCase):
             player.close()
             player.deleteLater()
 
+    def test_tc_play_01_global_selection_ignores_playback_source(self):
+        """TC-PLAY-01: _on_global_selection_changed ignores PLAYBACK source to prevent pausing video."""
+        from ui.Gui import MainWindow
+        win = MainWindow.__new__(MainWindow)
+        win.sub_editor = SimpleNamespace(
+            all_segments=[
+                {"start": "00:00:10,000", "end": "00:00:16,000", "start_ms": 10000, "end_ms": 16000, "text": "Sub"}
+            ]
+        )
+        focused_calls = []
+        win._on_segment_focused = lambda s, e: focused_calls.append((s, e))
+
+        # PLAYBACK source must be ignored
+        MainWindow._on_global_selection_changed(win, 0, "seg_id", SelectionSource.PLAYBACK)
+        self.assertEqual(len(focused_calls), 0)
+
+        # EDITOR source must trigger segment preview
+        MainWindow._on_global_selection_changed(win, 0, "seg_id", SelectionSource.EDITOR)
+        self.assertEqual(len(focused_calls), 1)
+        self.assertEqual(focused_calls[0], (10000, 16000))
+
     def test_tc_wmv_format_detection(self):
         """TC-WMV-01: Detects WMV / ASF extension and binary header."""
         player = VideoPlayerWidget()
@@ -93,3 +114,4 @@ class TestPlaybackSyncFixes(unittest.TestCase):
         finally:
             player.close()
             player.deleteLater()
+
