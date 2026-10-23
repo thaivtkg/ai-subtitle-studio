@@ -21,3 +21,4 @@ ffmpeg/
 *.py[cod]
 *.log
 release/
+stuck_screenshot*.png

@@ -3758,7 +3758,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._flush_canonical_save_before_close()
-        if getattr(self, "revision_tracker", None) and self.revision_tracker.is_dirty:
+        if (
+            self.project_service
+            and getattr(self.project_service, "current_project", None)
+            and getattr(self, "revision_tracker", None)
+            and self.revision_tracker.is_dirty
+        ):
                 from PySide6.QtWidgets import QMessageBox
                 reply = QMessageBox.question(
                     self, 
