@@ -32,6 +32,13 @@ class SubtitleGenerationWorker(QThread):
         try:
             if self._is_cancelled:
                 return
+            if hasattr(self.whisper_service, "is_loaded"):
+                if not self.whisper_service.is_loaded(self.request.model_size, self.request.compute_type):
+                    self.whisper_service.load_model(self.request.model_size, self.request.compute_type)
+            elif hasattr(self.whisper_service, "load_model"):
+                self.whisper_service.load_model(self.request.model_size, self.request.compute_type)
+            if self._is_cancelled:
+                return
             result = self.whisper_service.transcribe_batch(
                 self.request, self.batch, lambda: self._is_cancelled
             )

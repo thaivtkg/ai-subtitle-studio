@@ -165,13 +165,13 @@ class SubtitleGenerationService(QObject):
             timing_segment_cursor = self._get_timing_segment_cursor(
                 project, artifact, len(all_timing_ranges)
             )
-            self._ensure_timing_rows(artifact, all_timing_ranges)
             segment_ranges = all_timing_ranges[
                 timing_segment_cursor : timing_segment_cursor
                 + request.batch_size_value
             ]
             if not segment_ranges:
                 raise ValueError("Tất cả Timing segments đã được điền phụ đề.")
+            self._ensure_timing_rows(artifact, segment_ranges)
             timing_segment_count = len(segment_ranges)
         self.current_timing_ranges = list(segment_ranges or [])
 
@@ -208,7 +208,6 @@ class SubtitleGenerationService(QObject):
             timing_segment_count=timing_segment_count,
         )
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
-        self.whisper_service.load_model(request.model_size, request.compute_type)
         self._dispatch_next_batch()
 
     def _start_range_generation(self, request, duration_ms, existing_segments):
@@ -274,7 +273,6 @@ class SubtitleGenerationService(QObject):
             updated_at=self._now(),
             artifact_content_hash=self._range_artifact_hash,
         )
-        self.whisper_service.load_model(request.model_size, request.compute_type)
         self._dispatch_next_batch()
 
     def resume_generation(self) -> None:
@@ -333,9 +331,6 @@ class SubtitleGenerationService(QObject):
         self.current_checkpoint.active_batch = None
         self.current_checkpoint.updated_at = self._now()
         self.checkpoint_manager.save_checkpoint(self.current_checkpoint)
-        self.whisper_service.load_model(
-            self.current_request.model_size, self.current_request.compute_type
-        )
         self._dispatch_next_batch()
 
     def cancel_generation(self) -> None:
@@ -590,8 +585,13 @@ class SubtitleGenerationService(QObject):
             if artifact.artifact_id != self.current_checkpoint.subtitle_artifact_id:
                 raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact identity changed.")
             if artifact.revision != self.current_checkpoint.artifact_revision:
-                raise GenerationError(GenerationErrorCode.STALE_SUBTITLE, "artifact revision changed.")
-            self._assert_live_artifact_hash(artifact)
+                self.current_checkpoint.artifact_revision = artifact.revision
+                if os.path.exists(artifact.path):
+                    self.current_checkpoint.artifact_content_hash = (
+                        self.artifact_service.content_hash(artifact.path)
+                    )
+            else:
+                self._assert_live_artifact_hash(artifact)
 
             valid = SubtitleGenerationValidator.validate(
                 result.segments, batch.start_ms, batch.end_ms
@@ -939,34 +939,32 @@ class SubtitleGenerationService(QObject):
         """Seed missing subtitle rows from Timing without replacing unrelated data."""
         data = self.artifact_service.load_data(artifact.path)
         existing = data.get("segments", [])
-        timing_keys = [(int(start_ms), int(end_ms)) for start_ms, end_ms in timing_ranges]
-        timing_key_set = set(timing_keys)
-        existing_by_range = {}
+        existing_keys = {
+            (int(row.get("start_ms", -1)), int(row.get("end_ms", -1)))
+            for row in existing
+        }
+        added = False
+        for start_ms, end_ms in timing_ranges:
+            key = (int(start_ms), int(end_ms))
+            if key not in existing_keys:
+                existing.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "start_ms": int(start_ms),
+                        "end_ms": int(end_ms),
+                        "text": "",
+                        "words": None,
+                        "status": "timing",
+                    }
+                )
+                existing_keys.add(key)
+                added = True
 
-        for row in existing:
-            key = (int(row.get("start_ms", -1)), int(row.get("end_ms", -1)))
-            if key not in timing_key_set or key in existing_by_range:
-                return
-            existing_by_range[key] = row
-
-        synchronized = []
-        for start_ms, end_ms in timing_keys:
-            row = existing_by_range.get((start_ms, end_ms))
-            if row is None:
-                row = {
-                    "id": str(uuid.uuid4()),
-                    "start_ms": start_ms,
-                    "end_ms": end_ms,
-                    "text": "",
-                    "words": None,
-                    "status": "timing",
-                }
-            synchronized.append(row)
-
-        if synchronized == existing:
+        if not added:
             return
 
-        data["segments"] = synchronized
+        existing.sort(key=lambda r: int(r.get("start_ms", 0)))
+        data["segments"] = existing
         self.artifact_service._save_atomic(artifact.path, data)
         artifact.revision += 1
         artifact.updated_at = self._now()

@@ -23,12 +23,17 @@ class FasterWhisperService:
         self.current_model_size: Optional[str] = None
         self.current_compute_type: Optional[str] = None
 
+    def is_loaded(self, model_size: str, compute_type: str) -> bool:
+        if self.model is None:
+            return False
+        if self.current_model_size is not None and self.current_model_size != model_size:
+            return False
+        if self.current_compute_type is not None and self.current_compute_type != compute_type:
+            return False
+        return True
+
     def load_model(self, model_size: str, compute_type: str) -> None:
-        if (
-            self.model is not None
-            and self.current_model_size == model_size
-            and self.current_compute_type == compute_type
-        ):
+        if self.is_loaded(model_size, compute_type):
             return
 
         self.unload_model()
@@ -84,6 +89,9 @@ class FasterWhisperService:
                 "language": request.language,
                 "beam_size": 5,
                 "word_timestamps": request.word_timestamps,
+                "no_speech_threshold": 0.6,
+                "compression_ratio_threshold": 2.4,
+                "condition_on_previous_text": False,
             }
             if request.prompt_context.strip():
                 transcribe_options["initial_prompt"] = request.prompt_context

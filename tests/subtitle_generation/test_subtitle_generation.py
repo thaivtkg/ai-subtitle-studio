@@ -821,12 +821,32 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
 
         artifact = self.project_service.artifact_store.get("sub_123")
         rows = self.service.artifact_service.load_data(artifact.path)["segments"]
+        # Batch size 2 only generates the 2 segments in the current batch
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(
+            [(row["start_ms"], row["end_ms"]) for row in rows],
+            [(0, 1000), (1000, 2000)],
+        )
+        self.assertEqual([row["text"] for row in rows], ["one", "two"])
+
+        # Running the subsequent batch accumulates future rows without dropping previous rows
+        def transcribe_second_two(_request, batch, _is_cancelled):
+            return SubtitleGenerationResult(
+                batch.batch_id,
+                [
+                    WhisperSegmentResult(2100, 2900, "three"),
+                    WhisperSegmentResult(3100, 3900, "four"),
+                ],
+            )
+        self.whisper.transcribe_batch = transcribe_second_two
+        self.service.start_generation(replace(request, request_id="req_2"), 4000)
+        rows = self.service.artifact_service.load_data(artifact.path)["segments"]
         self.assertEqual(len(rows), 4)
         self.assertEqual(
             [(row["start_ms"], row["end_ms"]) for row in rows],
             [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000)],
         )
-        self.assertEqual([row["text"] for row in rows], ["one", "two", "", ""])
+        self.assertEqual([row["text"] for row in rows], ["one", "two", "three", "four"])
 
     def test_timing_mode_resume_routes_to_timing_pipeline(self):
         """Resume in Timing Draft must not invoke the subtitle checkpoint flow."""

@@ -1454,6 +1454,11 @@ class MainWindow(QMainWindow):
             self.video_player.play_segment(start_ms, end_ms)
         if hasattr(self, 'timeline_widget') and self.timeline_widget:
             self.timeline_widget.container.waveform.set_selected_range(start_ms, end_ms)
+            track = getattr(getattr(self.timeline_widget, "container", None), "track", None)
+            if track and hasattr(track, "segments"):
+                seg = next((s for s in track.segments if abs(s.start_ms - start_ms) <= 200 and abs(s.end_ms - end_ms) <= 200), None)
+                if seg:
+                    track.set_selection({seg.segment_id})
             
     def _on_segment_scan_requested(self, segment_id, start_ms, end_ms):
         project = self.project_service.current_project
